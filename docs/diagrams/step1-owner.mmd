@@ -1,0 +1,11 @@
+flowchart LR
+  O["👤 Owner<br/>(owner GitHub account, admin)"]
+  PRO["Owner's own pull request<br/>(e.g. CODEOWNERS)"]
+  B["Bypass<br/>(admin, PRs only)"]
+  LOG["Bypass is logged<br/>(Rule Insights)"]
+  M[("main branch")]
+  O -- "opens" --> PRO
+  PRO -- "merge via bypass" --> B
+  B --> M
+  B -.-> LOG
+  O -- "direct push to main" --x M
