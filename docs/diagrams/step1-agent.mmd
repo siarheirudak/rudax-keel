@@ -1,0 +1,16 @@
+flowchart LR
+  A["🤖 AI agent<br/>(agent GitHub account, write)"]
+  O["👤 Owner<br/>(owner GitHub account, code owner)"]
+  PRA["Agent's pull request"]
+  REV{"Required:<br/>1 approving review<br/>from code owner"}
+  M[("main branch")]
+  R["GitHub rules"]
+  A -- "opens" --> PRA
+  PRA --> REV
+  O -- "reviews and approves" --> REV
+  REV -- "approved: owner merges" --> M
+  A -- "approve / merge own PR" --x REV
+  A -- "direct push to main" --x M
+  A -- "force push / delete main" --x M
+  A -- "turn off rules" --x R
+  R -. "protect" .-> M
