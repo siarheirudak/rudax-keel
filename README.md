@@ -6,6 +6,6 @@ A template for building software with AI agents safely: the agent proposes chang
 
 ## Setup
 
-1. **GitHub protection** — set up the two GitHub accounts and the rules on `main`. See [GitHub setup](docs/github-setup.md).
+1. **GitHub protection** — set up the two GitHub accounts and the rules on `main`. See [GitHub setup](docs/github-setup.md). Run `bash setup/setup.sh OWNER/REPO AGENT_LOGIN` ([setup/README.md](setup/README.md)).
 
 _More steps are added here one at a time, each only after the previous one is proven to work._

@@ -1,0 +1,44 @@
+name: setup checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  setup-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Shellcheck
+        run: shellcheck -x setup/setup.sh setup/verify.sh setup/common.sh
+
+      - name: Validate protect-main.json
+        run: |
+          jq empty setup/rulesets/protect-main.json
+          jq -e '
+            .name == "protect-main"
+            and .target == "branch"
+            and .enforcement == "active"
+            and .conditions.ref_name.include == ["~DEFAULT_BRANCH"]
+            and .conditions.ref_name.exclude == []
+            and .bypass_actors == [{
+              "actor_id": 5,
+              "actor_type": "RepositoryRole",
+              "bypass_mode": "pull_request"
+            }]
+            and ([.rules[].type] | sort) == ["deletion", "non_fast_forward", "pull_request"]
+            and any(.rules[];
+              .type == "pull_request"
+              and .parameters.required_approving_review_count == 1
+              and .parameters.require_code_owner_review == true
+              and .parameters.dismiss_stale_reviews_on_push == true
+              and .parameters.require_last_push_approval == false
+              and .parameters.required_review_thread_resolution == false
+            )
+          ' setup/rulesets/protect-main.json

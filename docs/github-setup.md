@@ -52,5 +52,36 @@ The bypass is set to **"pull requests only"**, not "always". So you still have t
 
 ## How to set it up
 
-- **Automatic:** a setup script (coming in the next step).
-- **Manually:** step-by-step instructions (coming in the next step).
+Do this as the **owner** account (admin on the repo). Never use the agent's token. Commands and log files: [setup/README.md](../setup/README.md).
+
+### Automatic
+
+From the repository root:
+
+```bash
+bash setup/setup.sh OWNER/REPO AGENT_LOGIN
+bash setup/verify.sh OWNER/REPO AGENT_LOGIN
+```
+
+`setup.sh` creates or updates the [`protect-main` ruleset](../setup/rulesets/protect-main.json) and invites `AGENT_LOGIN` with write. Running it again skips what already matches. It does not create `CODEOWNERS`. `verify.sh` only reads the repo and exits non-zero on a mismatch.
+
+The agent must accept the collaborator invitation before `verify.sh` can pass.
+
+### Manually
+
+Same outcome as `protect-main.json`.
+
+1. Open **Settings → Rules → Rulesets → New branch ruleset**.
+2. **Ruleset Name:** `protect-main`.
+3. **Enforcement status:** Active.
+4. **Bypass list:** add **Repository admin**, and set the bypass to **For pull requests only**.
+5. **Target branches:** Include default branch (`~DEFAULT_BRANCH`).
+6. Turn on only these rules:
+   - **Restrict deletions**
+   - **Block force pushes**
+   - **Require a pull request before merging**, with **1** required approval, **Require review from Code Owners**, and **Dismiss stale pull request approvals when new commits are pushed**. Leave "Require approval of the most recent reviewable push" and "Require conversation resolution" off.
+7. Create the ruleset.
+8. **Settings → Collaborators:** invite the agent account with the **Write** role. Do not grant Admin. The agent must accept.
+9. Add `.github/CODEOWNERS` containing `* @OWNER` in a pull request from the owner account, and merge that pull request with the admin bypass (pull requests only). The bypass is logged in Rule Insights.
+
+`OWNER` is the owner GitHub login.
