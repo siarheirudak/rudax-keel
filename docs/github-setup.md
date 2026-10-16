@@ -50,38 +50,42 @@ The bypass is set to **"pull requests only"**, not "always". So you still have t
 - **Protection if your account is misused.** A stolen session or a tool acting as you can't silently push to `main`. It would have to open a visible PR.
 - **One way in.** Everything, from the agent or from you, enters `main` the same way. That's simple to understand and to audit.
 
-## How to set it up
+## What the script configures
 
-Do this as the **owner** account (admin on the repo). Never use the agent's token. Commands and log files: [setup/README.md](../setup/README.md).
+Do this as the **owner GitHub account** (admin on the repo). Never use the agent GitHub account's token. Commands: [setup/README.md](../setup/README.md). Reasons: [why.md](why.md).
 
-### Automatic
+There is no config file. Apply asks GitHub who is logged in (`gh api user`). That login is the owner GitHub account. It also reads whether the repository is public or private, and the plan.
 
 From the repository root:
 
 ```bash
-bash setup/setup.sh OWNER/REPO AGENT_LOGIN
-bash setup/verify.sh OWNER/REPO AGENT_LOGIN
+bash setup/apply-github-rules.sh OWNER/REPO AGENT_LOGIN
+bash setup/verify-github-rules.sh OWNER/REPO AGENT_LOGIN
 ```
 
-`setup.sh` creates or updates the [`protect-main` ruleset](../setup/rulesets/protect-main.json) and invites `AGENT_LOGIN` with write. Running it again skips what already matches. It does not create `CODEOWNERS`. `verify.sh` only reads the repo and exits non-zero on a mismatch.
+Apply is idempotent. Run it again after each layer is merged. A setting that already matches is left untouched.
 
-The agent must accept the collaborator invitation before `verify.sh` can pass.
+| Step | What it sets |
+|---|---|
+| `protect-main` | Default branch: no deletion, no force push, pull request required, 1 approval, code-owner review, dismiss stale reviews. Admin bypass for pull requests only. |
+| `protect-tags` | All tags: block creation, update, and deletion. Admin bypass only. |
+| `require-checks` | Required check `checks / gate` on the default branch, strict, no bypass. Created only when `.github/workflows/checks.yml` is already on the default branch. |
+| Agent access | Invite `AGENT_LOGIN` with write. Does not remove admin if you already granted it. |
+| `CODEOWNERS` | If missing, write `* @<login>` for the logged-in owner GitHub account. If the file already lists that login, leave it. If it lists someone else, stop and do not overwrite it. |
+| Actions token | Default `GITHUB_TOKEN` is read-only and cannot approve pull requests. |
+| Fork approval | On a public repository, require approval for fork pull request workflows from all outside collaborators. |
+| Allowed actions | GitHub-owned actions, plus the exact `uses:` values in workflows on the default branch. |
 
-### Manually
+The agent GitHub account must accept the collaborator invitation before verify's agent-role step can pass.
 
-Same outcome as `protect-main.json`.
+<a id="how-rulesets-stack"></a>
 
-1. Open **Settings → Rules → Rulesets → New branch ruleset**.
-2. **Ruleset Name:** `protect-main`.
-3. **Enforcement status:** Active.
-4. **Bypass list:** add **Repository admin**, and set the bypass to **For pull requests only**.
-5. **Target branches:** Include default branch (`~DEFAULT_BRANCH`).
-6. Turn on only these rules:
-   - **Restrict deletions**
-   - **Block force pushes**
-   - **Require a pull request before merging**, with **1** required approval, **Require review from Code Owners**, and **Dismiss stale pull request approvals when new commits are pushed**. Leave "Require approval of the most recent reviewable push" and "Require conversation resolution" off.
-7. Create the ruleset.
-8. **Settings → Collaborators:** invite the agent account with the **Write** role. Do not grant Admin. The agent must accept.
-9. Add `.github/CODEOWNERS` containing `* @OWNER` in a pull request from the owner account, and merge that pull request with the admin bypass (pull requests only). The bypass is logged in Rule Insights.
+## How rulesets stack
 
-`OWNER` is the owner GitHub login.
+The script keeps more than one ruleset. GitHub applies every active ruleset that matches a ref. A bypass applies only inside its own ruleset.
+
+- The admin bypass on `protect-main` lets you merge a pull request without a second review. It does not let you force-push, and it does not apply to tags.
+- `protect-tags` has its own admin bypass. The pull-request bypass mode is not valid for tags, so this one is "always", and only the admin role is on the list. The agent GitHub account has write, not admin, so it cannot create, move, or delete a tag.
+- `require-checks` has an empty bypass list. An admin cannot skip `checks / gate`. Merging through the `protect-main` bypass still waits for that check once the check exists.
+
+JSON for the three rulesets lives in [setup/rulesets](../setup/rulesets).
