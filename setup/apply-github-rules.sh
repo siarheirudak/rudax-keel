@@ -2,7 +2,7 @@
 # Apply GitHub rules for one repository. Idempotent.
 # Re-run as the owner GitHub account after each layer merge.
 # Settings that already match are left untouched.
-# Usage: apply-github-rules.sh OWNER/REPO AGENT_LOGIN [--accept-risk]
+# Usage: apply-github-rules.sh OWNER/REPO AGENT_LOGIN [--accept-risk] [--rewrite-codeowners]
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -13,19 +13,20 @@ positional=()
 for arg in "$@"; do
   case $arg in
     --accept-risk) ACCEPT_RISK=1 ;;
+    --rewrite-codeowners) REWRITE_CODEOWNERS=1 ;;
     --)
       printf 'Unknown option: %s\n' "$arg" >&2
-      usage "apply-github-rules.sh"
+      usage "apply-github-rules.sh" " [--rewrite-codeowners]"
       ;;
     -*)
       printf 'Unknown option: %s\n' "$arg" >&2
-      usage "apply-github-rules.sh"
+      usage "apply-github-rules.sh" " [--rewrite-codeowners]"
       ;;
     *) positional+=("$arg") ;;
   esac
 done
 if [[ ${#positional[@]} -ne 2 ]]; then
-  usage "apply-github-rules.sh"
+  usage "apply-github-rules.sh" " [--rewrite-codeowners]"
 fi
 require_args "apply-github-rules.sh" "${positional[0]}" "${positional[1]}"
 init_log "apply"
@@ -181,7 +182,7 @@ step_invite() {
     perm=$(jq -r '.permission // empty' <<<"$GH_API_BODY")
     role=$(jq -r '.role_name // empty' <<<"$GH_API_BODY")
     if [[ $perm == admin || $role == admin ]]; then
-      log_step OK "$what" "warning: ${AGENT} has admin. Expected write only. Left unchanged." "agent-write-access"
+      log_step FAIL "$what" "role is admin, expected write. Left unchanged." "agent-write-access"
       return 0
     fi
     if [[ $perm == write ]]; then
@@ -234,6 +235,24 @@ protect_main_present() {
   fi
 }
 
+# The only inherited CODEOWNERS line apply may replace on its own.
+TEMPLATE_CODEOWNERS='* @siarheirudak'
+
+codeowners_is_template_value() {
+  local text=$1 line saw=0
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=${line%$'\r'}
+    [[ -z $line ]] && continue
+    [[ $line == "$TEMPLATE_CODEOWNERS" ]] || return 1
+    saw=$((saw + 1))
+  done <<<"$text"
+  [[ $saw -eq 1 ]]
+}
+
+codeowners_keep_reason() {
+  printf '%s' "CODEOWNERS does not match * @${LOGIN} and is not the template line ${TEMPLATE_CODEOWNERS}. This script will not rewrite it. Apply still creates protect-main after this FAIL. Open a pull request that sets .github/CODEOWNERS to \`* @${LOGIN}\` and merge it with the admin bypass (pull requests only). Rule Insights is Settings → Rules → Insights. Re-run with --rewrite-codeowners to replace the file, and only before protect-main exists."
+}
+
 codeowners_blocked_reason() {
   printf '%s' "protect-main already exists, so this script will not change CODEOWNERS and will not use the admin bypass. Open a pull request that sets .github/CODEOWNERS to \`* @${LOGIN}\` and merge it with the admin bypass (pull requests only). The bypass is logged in Rule Insights (Settings → Rules → Insights)."
 }
@@ -259,7 +278,7 @@ write_codeowners() {
 
 step_codeowners() {
   local what="Make CODEOWNERS match the owner GitHub account"
-  local st text sha present
+  local st text sha="" present replace=0
   if ! mark_empty_repo; then
     log_step FAIL "$what" "cannot read ${DEFAULT_BRANCH} ($(collapse "$GH_API_ERROR"))" "codeowners"
     return 0
@@ -286,19 +305,26 @@ step_codeowners() {
       log_step ALREADY "$what" "already * @${LOGIN}" "codeowners"
       return 0
     fi
-    if [[ $present -eq 1 ]]; then
+    if codeowners_is_template_value "$text" || [[ $REWRITE_CODEOWNERS -eq 1 ]]; then
+      replace=1
+    elif [[ $present -eq 1 ]]; then
       log_step FAIL "$what" "$(codeowners_blocked_reason)" "codeowners"
       return 0
+    else
+      log_step FAIL "$what" "$(codeowners_keep_reason)" "codeowners"
+      return 0
     fi
+  fi
+  if [[ $present -eq 1 ]]; then
+    log_step FAIL "$what" "$(codeowners_blocked_reason)" "codeowners"
+    return 0
+  fi
+  if [[ $replace -eq 1 ]]; then
     if ! write_codeowners "$sha"; then
       log_step FAIL "$what" "could not write CODEOWNERS ($(collapse "$GH_API_ERROR")). Open a pull request that sets it to \`* @${LOGIN}\` and merge it with the admin bypass (pull requests only). Rule Insights is Settings → Rules → Insights." "codeowners"
       return 0
     fi
     log_step OK "$what" "rewrote CODEOWNERS to * @${LOGIN} on ${DEFAULT_BRANCH}" "codeowners"
-    return 0
-  fi
-  if [[ $present -eq 1 ]]; then
-    log_step FAIL "$what" "$(codeowners_blocked_reason)" "codeowners"
     return 0
   fi
   if ! write_codeowners; then
@@ -333,7 +359,7 @@ step_token() {
 step_fork() {
   local what="Require approval for fork pull request workflows" policy
   if [[ $PRIVATE -eq 1 ]]; then
-    log_step ALREADY "$what" "private repository; outside-collaborator fork approval is a public repository setting" "fork-approval"
+    log_step OK "$what" "not applicable (private repo)" "fork-approval"
     return 0
   fi
   if ! gh_api "repos/${SLUG}/actions/permissions/fork-pr-contributor-approval"; then

@@ -9,7 +9,9 @@ bash setup/apply-github-rules.sh OWNER/REPO AGENT_LOGIN
 bash setup/verify-github-rules.sh OWNER/REPO AGENT_LOGIN
 ```
 
-Apply is safe to re-run after each layer merge. Settings that already match are left as they are. CODEOWNERS is fixed before `protect-main`.
+`apply-github-rules.sh` also accepts `--accept-risk` and `--rewrite-codeowners`.
+
+Apply is safe to re-run after each layer merge. Settings that already match are left as they are. A missing CODEOWNERS file, or the template's own line, is fixed before `protect-main`. Any other CODEOWNERS content is left in place and that step is FAIL. `protect-main` is still created. Fix the file in a pull request the owner merges. `--rewrite-codeowners` replaces other content only before `protect-main` exists.
 
 Private repository on GitHub Free: rulesets do not exist. Continue only with `--accept-risk`, or by typing `yes`. The ruleset lines stay FAIL.
 
@@ -25,5 +27,7 @@ An unpinned `uses:` is OK with a reason starting `warning:`.
 - Not an admin: `gh auth login` as the owner GitHub account that administers the repo.
 - Empty repo: push an initial commit to the default branch, then re-run.
 - Invite pending: the agent GitHub account must accept the collaborator invitation.
+- Agent has admin: FAIL. Apply does not change the role. Change it to write yourself.
+- Private repository: fork approval is OK, reason `not applicable (private repo)`.
 
 Sandbox test: [TESTING.md](TESTING.md).

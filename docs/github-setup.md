@@ -67,13 +67,13 @@ Apply is idempotent. Run it again after each layer is merged. A setting that alr
 
 | Step | What it sets |
 |---|---|
-| `CODEOWNERS` | First, before `protect-main`. Write `* @<login>` for the logged-in owner GitHub account. Rewrite the file if it names anyone else. If `protect-main` already exists and the file is wrong, stop and fix it in a pull request. See [why](why.md#codeowners). |
+| `CODEOWNERS` | First, before `protect-main`. Write `* @<login>` only when the file is missing or is still the template line. If it already matches the logged-in owner, no commit is made. Any other content is FAIL unless you pass `--rewrite-codeowners`, and that flag does nothing once `protect-main` exists. If this step FAILs, `protect-main` is still created. The fix is a pull request the owner merges. See [why](why.md#codeowners). |
 | `protect-main` | Default branch: no deletion, no force push, pull request required, 1 approval, code-owner review, dismiss stale reviews. Admin bypass for pull requests only. |
 | `protect-tags` | All tags: block creation, update, and deletion. Only an admin may bypass, because only the owner creates releases. |
 | `require-checks` | Required check `checks / gate` on the default branch, strict, no bypass. NOT YET until `.github/workflows/checks.yml` is on the default branch (layer 2). |
-| Agent access | Invite `AGENT_LOGIN` with write. Does not remove admin if you already granted it. |
+| Agent access | Invite `AGENT_LOGIN` with write. If that account already has admin, the step is FAIL and the role is left unchanged. |
 | Actions token | Default `GITHUB_TOKEN` is read-only and cannot approve pull requests. |
-| Fork approval | On a public repository, require approval for fork pull request workflows from all outside collaborators. |
+| Fork approval | On a public repository, require approval for fork pull request workflows from all outside collaborators. On a private repository the step is OK: `not applicable (private repo)`. |
 | Allowed actions | GitHub-owned actions, plus the exact `uses:` values in workflows on the default branch. |
 
 The agent GitHub account must accept the collaborator invitation before verify's agent-role step can pass.

@@ -221,7 +221,7 @@ step_token() {
 step_fork() {
   local what="Check fork pull request approval" policy
   if [[ $PRIVATE -eq 1 ]]; then
-    log_step ALREADY "$what" "private repository; outside-collaborator fork approval is a public repository setting" "fork-approval"
+    log_step OK "$what" "not applicable (private repo)" "fork-approval"
     return 0
   fi
   if ! gh_api "repos/${SLUG}/actions/permissions/fork-pr-contributor-approval"; then

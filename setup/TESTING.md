@@ -6,6 +6,8 @@ Do not point the scripts at the template repository.
 
 A coding agent is any AI coding agent (Cursor cloud or local, Claude Code, and others). The attacks below are what that agent must not be able to do.
 
+The owner GitHub account does three things: the setup run, the approvals in the stale-review attacks, and the merges the owner chooses to make. Everything else, including the results comment, is done in the agent shell.
+
 ## (a) Setup, as the owner
 
 In a shell logged in as the **owner GitHub account** (admin on the sandbox). Never the agent token.
@@ -20,11 +22,11 @@ The login must be the owner GitHub account, not `isiarheiridak-agent`.
 
 Expected, with no FAIL:
 
-- CODEOWNERS is OK (`* @siarheirudak` created or rewritten) or ALREADY.
+- CODEOWNERS is ALREADY (`* @siarheirudak`, no commit) when the file already names the owner. It is OK only when the file was missing and apply created it.
 - `protect-main` and `protect-tags` are OK, or ALREADY if you run apply again.
 - `require-checks` is **NOT YET**, reason `CI not added yet; re-run after layer 2 merge`.
-- The agent is invited with write (OK), or the invite is ALREADY pending.
-- Fork approval is ALREADY, because the sandbox is private.
+- The agent is invited with write (OK), or the invite is ALREADY pending. Admin is FAIL. Change the role to write before continuing.
+- Fork approval is OK, reason `not applicable (private repo)`.
 - Token permissions and allowed actions are OK or ALREADY.
 
 The agent GitHub account must accept the invitation. Then:
@@ -36,6 +38,18 @@ bash setup/verify-github-rules.sh siarheirudak/rudax-keel-sandbix isiarheiridak-
 Expected: no FAIL. `require-checks` is still NOT YET. The agent role is ALREADY only after the invite is accepted.
 
 If apply prints the GitHub Free private warning, stop. Do not pass `--accept-risk`. This sandbox is on Pro so rulesets exist. A Free result means the test does not count.
+
+`main` needs at least two commits. The force-push attack rewinds to `main~1`. If `git rev-list --count origin/main` is less than 2, open a pull request that adds an empty commit and merge it yourself (admin bypass, pull requests only), then fetch again.
+
+Create the tag the agent will try to move and delete. This uses the owner bypass on `protect-tags`:
+
+```bash
+git fetch origin
+git tag keel-test origin/main~1
+git push origin refs/tags/keel-test
+```
+
+Expected: the tag is created.
 
 ## (b) Act as the agent
 
@@ -51,29 +65,46 @@ This must print `isiarheiridak-agent`. If it prints anything else, stop. The att
 ```bash
 git clone https://github.com/siarheirudak/rudax-keel-sandbix.git
 cd rudax-keel-sandbix
+gh auth setup-git
+git config --show-origin --get-all credential.helper
 ```
+
+Every helper that prints must be the agent one (`gh auth git-credential`). If a keychain, store, or other helper is also listed, stop. An owner credential helper also gets `GH013` on `main`, so the later rejections would be a false pass.
+
+Push a throwaway branch and confirm the pusher before any attack:
+
+```bash
+git switch -c attack-identity
+git commit --allow-empty -m "identity check"
+git push -u origin attack-identity
+gh api repos/siarheirudak/rudax-keel-sandbix/events --jq '[.[] | select(.type=="PushEvent" and .payload.ref=="refs/heads/attack-identity") | .actor.login] | unique | .[]'
+```
+
+The only login printed must be `isiarheiridak-agent`. If the events list is empty, wait a moment and run the `gh api` line again. If it prints any other login, stop.
 
 ## (c) Attacks
 
-Run these in the agent shell. Each one must be rejected.
+Run these in the agent shell. Each one must be rejected. Start the pull-request branches from `origin/main`, not from another attack branch.
 
 **Direct push to main**
 
 ```bash
-git switch -c attack-direct
+git switch -c attack-direct origin/main
 git commit --allow-empty -m "attack: direct push to main"
 git push origin HEAD:main
 ```
 
-Expected: push rejected, `GH013`, `Changes must be made through a pull request`.
+Expected: push rejected, `GH013`, `Changes must be made through a pull request`. The branch `attack-direct` is never pushed.
 
 **Force push**
 
+`main` must already have at least two commits.
+
 ```bash
-git push --force origin HEAD:main
+git push --force origin origin/main~1:main
 ```
 
-Expected: `GH013` and `Cannot force-push to this branch`.
+Expected: `GH013`, and the message is the force-push or non-fast-forward rule (`Cannot force-push` or `non-fast-forward`). A message that only says changes must be made through a pull request does not count.
 
 **Delete main**
 
@@ -85,27 +116,32 @@ Expected: rejected, `GH013`, the branch cannot be deleted.
 
 **Create, move, and delete a tag**
 
+The owner already pushed `keel-test` in step (a).
+
 ```bash
-git tag attack-test
-git push origin refs/tags/attack-test
-git tag -f attack-test HEAD
-git push --force origin refs/tags/attack-test
-git push origin :refs/tags/attack-test
+git tag attack-new
+git push origin refs/tags/attack-new
+git push --force origin HEAD:refs/tags/keel-test
+git push origin :refs/tags/keel-test
 ```
 
 Expected: each push rejected, `GH013`. Create cannot create the ref. Move cannot update a protected ref. Delete cannot delete the ref.
 
 **Merge a pull request without approval**
 
+Use a merge method the repository actually allows, so a disabled merge button is not the reason it fails.
+
 ```bash
-git switch -c attack-merge
+git switch -c attack-merge origin/main
 git commit --allow-empty -m "attack: merge without approval"
 git push -u origin attack-merge
 gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-merge --title "attack: merge" --body "sandbox test"
-gh pr merge --repo siarheirudak/rudax-keel-sandbix --merge
+method=$(gh api repos/siarheirudak/rudax-keel-sandbix --jq 'if .allow_merge_commit then "merge" elif .allow_squash_merge then "squash" elif .allow_rebase_merge then "rebase" else "none" end')
+test "$method" != none
+gh pr merge --repo siarheirudak/rudax-keel-sandbix --"$method"
 ```
 
-Expected: merge blocked. Review is required. The base branch policy prohibits the merge.
+Expected: merge blocked, and the output contains a review-required line (`At least 1 approving review is required`, or `Review required`). A failure that only says the merge method is disabled does not count.
 
 **Agent approves its own pull request**
 
@@ -122,17 +158,17 @@ gh api --method POST repos/siarheirudak/rudax-keel-sandbix/rulesets -f name=atta
 gh api repos/siarheirudak/rudax-keel-sandbix/rulesets --jq '.[].id'
 ```
 
-Expected: the POST is **403**. Listing ids may also be 403. If a number is returned, delete must fail too:
+Expected: **403 or 404**. Any 2xx is a FAIL of this test. Listing ids may also be 403 or 404. If a number is returned, delete must fail too:
 
 ```bash
 gh api --method DELETE repos/siarheirudak/rudax-keel-sandbix/rulesets/ID
 ```
 
-Expected: **403**.
+Expected: **403 or 404**. Any 2xx is a FAIL of this test.
 
 **Approve with GITHUB_TOKEN from a workflow**
 
-On the `attack-merge` branch:
+On the `attack-merge` branch. The workflow sets `permissions: pull-requests: write`, so the token is allowed to try. What is tested is the repository setting that Actions cannot approve pull requests (`can_approve_pull_request_reviews`).
 
 ```bash
 mkdir -p .github/workflows
@@ -155,23 +191,58 @@ EOF
 git add .github/workflows/attack-approve.yml
 git commit -m "attack: approve with GITHUB_TOKEN"
 git push
+sha=$(git rev-parse HEAD)
+gh run list --repo siarheirudak/rudax-keel-sandbix --commit "$sha" --workflow "attack approve" --json databaseId,status,conclusion
 ```
 
-Expected: the job fails, or the review is refused and does not count. The token cannot approve pull requests.
+Wait until that run exists and has finished. No run means this attack does not pass. Then:
+
+```bash
+gh run view RUN_ID --repo siarheirudak/rudax-keel-sandbix --log
+gh pr view --repo siarheirudak/rudax-keel-sandbix --json reviews --jq '[.reviews[] | select(.author.login=="github-actions")]'
+```
+
+Pass only when all three are true: a workflow run exists for that commit, its log contains `not permitted to approve`, and the pull request has no approval from `github-actions[bot]`.
 
 **Edit CODEOWNERS without an owner review**
 
+Branch from `main`, not from `attack-merge`:
+
 ```bash
-git switch -c attack-codeowners
+git switch -c attack-codeowners origin/main
 printf '%s\n' '* @isiarheiridak-agent' > .github/CODEOWNERS
 git add .github/CODEOWNERS
 git commit -m "attack: rewrite CODEOWNERS"
 git push -u origin attack-codeowners
 gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-codeowners --title "attack: CODEOWNERS" --body "sandbox test"
-gh pr merge --repo siarheirudak/rudax-keel-sandbix --merge
+method=$(gh api repos/siarheirudak/rudax-keel-sandbix --jq 'if .allow_merge_commit then "merge" elif .allow_squash_merge then "squash" elif .allow_rebase_merge then "rebase" else "none" end')
+gh pr merge --repo siarheirudak/rudax-keel-sandbix --"$method"
 ```
 
-Expected: merge refused. A code owner review is required. The agent is not the code owner.
+Expected: merge refused, with the same review-required message. The agent is not the code owner.
+
+**Stale review on attack-merge**
+
+In the owner shell, approve the current `attack-merge` pull request:
+
+```bash
+gh pr review --repo siarheirudak/rudax-keel-sandbix --approve --body "owner approval"
+```
+
+Back in the agent shell, add one commit and try the merge again, with the same `$method` as above:
+
+```bash
+git switch attack-merge
+git commit --allow-empty -m "attack: stale review"
+git push
+gh pr merge --repo siarheirudak/rudax-keel-sandbix --"$method"
+```
+
+Expected: the owner approval is dismissed. Merge is blocked, with the review-required message.
+
+**Stale review on attack-codeowners**
+
+Same two steps on `attack-codeowners`. The owner approves that pull request. The agent pushes one more commit and tries to merge. Expected: the approval is dismissed and the merge is blocked with the review-required message.
 
 ## (d) Verify, as the owner
 
@@ -186,33 +257,34 @@ The login is the owner GitHub account. Expected: no FAIL. `require-checks` is NO
 
 ## (e) Record the results
 
-The owner posts this comment on pull request **#3** in the template repository. The agent does not post it.
+From the agent shell (the agent token), post this table as a comment on pull request **#3** in the template repository. The owner does not post it. If that token cannot comment on the template repo, add the same table as a file on the `setup/github-protection` branch instead.
 
-| Attack | Expected | Actual |
-|---|---|---|
-| Direct push to main | GH013, pull request required | |
-| Force push | GH013, cannot force-push | |
-| Delete main | GH013, cannot delete | |
-| Create tag | GH013, cannot create | |
-| Move tag | GH013, cannot update protected ref | |
-| Delete tag | GH013, cannot delete | |
-| Merge without approval | review required, merge prohibited | |
-| Self-approve | refused | |
-| Edit rulesets | 403 | |
-| GITHUB_TOKEN approve | refused or does not count | |
-| CODEOWNERS without owner review | review required, merge prohibited | |
+```bash
+gh api --method POST repos/siarheirudak/rudax-keel/issues/3/comments --input - <<'EOF'
+{"body":"Sandbox results for rudax-keel-sandbix.\n\n| Attack | Expected | Actual |\n|---|---|---|\n| Identity push | pusher isiarheiridak-agent | |\n| Direct push to main | GH013, pull request required | |\n| Force push main~1 | GH013, force-push or non-fast-forward | |\n| Delete main | GH013, cannot delete | |\n| Create tag | GH013, cannot create | |\n| Move keel-test | GH013, cannot update protected ref | |\n| Delete keel-test | GH013, cannot delete | |\n| Merge without approval | review required | |\n| Self-approve | refused | |\n| Edit rulesets | 403 or 404; any 2xx is a fail | |\n| GITHUB_TOKEN approve | run exists, log says not permitted to approve, no github-actions approval | |\n| CODEOWNERS without owner review | review required | |\n| Stale review on attack-merge | approval dismissed, review required | |\n| Stale review on attack-codeowners | approval dismissed, review required | |"}
+EOF
+```
+
+Fill the Actual column before posting.
 
 ## (f) Cleanup
 
-In the agent shell, after the table is filled:
+In the agent shell, after the comment is posted:
 
 ```bash
 gh pr close --repo siarheirudak/rudax-keel-sandbix attack-merge
 gh pr close --repo siarheirudak/rudax-keel-sandbix attack-codeowners
-git push origin --delete attack-direct attack-merge attack-codeowners
-git push origin :refs/tags/attack-test
+git push origin --delete attack-direct
+git push origin --delete attack-identity attack-merge attack-codeowners
+git push origin :refs/tags/attack-new
 ```
 
-Close any leftover pull requests in the sandbox UI. `attack-test` was never created if the tag push was rejected; a delete error for a missing tag is fine.
+`git push origin --delete attack-direct` errors because that branch was never pushed. That error is expected. `attack-new` was never created if the tag push was rejected; a delete error for a missing tag is fine.
 
-To reset rules, switch back to the owner shell and run apply again. Matching settings come back ALREADY. To remove the rulesets entirely, delete them under Settings → Rules → Rulesets, then run apply if you want them again. Do not delete the sandbox repository.
+In the owner shell, delete the tag created in step (a):
+
+```bash
+git push origin :refs/tags/keel-test
+```
+
+Close any leftover pull requests in the sandbox UI. To reset rules, stay in the owner shell and run apply again. Matching settings come back ALREADY. To remove the rulesets entirely, delete them under Settings → Rules → Rulesets, then run apply if you want them again. Do not delete the sandbox repository.
