@@ -114,7 +114,7 @@ accept_agent() {
 
 assert_links() {
   local bad
-  bad=$(printf '%s\n' "$out" | grep -E ' - (OK|SKIPPED|FAIL)' | grep -v 'docs/why.md#' || true)
+  bad=$(printf '%s\n' "$out" | grep -E ' - (OK|ALREADY|NOT YET|FAIL)' | grep -v 'docs/why.md#' || true)
   if [[ -n $bad ]]; then
     out=$bad
     fail "step without why.md link"
@@ -198,6 +198,11 @@ for call in puts:
         kinds.append("selected")
 if kinds != ["workflow", "fork", "policy", "selected"]:
     sys.exit("action put order " + ",".join(kinds))
+paths = [call["method"] + " " + call["path"] for call in state["calls"]]
+code_at = next(i for i, path in enumerate(paths) if path == "PUT repos/owner/repo/contents/.github/CODEOWNERS")
+rule_at = next(i for i, path in enumerate(paths) if path == "POST repos/owner/repo/rulesets")
+if code_at > rule_at:
+    sys.exit("CODEOWNERS was written after protect-main")
 PY
 ok "apply creates rules and actions"
 
@@ -331,6 +336,7 @@ state["rulesets"] = [{
     "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
     "rules": [{"type": "deletion"}],
 }]
+state["files"][".github/CODEOWNERS"] = "* @owner\n"
 state["next_id"] = 8
 json.dump(state, open(os.environ["GH_MOCK_STATE"], "w", encoding="utf-8"))
 PY
@@ -423,18 +429,53 @@ ok "duplicate names"
 reset
 mutate 'state["files"][".github/CODEOWNERS"]="* @someoneelse\n"'
 run "$APPLY" owner/repo agent
+assert_rc 0
+need "rewrote CODEOWNERS to * @owner"
+python3 - <<'PY'
+import json, os, sys
+state = json.load(open(os.environ["GH_MOCK_STATE"], encoding="utf-8"))
+text = state["files"].get(".github/CODEOWNERS", "")
+if text.strip() != "* @owner":
+    sys.exit("rewritten codeowners: " + text)
+puts = [call for call in state["calls"] if call["method"] == "PUT" and call["path"].endswith("CODEOWNERS")]
+if len(puts) != 1 or puts[0]["body"].get("sha") != "file":
+    sys.exit("missing sha on rewrite")
+PY
+ok "CODEOWNERS rewritten before rules"
+
+reset
+python3 - <<'PY'
+import json, os
+state = json.load(open(os.environ["GH_MOCK_STATE"], encoding="utf-8"))
+state["rulesets"] = [{
+    "id": 3,
+    "name": "protect-main",
+    "source_type": "Repository",
+    "target": "branch",
+    "enforcement": "active",
+    "bypass_actors": [],
+    "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+    "rules": [{"type": "deletion"}],
+}]
+state["files"][".github/CODEOWNERS"] = "* @someoneelse\n"
+state["next_id"] = 4
+json.dump(state, open(os.environ["GH_MOCK_STATE"], "w", encoding="utf-8"))
+PY
+: >"$GH_MOCK_LOG"
+run "$APPLY" owner/repo agent
 assert_rc 1
-need "will not overwrite"
+need "will not change CODEOWNERS"
+need "admin bypass"
 if [[ $(count_exact PUT repos/owner/repo/contents/.github/CODEOWNERS) -ne 0 ]]; then
-  fail "wrong CODEOWNERS was overwritten"
+  fail "CODEOWNERS was rewritten while protect-main exists"
 fi
-ok "CODEOWNERS not overwritten"
+ok "CODEOWNERS blocked when protect-main exists"
 
 reset
 mutate 'state["files"][".github/CODEOWNERS"]="* @owner\n"'
 run "$APPLY" owner/repo agent
 assert_rc 0
-need "already lists @owner"
+need "already * @owner"
 if [[ $(count_exact PUT repos/owner/repo/contents/.github/CODEOWNERS) -ne 0 ]]; then
   fail "matching CODEOWNERS was rewritten"
 fi
@@ -535,9 +576,9 @@ ok "piped yes is not acceptance"
 reset
 mutate 'state["private"]=True; state["plan"]="free"'
 run "$APPLY" --accept-risk owner/repo agent
-assert_rc 0
+assert_rc 1
 need "accepted with --accept-risk"
-need "SKIPPED"
+need " - FAIL:"
 forbid "created protect-main"
 if [[ $(count_method POST /rulesets) -ne 0 ]]; then
   fail "accept-risk created a ruleset"
@@ -550,10 +591,10 @@ if [[ $(awk '$2 ~ /fork-pr/ { n++ } END { print n + 0 }' "$GH_MOCK_LOG") -ne 0 ]
 fi
 accept_agent
 run "$VERIFY" owner/repo agent
-assert_rc 0
-need "warning:"
+assert_rc 1
 need "docs/why.md#free-private-risk"
 need "checks are only advisory"
+need " - FAIL:"
 ok "accept-risk and verify reminder"
 
 # typed yes on a terminal
@@ -616,7 +657,7 @@ if not sent:
 sys.exit(rc)
 PY
 ) || rc=$?
-assert_rc 0
+assert_rc 1
 need "accepted by typing yes"
 if [[ $(count_method POST /rulesets) -ne 0 ]]; then
   fail "typed yes created a ruleset"
@@ -705,14 +746,16 @@ ok "unknown plan probe"
 reset
 mutate 'state["fork_status"]=404'
 run "$APPLY" owner/repo agent
-assert_rc 0
+assert_rc 1
 need "outside collaborators"
 need "Settings"
+need " - FAIL:"
 forbid "Unexpected error"
 accept_agent
 run "$VERIFY" owner/repo agent
-assert_rc 0
+assert_rc 1
 need "outside collaborators"
+need " - FAIL:"
 ok "fork API missing"
 
 # --- unpinned uses warns; third-party pin is allow-listed ---
@@ -765,5 +808,10 @@ if [[ -n $bad ]]; then
   fail "hardcoded owner login"
 fi
 ok "no hardcoded owner login"
+
+if grep -n 'SKIPPED' "$ROOT/setup/apply-github-rules.sh" "$ROOT/setup/verify-github-rules.sh" "$ROOT/setup/common.sh"; then
+  fail "SKIPPED is still a status"
+fi
+ok "no SKIPPED status"
 
 printf 'ALL PASS\n'

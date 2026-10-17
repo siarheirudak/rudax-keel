@@ -9,13 +9,18 @@ bash setup/apply-github-rules.sh OWNER/REPO AGENT_LOGIN
 bash setup/verify-github-rules.sh OWNER/REPO AGENT_LOGIN
 ```
 
-Apply is safe to re-run after each layer merge. Settings that already match are left as they are.
+Apply is safe to re-run after each layer merge. Settings that already match are left as they are. CODEOWNERS is fixed before `protect-main`.
 
-Private repository on GitHub Free: rulesets do not exist. Continue only with `--accept-risk`, or by typing `yes`.
+Private repository on GitHub Free: rulesets do not exist. Continue only with `--accept-risk`, or by typing `yes`. The ruleset lines stay FAIL.
 
-Logs: `setup/logs/apply-<timestamp>.log` and `setup/logs/verify-<timestamp>.log` (gitignored). Each step is `OK`, `SKIPPED`, or `FAIL`, and links to [docs/why.md](../docs/why.md).
+Logs: `setup/logs/apply-<timestamp>.log` and `setup/logs/verify-<timestamp>.log` (gitignored). Each line links to [docs/why.md](../docs/why.md).
 
-`OK` done. `SKIPPED` already in place, or not applicable yet. `FAIL` needs a fix. The script exits non-zero if any step failed.
+- **OK** — just applied.
+- **ALREADY** — was already correct.
+- **NOT YET** — intentionally later. `require-checks` is NOT YET until `checks.yml` exists.
+- **FAIL** — not done. The script exits non-zero if any step is FAIL. A line that names a Settings page is a manual step the API cannot do.
+
+An unpinned `uses:` is OK with a reason starting `warning:`.
 
 - Not an admin: `gh auth login` as the owner GitHub account that administers the repo.
 - Empty repo: push an initial commit to the default branch, then re-run.

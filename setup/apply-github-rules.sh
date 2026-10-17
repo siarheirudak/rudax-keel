@@ -32,21 +32,21 @@ init_log "apply"
 trap 'on_unexpected $LINENO' ERR
 
 REST_WHAT=(
+  "Make CODEOWNERS match the owner GitHub account"
   "Create or update ruleset protect-main"
   "Create or update ruleset protect-tags"
   "Create or update ruleset require-checks"
   "Invite ${AGENT} with write"
-  "Ensure CODEOWNERS lists the owner GitHub account"
   "Set GITHUB_TOKEN permissions to read-only"
   "Require approval for fork pull request workflows"
   "Set allowed actions"
 )
 REST_ANCHOR=(
+  codeowners
   protect-main
   protect-tags
   require-checks
   agent-write-access
-  codeowners
   read-only-token
   fork-approval
   pinned-actions
@@ -100,7 +100,7 @@ apply_named_ruleset() {
   local ids count id st
 
   if [[ $RULESETS_OFF -eq 1 ]]; then
-    log_step SKIPPED "$what" "$RISK_REASON" "$anchor"
+    log_step FAIL "$what" "$RISK_REASON" "$anchor"
     return 0
   fi
   if ! mark_empty_repo; then
@@ -115,7 +115,7 @@ apply_named_ruleset() {
     st=0
     branch_file_status ".github/workflows/checks.yml" || st=$?
     if [[ $st -eq 1 ]]; then
-      log_step SKIPPED "$what" "$CHECKS_SKIP_REASON" "$anchor"
+      log_step "NOT YET" "$what" "$CHECKS_SKIP_REASON" "$anchor"
       return 0
     fi
     if [[ $st -ne 0 ]]; then
@@ -156,7 +156,7 @@ apply_named_ruleset() {
   fi
   capture_ruleset_diff "$file" "$GH_API_BODY"
   if [[ $DIFF_RC -eq 0 ]]; then
-    log_step SKIPPED "$what" "already matches setup/rulesets/${name}.json" "$anchor"
+    log_step ALREADY "$what" "already matches setup/rulesets/${name}.json" "$anchor"
     return 0
   fi
   if [[ $DIFF_RC -ne 1 ]]; then
@@ -185,7 +185,7 @@ step_invite() {
       return 0
     fi
     if [[ $perm == write ]]; then
-      log_step SKIPPED "$what" "already a collaborator with write" "agent-write-access"
+      log_step ALREADY "$what" "already a collaborator with write" "agent-write-access"
       return 0
     fi
     if ! gh_api --method PUT "repos/${SLUG}/collaborators/${AGENT}" -f permission=push; then
@@ -205,7 +205,7 @@ step_invite() {
   fi
   pending=$(jq -r --arg login "$AGENT" "$PENDING_INVITE_JQ" <<<"$GH_API_BODY")
   if [[ $pending != 0 ]]; then
-    log_step SKIPPED "$what" "invitation already pending; the agent GitHub account must accept it" "agent-write-access"
+    log_step ALREADY "$what" "invitation already pending; the agent GitHub account must accept it" "agent-write-access"
     return 0
   fi
   if ! gh_api --method PUT "repos/${SLUG}/collaborators/${AGENT}" -f permission=push; then
@@ -216,10 +216,60 @@ step_invite() {
   return 0
 }
 
+protect_main_present() {
+  local ids count
+  if [[ $RULESETS_OFF -eq 1 ]]; then
+    printf '0'
+    return 0
+  fi
+  if ! gh_api --paginate --slurp "repos/${SLUG}/rulesets?includes_parents=false&per_page=100"; then
+    return 1
+  fi
+  ids=$(ruleset_ids "protect-main")
+  count=$(jq -r 'length' <<<"$ids")
+  if [[ $count -ge 1 ]]; then
+    printf '1'
+  else
+    printf '0'
+  fi
+}
+
+codeowners_blocked_reason() {
+  printf '%s' "protect-main already exists, so this script will not change CODEOWNERS and will not use the admin bypass. Open a pull request that sets .github/CODEOWNERS to \`* @${LOGIN}\` and merge it with the admin bypass (pull requests only). The bypass is logged in Rule Insights (Settings → Rules → Insights)."
+}
+
+write_codeowners() {
+  local sha=${1-} body
+  if [[ -n $sha ]]; then
+    body=$(jq -n \
+      --arg message "Set CODEOWNERS to the owner GitHub account" \
+      --arg content "$(b64_encode "* @${LOGIN}"$'\n')" \
+      --arg branch "$DEFAULT_BRANCH" \
+      --arg sha "$sha" \
+      '{message:$message, content:$content, branch:$branch, sha:$sha}')
+  else
+    body=$(jq -n \
+      --arg message "Set CODEOWNERS to the owner GitHub account" \
+      --arg content "$(b64_encode "* @${LOGIN}"$'\n')" \
+      --arg branch "$DEFAULT_BRANCH" \
+      '{message:$message, content:$content, branch:$branch}')
+  fi
+  api_put_json "repos/${SLUG}/contents/.github/CODEOWNERS" "$body"
+}
+
 step_codeowners() {
-  local what="Ensure CODEOWNERS lists the owner GitHub account" st text body
+  local what="Make CODEOWNERS match the owner GitHub account"
+  local st text sha present
+  if ! mark_empty_repo; then
+    log_step FAIL "$what" "cannot read ${DEFAULT_BRANCH} ($(collapse "$GH_API_ERROR"))" "codeowners"
+    return 0
+  fi
   if [[ $REPO_EMPTY -eq 1 ]]; then
     log_step FAIL "$what" "repository is empty; push an initial commit to ${DEFAULT_BRANCH}, then re-run" "codeowners"
+    return 0
+  fi
+  if ! present=$(protect_main_present); then
+    log_step FAIL "$what" "cannot list rulesets ($(collapse "$GH_API_ERROR"))" "codeowners"
     return 0
   fi
   st=0
@@ -231,24 +281,28 @@ step_codeowners() {
   if [[ $st -eq 0 ]]; then
     decode_content_body
     text=$CONTENT_TEXT
-    if codeowners_lists_login "$text"; then
-      log_step SKIPPED "$what" "already lists @${LOGIN} on the * rule" "codeowners"
+    sha=$(jq -r '.sha // empty' <<<"$GH_API_BODY")
+    if codeowners_matches "$text"; then
+      log_step ALREADY "$what" "already * @${LOGIN}" "codeowners"
       return 0
     fi
-    log_step FAIL "$what" "file does not list the owner GitHub account @${LOGIN}. Add a line \`* @${LOGIN}\` in your own pull request and merge it with the admin bypass (pull requests only). This script will not overwrite the file." "codeowners"
+    if [[ $present -eq 1 ]]; then
+      log_step FAIL "$what" "$(codeowners_blocked_reason)" "codeowners"
+      return 0
+    fi
+    if ! write_codeowners "$sha"; then
+      log_step FAIL "$what" "could not write CODEOWNERS ($(collapse "$GH_API_ERROR")). Open a pull request that sets it to \`* @${LOGIN}\` and merge it with the admin bypass (pull requests only). Rule Insights is Settings → Rules → Insights." "codeowners"
+      return 0
+    fi
+    log_step OK "$what" "rewrote CODEOWNERS to * @${LOGIN} on ${DEFAULT_BRANCH}" "codeowners"
     return 0
   fi
-  body=$(jq -n \
-    --arg message "Add CODEOWNERS for the owner GitHub account" \
-    --arg content "$(b64_encode "* @${LOGIN}"$'\n')" \
-    --arg branch "$DEFAULT_BRANCH" \
-    '{message:$message, content:$content, branch:$branch}')
-  if ! api_put_json "repos/${SLUG}/contents/.github/CODEOWNERS" "$body"; then
-    if api_blob | grep -Eqi 'ruleset|pull request|protected|violation'; then
-      log_step FAIL "$what" "could not write CODEOWNERS ($(collapse "$GH_API_ERROR")). Add a line \`* @${LOGIN}\` in your own pull request and merge it with the admin bypass (pull requests only)." "codeowners"
-      return 0
-    fi
-    log_step FAIL "$what" "create failed ($(collapse "$GH_API_ERROR"))" "codeowners"
+  if [[ $present -eq 1 ]]; then
+    log_step FAIL "$what" "$(codeowners_blocked_reason)" "codeowners"
+    return 0
+  fi
+  if ! write_codeowners; then
+    log_step FAIL "$what" "could not write CODEOWNERS ($(collapse "$GH_API_ERROR")). Open a pull request that sets it to \`* @${LOGIN}\` and merge it with the admin bypass (pull requests only). Rule Insights is Settings → Rules → Insights." "codeowners"
     return 0
   fi
   log_step OK "$what" "created * @${LOGIN} on ${DEFAULT_BRANCH}" "codeowners"
@@ -264,7 +318,7 @@ step_token() {
   perms=$(jq -r '.default_workflow_permissions // empty' <<<"$GH_API_BODY")
   approve=$(jq -r '.can_approve_pull_request_reviews // false' <<<"$GH_API_BODY")
   if [[ $perms == read && $approve == false ]]; then
-    log_step SKIPPED "$what" "already read-only and cannot approve pull requests" "read-only-token"
+    log_step ALREADY "$what" "already read-only and cannot approve pull requests" "read-only-token"
     return 0
   fi
   if ! api_put_json "repos/${SLUG}/actions/permissions/workflow" \
@@ -279,12 +333,12 @@ step_token() {
 step_fork() {
   local what="Require approval for fork pull request workflows" policy
   if [[ $PRIVATE -eq 1 ]]; then
-    log_step SKIPPED "$what" "private repository; fork approval from outside collaborators is a public repository setting" "fork-approval"
+    log_step ALREADY "$what" "private repository; outside-collaborator fork approval is a public repository setting" "fork-approval"
     return 0
   fi
   if ! gh_api "repos/${SLUG}/actions/permissions/fork-pr-contributor-approval"; then
     if is_not_found; then
-      log_step SKIPPED "$what" "$FORK_MANUAL_REASON" "fork-approval"
+      log_step FAIL "$what" "$FORK_MANUAL_REASON" "fork-approval"
       return 0
     fi
     log_step FAIL "$what" "cannot read fork approval ($(collapse "$GH_API_ERROR"))" "fork-approval"
@@ -292,13 +346,13 @@ step_fork() {
   fi
   policy=$(jq -r '.approval_policy // empty' <<<"$GH_API_BODY")
   if [[ $policy == all_external_contributors ]]; then
-    log_step SKIPPED "$what" "already requires approval for all outside collaborators" "fork-approval"
+    log_step ALREADY "$what" "already requires approval for all outside collaborators" "fork-approval"
     return 0
   fi
   if ! api_put_json "repos/${SLUG}/actions/permissions/fork-pr-contributor-approval" \
     "$(jq -n '{approval_policy:"all_external_contributors"}')"; then
     if is_not_found; then
-      log_step SKIPPED "$what" "$FORK_MANUAL_REASON" "fork-approval"
+      log_step FAIL "$what" "$FORK_MANUAL_REASON" "fork-approval"
       return 0
     fi
     log_step FAIL "$what" "update failed ($(collapse "$GH_API_ERROR"))" "fork-approval"
@@ -334,7 +388,7 @@ step_actions() {
     fi
   fi
   if [[ $match -eq 1 ]]; then
-    log_step SKIPPED "$what" "already GitHub-owned actions plus the actions used on ${DEFAULT_BRANCH}" "pinned-actions"
+    log_step ALREADY "$what" "already GitHub-owned actions plus the actions used on ${DEFAULT_BRANCH}" "pinned-actions"
     return 0
   fi
   if [[ $enabled != true || $allowed != selected ]]; then
@@ -366,11 +420,11 @@ if ! step_risk; then
   finish
 fi
 
+step_codeowners
 apply_named_ruleset protect-main protect-main
 apply_named_ruleset protect-tags protect-tags
 apply_named_ruleset require-checks require-checks
 step_invite
-step_codeowners
 step_token
 step_fork
 step_actions
