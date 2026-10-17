@@ -100,7 +100,7 @@ Each log line from the setup scripts links to a section below.
 
 **If disabled.** The first pull request from a stranger can run a workflow in your repository before you have looked at it.
 
-**How to disable explicitly.** In Settings → Actions → General → Fork pull request workflows, choose a weaker approval rule, or stop requiring approval. Apply sets "all outside collaborators" again when the API works. On a private repository the step is ALREADY, because this setting is only for public repositories. If the API returns not found, the step is FAIL and tells you the Settings path. The script cannot see whether you did that click.
+**How to disable explicitly.** In Settings → Actions → General → Fork pull request workflows, choose a weaker approval rule, or stop requiring approval. Apply sets "all outside collaborators" again when the API works. On a private repository the step is OK, reason `not applicable (private repo)`, because this setting is only for public repositories. If the API returns not found, the step is FAIL and tells you the Settings path. The script cannot see whether you did that click.
 
 <a id="pinned-actions"></a>
 
@@ -118,19 +118,19 @@ Each log line from the setup scripts links to a section below.
 
 ## CODEOWNERS
 
-**Rule.** `.github/CODEOWNERS` is `* @<login>`, where the login is the owner GitHub account from `gh api user`. This is the first change apply makes, before `protect-main`. If the file is missing, apply creates that line. If it names anyone else, apply rewrites it to that line. The commit is made as the logged-in owner, on the default branch. If `protect-main` already exists and the file is wrong, apply does not bypass: it tells you to fix the file in a pull request and the step is FAIL.
+**Rule.** `.github/CODEOWNERS` is `* @<login>`, where the login is the owner GitHub account from `gh api user`. Apply writes that line only when the file is missing, or when the file is exactly the template line `* @siarheirudak`. That commit is made as the logged-in owner, on the default branch, and only if `protect-main` does not exist yet. If the file already matches the logged-in owner, the step is ALREADY and no commit is made. In this owner's own repositories the file is already `* @siarheirudak`, so apply makes no CODEOWNERS commit. Any other content (a team, a path rule, several owners) is left as it is and the step is FAIL. `--rewrite-codeowners` replaces that other content, and only before `protect-main` exists. If `protect-main` already exists, apply does not commit the file and does not use the admin bypass.
 
-**Why.** `protect-main` asks a code owner to review. The file has to name you before that ruleset exists, or the first commit can be blocked. The script does not hardcode a person. This repository's committed file names the owner of this repository, because that owner's protection needs it. Anyone who copies the template and runs apply gets their own login instead.
+**Why.** `protect-main` asks a code owner to review. A copied template still names `siarheirudak`, and that one line is safe to replace with the person running apply. A file someone already wrote must not be destroyed. In the owner's own repo the line already names them, so there is nothing to commit.
 
-**If disabled.** The code-owner review has no owner, or it names the wrong account. A copied template would keep asking the original owner.
+**If disabled.** The code-owner review has no owner, or it names the wrong account. A copied template would keep asking the original owner. If this step is FAIL, apply still creates `protect-main`. The fix is a pull request the owner merges (admin bypass, pull requests only). Rule Insights (Settings → Rules → Insights) records that merge.
 
-**How to disable explicitly.** Delete `.github/CODEOWNERS` and do not re-run apply. Apply writes `* @<login>` again while `protect-main` is not there yet. After `protect-main` exists, change the file in your own pull request and merge it with the admin bypass (pull requests only). Rule Insights (Settings → Rules → Insights) records that merge.
+**How to disable explicitly.** Delete `.github/CODEOWNERS` and do not re-run apply. Apply writes `* @<login>` again while `protect-main` is not there yet. After `protect-main` exists, change the file in your own pull request and merge it with the admin bypass (pull requests only).
 
 <a id="agent-write-access"></a>
 
 ## Agent write access
 
-**Rule.** The agent GitHub account is a collaborator with write, not admin. Apply invites that account if needed. It does not demote an account that already has admin; it warns and leaves the role. Verify fails until the role is write and the invitation has been accepted.
+**Rule.** The agent GitHub account is a collaborator with write, not admin. Apply invites that account if needed. It does not demote an account that already has admin. That step is FAIL, and the role is left unchanged. Verify fails until the role is write and the invitation has been accepted.
 
 **Why.** Write is enough to open a pull request. Admin would let the agent GitHub account change or delete the rules.
 

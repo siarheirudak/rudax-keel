@@ -37,6 +37,8 @@ OWNER_TYPE=""
 # shellcheck disable=SC2034
 ACCEPT_RISK=0
 # shellcheck disable=SC2034
+REWRITE_CODEOWNERS=0
+# shellcheck disable=SC2034
 REPO_ADMIN=false
 # shellcheck disable=SC2034
 CONTENT_TEXT=""
@@ -124,7 +126,7 @@ def norm:
 '
 
 usage() {
-  printf 'Usage: %s OWNER/REPO AGENT_LOGIN [--accept-risk]\n' "$1" >&2
+  printf 'Usage: %s OWNER/REPO AGENT_LOGIN [--accept-risk]%s\n' "$1" "${2-}" >&2
   exit 2
 }
 
@@ -195,6 +197,7 @@ init_log() {
     printf 'args: %s %s\n' "$SLUG" "$AGENT"
     printf 'started: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf 'accept_risk_flag: %s\n' "$ACCEPT_RISK"
+    printf 'rewrite_codeowners_flag: %s\n' "$REWRITE_CODEOWNERS"
   } >"$LOG_FILE"
   say "Log: ${LOG_FILE}"
 }
@@ -625,7 +628,7 @@ api_put_json() {
 touch_shared_state() {
   : "$LOGIN" "$DEFAULT_BRANCH" "$REPO_EMPTY" "$DIFF_RC" "$DIFF_TEXT" \
     "$RULESETS_OFF" "$PRIVATE" "$PLAN" "$REPO_OWNER" "$OWNER_TYPE" \
-    "$ACCEPT_RISK" "$REPO_ADMIN" "$CONTENT_TEXT" "$USES_LIST" "$AUTH_ERROR" \
+    "$ACCEPT_RISK" "$REWRITE_CODEOWNERS" "$REPO_ADMIN" "$CONTENT_TEXT" "$USES_LIST" "$AUTH_ERROR" \
     "$RISK_REASON" "$CHECKS_SKIP_REASON" "$FORK_MANUAL_REASON" "$GH_API_BODY" \
     "$GH_API_ERROR" "$LOG_FILE" "$STEP" "$FAIL_COUNT" "$SUMMARY" "$SLUG" "$AGENT"
 }

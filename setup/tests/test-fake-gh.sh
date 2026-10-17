@@ -279,12 +279,14 @@ if [[ $(count_exact PUT repos/owner/repo/contents/.github/CODEOWNERS) -ne 0 ]]; 
 fi
 ok "empty repo"
 
-# --- admin agent is warned, not demoted ---
+# --- admin agent fails, and is not demoted ---
 reset
 mutate 'state["collaborators"]["agent"]={"permission":"admin","role_name":"admin"}'
 run "$APPLY" owner/repo agent
-assert_rc 0
-need "warning: agent has admin"
+assert_rc 1
+need "role is admin, expected write"
+need "Left unchanged"
+forbid "warning:"
 if [[ $(count_method PUT /collaborators/agent) -ne 0 ]]; then
   fail "admin agent was changed"
 fi
@@ -427,7 +429,7 @@ ok "duplicate names"
 
 # --- CODEOWNERS ---
 reset
-mutate 'state["files"][".github/CODEOWNERS"]="* @someoneelse\n"'
+mutate 'state["files"][".github/CODEOWNERS"]="* @siarheirudak\n"'
 run "$APPLY" owner/repo agent
 assert_rc 0
 need "rewrote CODEOWNERS to * @owner"
@@ -440,8 +442,52 @@ if text.strip() != "* @owner":
 puts = [call for call in state["calls"] if call["method"] == "PUT" and call["path"].endswith("CODEOWNERS")]
 if len(puts) != 1 or puts[0]["body"].get("sha") != "file":
     sys.exit("missing sha on rewrite")
+paths = [call["method"] + " " + call["path"] for call in state["calls"]]
+code_at = next(i for i, path in enumerate(paths) if path == "PUT repos/owner/repo/contents/.github/CODEOWNERS")
+rule_at = next(i for i, path in enumerate(paths) if path == "POST repos/owner/repo/rulesets")
+if code_at > rule_at:
+    sys.exit("template CODEOWNERS was written after protect-main")
 PY
-ok "CODEOWNERS rewritten before rules"
+ok "template CODEOWNERS rewritten before rules"
+
+reset
+mutate 'state["files"][".github/CODEOWNERS"]="* @someoneelse\n"'
+run "$APPLY" owner/repo agent
+assert_rc 1
+need "will not rewrite"
+need "still creates protect-main"
+need "pull request"
+python3 - <<'PY'
+import json, os, sys
+state = json.load(open(os.environ["GH_MOCK_STATE"], encoding="utf-8"))
+text = state["files"].get(".github/CODEOWNERS", "")
+if text.strip() != "* @someoneelse":
+    sys.exit("custom codeowners changed: " + text)
+puts = [call for call in state["calls"] if call["method"] == "PUT" and call["path"].endswith("CODEOWNERS")]
+if puts:
+    sys.exit("custom CODEOWNERS was rewritten")
+names = [item["name"] for item in state["rulesets"]]
+if "protect-main" not in names:
+    sys.exit("protect-main was not created after CODEOWNERS FAIL")
+PY
+ok "custom CODEOWNERS left in place"
+
+reset
+mutate 'state["files"][".github/CODEOWNERS"]="* @someoneelse\n/docs/ @team\n"'
+run "$APPLY" --rewrite-codeowners owner/repo agent
+assert_rc 0
+need "rewrote CODEOWNERS to * @owner"
+python3 - <<'PY'
+import json, os, sys
+state = json.load(open(os.environ["GH_MOCK_STATE"], encoding="utf-8"))
+text = state["files"].get(".github/CODEOWNERS", "")
+if text.strip() != "* @owner":
+    sys.exit("forced codeowners: " + text)
+puts = [call for call in state["calls"] if call["method"] == "PUT" and call["path"].endswith("CODEOWNERS")]
+if len(puts) != 1 or puts[0]["body"].get("sha") != "file":
+    sys.exit("missing sha on forced rewrite")
+PY
+ok "CODEOWNERS force rewrite"
 
 reset
 python3 - <<'PY'
@@ -457,12 +503,12 @@ state["rulesets"] = [{
     "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
     "rules": [{"type": "deletion"}],
 }]
-state["files"][".github/CODEOWNERS"] = "* @someoneelse\n"
+state["files"][".github/CODEOWNERS"] = "* @siarheirudak\n"
 state["next_id"] = 4
 json.dump(state, open(os.environ["GH_MOCK_STATE"], "w", encoding="utf-8"))
 PY
 : >"$GH_MOCK_LOG"
-run "$APPLY" owner/repo agent
+run "$APPLY" --rewrite-codeowners owner/repo agent
 assert_rc 1
 need "will not change CODEOWNERS"
 need "admin bypass"
@@ -480,6 +526,16 @@ if [[ $(count_exact PUT repos/owner/repo/contents/.github/CODEOWNERS) -ne 0 ]]; 
   fail "matching CODEOWNERS was rewritten"
 fi
 ok "CODEOWNERS left in place"
+
+reset
+mutate 'state["login"]="siarheirudak"; state["owner_login"]="siarheirudak"; state["files"][".github/CODEOWNERS"]="* @siarheirudak\n"'
+run "$APPLY" siarheirudak/repo agent
+assert_rc 0
+need "already * @siarheirudak"
+if [[ $(count_exact PUT repos/siarheirudak/repo/contents/.github/CODEOWNERS) -ne 0 ]]; then
+  fail "owner repo committed CODEOWNERS"
+fi
+ok "owner repo makes no CODEOWNERS commit"
 
 reset
 mutate 'state["codeowners_put_status"]=403'
@@ -589,12 +645,20 @@ fi
 if [[ $(awk '$2 ~ /fork-pr/ { n++ } END { print n + 0 }' "$GH_MOCK_LOG") -ne 0 ]]; then
   fail "private repo called fork approval"
 fi
+need "not applicable (private repo)"
+if printf '%s\n' "$out" | grep 'not applicable (private repo)' | grep -q 'ALREADY'; then
+  fail "private fork used ALREADY"
+fi
 accept_agent
 run "$VERIFY" owner/repo agent
 assert_rc 1
 need "docs/why.md#free-private-risk"
 need "checks are only advisory"
 need " - FAIL:"
+need "not applicable (private repo)"
+if printf '%s\n' "$out" | grep 'not applicable (private repo)' | grep -q 'ALREADY'; then
+  fail "private fork used ALREADY"
+fi
 ok "accept-risk and verify reminder"
 
 # typed yes on a terminal
@@ -796,7 +860,7 @@ banned=$(printf '%s%s' siarhei rudak)
 bad=""
 while IFS= read -r hit; do
   case $hit in
-    .github/CODEOWNERS:*|setup/TESTING.md:*) ;;
+    .github/CODEOWNERS:*|setup/TESTING.md:*|setup/apply-github-rules.sh:*|setup/tests/test-fake-gh.sh:*|docs/why.md:*) ;;
     *) bad="${bad}${hit}"$'\n' ;;
   esac
 done < <(
