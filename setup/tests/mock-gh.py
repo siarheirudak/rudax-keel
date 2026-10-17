@@ -274,6 +274,8 @@ def route(state, method, path, fields, body):
                 return int(state["codeowners_put_status"]), (
                     "Repository rule violations found. Changes must be made through a pull request."
                 ), False
+            if content_path in state["files"] and body.get("sha") != "file":
+                return 422, '"sha" wasn\'t supplied.', False
             encoded = body.get("content", "")
             state["files"][content_path] = base64.b64decode(encoded).decode()
             return 201, {"path": content_path}, False

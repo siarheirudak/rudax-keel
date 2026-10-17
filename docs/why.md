@@ -1,5 +1,7 @@
 # Why these rules exist
 
+This protection limits the agent GitHub account. It does not protect the owner GitHub account. Protect that yourself (2FA, never share your token).
+
 Each log line from the setup scripts links to a section below.
 
 **Rule:** any new rule needs a section here, in this shape, before it is added to the scripts.
@@ -15,6 +17,18 @@ Each log line from the setup scripts links to a section below.
 **If disabled.** Anyone with the agent token could point the script at the repo, or the script could no-op while you think the rules are on.
 
 **How to disable explicitly.** There is nothing to turn off. Log in as the owner GitHub account with `gh auth login` before you run the scripts.
+
+<a id="agent-environment"></a>
+
+## Where the coding agent runs
+
+**Rule.** Protection holds only if the coding agent runs where the only GitHub token is the agent GitHub account's token. That means a cloud VM, a separate OS user, or a container. It must not run where the owner GitHub account is logged in, for example a laptop `gh` login as the owner.
+
+**Why.** A coding agent is any AI coding agent (Cursor cloud or local, Claude Code, and others). It can run whatever `gh` and `git` are already logged in as. If that is the owner, the agent can merge, push, and change rules as the owner.
+
+**If disabled.** The agent acts as the owner GitHub account. The write-only role never comes into play.
+
+**How to disable explicitly.** Do not. Run the agent in an environment that has only the agent token. Before a sandbox attack, `gh api user --jq .login` must print the agent GitHub account. Any other login means the test is a false pass.
 
 <a id="protect-main"></a>
 
@@ -34,7 +48,7 @@ Each log line from the setup scripts links to a section below.
 
 **Rule.** The admin role may bypass `protect-main`, and only when merging a pull request. The bypass does not allow a direct push.
 
-**Why.** GitHub does not let you approve your own pull request. Without this bypass, a code-owner review rule would block your own pull requests forever. The pull request still exists, so there is a record, and Rule Insights logs the bypass.
+**Why.** GitHub does not let you approve your own pull request. Without this bypass, a code-owner review rule would block your own pull requests forever. The pull request still exists, so there is a record. Rule Insights (Settings → Rules → Insights) logs the bypass.
 
 **If disabled.** You cannot merge your own pull request, including a pull request that only fixes `CODEOWNERS`. Work stops until some other code owner approves it.
 
@@ -46,7 +60,7 @@ Each log line from the setup scripts links to a section below.
 
 **Rule.** Nobody except an admin may create, move, or delete any tag. The admin bypass on tags is "always", because a pull-request bypass is only valid on branch rulesets. The agent GitHub account is not an admin, so it still cannot change tags.
 
-**Why.** Tags are the names you trust for a release. A move or a delete rewrites what a name points at.
+**Why.** Tags are how you name a release. Only the owner should create, move, or delete them. The agent GitHub account must not be able to fake a release. A move or a delete rewrites what a name points at. The bypass is the admin role only, which the agent does not have.
 
 **If disabled.** The agent GitHub account can push a tag, move `v1.0` to a different commit, or delete the tag.
 
@@ -62,7 +76,7 @@ Each log line from the setup scripts links to a section below.
 
 **If disabled.** A pull request can be merged while tests are red or missing. The agent GitHub account, or a tired owner, can land a broken tree.
 
-**How to disable explicitly.** Delete the `require-checks` ruleset, and delete `setup/rulesets/require-checks.json`. Apply creates it only when `.github/workflows/checks.yml` is already on the default branch. Until that file exists, apply logs SKIPPED: `CI not added yet; re-run after layer 2 merge`.
+**How to disable explicitly.** Delete the `require-checks` ruleset, and delete `setup/rulesets/require-checks.json`. Apply creates it only when `.github/workflows/checks.yml` is already on the default branch. Until that file exists, the step is NOT YET: `CI not added yet; re-run after layer 2 merge`. Required checks are not on in this layer.
 
 <a id="read-only-token"></a>
 
@@ -86,31 +100,31 @@ Each log line from the setup scripts links to a section below.
 
 **If disabled.** The first pull request from a stranger can run a workflow in your repository before you have looked at it.
 
-**How to disable explicitly.** In Settings → Actions → General → Fork pull request workflows, choose a weaker approval rule, or stop requiring approval. Apply sets "all outside collaborators" again when the API is available. On a private repository this setting is skipped. If the API returns not found, apply and verify print the manual step and do not fail.
+**How to disable explicitly.** In Settings → Actions → General → Fork pull request workflows, choose a weaker approval rule, or stop requiring approval. Apply sets "all outside collaborators" again when the API works. On a private repository the step is ALREADY, because this setting is only for public repositories. If the API returns not found, the step is FAIL and tells you the Settings path. The script cannot see whether you did that click.
 
 <a id="pinned-actions"></a>
 
 ## Pinned actions
 
-**Rule.** Actions may run GitHub-owned actions, plus the exact `uses:` values already used by workflows on the default branch. Other actions are not allowed. Verify warns when a `uses:` value is not a full 40-character commit SHA. Local `./` actions and `docker://` images are not part of that check.
+**Rule.** Call a well-known tool with `run:` when it is already installed or is a one-command install (`shellcheck` and `jq` on an Ubuntu runner). Use a ready-made action only for a complex job (CodeQL, Docker, cache), from a known author, pinned to a full commit SHA. Write your own code only when nothing exists, and keep it small. The allow-list is GitHub-owned actions, plus the exact `uses:` values already on the default branch. Other actions are not allowed. Verify reports an unpinned `uses:` as OK with a reason starting `warning:`. Local `./` actions and `docker://` images are not part of that check.
 
-**Why.** A tag such as `@v4` can move. A pin to a commit stays on the code you read. The allow-list stops a new workflow from pulling in an action you have not already accepted.
+**Why.** A tag such as `@v4` can move. A pin stays on the code you read. GitHub-owned actions are always allowed, and other tools run via `run:`, so you rarely need a third-party action. Adding one is a pull request that pins it by SHA. The owner merges (the admin bypass on `protect-main` if you are the only code owner). Then the owner re-runs apply, and that exact `uses:` value is added to the allow-list. Until that re-run, the new action is not allowed.
 
-**If disabled.** A workflow can switch to a different action, or a tag you pinned last month can point at new code.
+**If disabled.** A workflow can switch to a different action, or a tag you used last month can point at new code.
 
-**How to disable explicitly.** In Settings → Actions → General → Actions permissions, allow all actions, or add patterns you did not review. Apply sets the allow-list again from the workflows on the default branch. `patterns_allowed` is enforced on public repositories. Verify still warns about unpinned `uses:` lines; the warning is OK, not FAIL.
+**How to disable explicitly.** In Settings → Actions → General → Actions permissions, allow all actions, or add patterns you did not review. Apply sets the allow-list again from the workflows on the default branch. `patterns_allowed` is enforced on public repositories.
 
 <a id="codeowners"></a>
 
 ## CODEOWNERS
 
-**Rule.** The `*` rule in `.github/CODEOWNERS` lists the owner GitHub account: the login returned by `gh api user` for the person running the script.
+**Rule.** `.github/CODEOWNERS` is `* @<login>`, where the login is the owner GitHub account from `gh api user`. This is the first change apply makes, before `protect-main`. If the file is missing, apply creates that line. If it names anyone else, apply rewrites it to that line. The commit is made as the logged-in owner, on the default branch. If `protect-main` already exists and the file is wrong, apply does not bypass: it tells you to fix the file in a pull request and the step is FAIL.
 
-**Why.** `protect-main` requires a code-owner review. With no `CODEOWNERS` file, GitHub has nobody to ask. The script does not hardcode a person. It writes `* @<login>` only when the file is missing. If the file already lists that login, it is left untouched. If the file lists someone else, the script stops and does not overwrite it. This repository's committed `.github/CODEOWNERS` is that file for this repository, generated the same way when it was added.
+**Why.** `protect-main` asks a code owner to review. The file has to name you before that ruleset exists, or the first commit can be blocked. The script does not hardcode a person. This repository's committed file names the owner of this repository, because that owner's protection needs it. Anyone who copies the template and runs apply gets their own login instead.
 
-**If disabled.** The code-owner review has no owner. Either every pull request is stuck, or the review rule is not doing what you think.
+**If disabled.** The code-owner review has no owner, or it names the wrong account. A copied template would keep asking the original owner.
 
-**How to disable explicitly.** Delete `.github/CODEOWNERS` and do not re-run apply. Apply will create `* @<login>` again while you are logged in as the owner GitHub account. If rulesets block the script from committing the file, add the line in your own pull request and merge it with the admin bypass (pull requests only).
+**How to disable explicitly.** Delete `.github/CODEOWNERS` and do not re-run apply. Apply writes `* @<login>` again while `protect-main` is not there yet. After `protect-main` exists, change the file in your own pull request and merge it with the admin bypass (pull requests only). Rule Insights (Settings → Rules → Insights) records that merge.
 
 <a id="agent-write-access"></a>
 
@@ -128,7 +142,7 @@ Each log line from the setup scripts links to a section below.
 
 ## Free private repository
 
-**Rule.** Rulesets are not available on a private repository on GitHub Free. Apply refuses to continue until you type `yes` or pass `--accept-risk`. That acceptance is written in the log. Verify repeats the warning on every run. The ruleset steps are SKIPPED. Other settings that the API still allows are still applied.
+**Rule.** Rulesets are not available on a private repository on GitHub Free. Apply refuses to continue until you type `yes` or pass `--accept-risk`. That acceptance is logged as OK. The ruleset steps are then FAIL, because GitHub will not create them. Other settings that the API still allows are still applied. Verify repeats the FAIL on every run.
 
 **Why.** Without rulesets, the agent GitHub account could push directly to the default branch. There is no review. Checks are only advisory. The safe options are: make the repository public, or use GitHub Pro (or a plan that includes rulesets).
 

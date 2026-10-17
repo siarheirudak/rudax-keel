@@ -30,7 +30,7 @@ REST_WHAT=(
   "Compare live ruleset with protect-tags.json"
   "Compare live ruleset with require-checks.json"
   "Check agent role is write"
-  "Check CODEOWNERS lists the owner GitHub account"
+  "Check CODEOWNERS matches the owner GitHub account"
   "Check GITHUB_TOKEN permissions are read-only"
   "Check fork pull request approval"
   "Check allowed actions"
@@ -68,7 +68,7 @@ step_risk_reminder() {
   if [[ $RULESETS_OFF -eq 0 ]]; then
     return 0
   fi
-  log_step OK "Free private ruleset risk" "warning: ${RISK_REASON}" "free-private-risk"
+  log_step FAIL "Free private ruleset risk" "$RISK_REASON" "free-private-risk"
   return 0
 }
 
@@ -79,7 +79,7 @@ verify_named_ruleset() {
   local ids count id enf st
 
   if [[ $RULESETS_OFF -eq 1 ]]; then
-    log_step SKIPPED "$what" "$RISK_REASON" "$anchor"
+    log_step FAIL "$what" "$RISK_REASON" "$anchor"
     return 0
   fi
   if ! mark_empty_repo; then
@@ -94,7 +94,7 @@ verify_named_ruleset() {
     st=0
     branch_file_status ".github/workflows/checks.yml" || st=$?
     if [[ $st -eq 1 ]]; then
-      log_step SKIPPED "$what" "$CHECKS_SKIP_REASON" "$anchor"
+      log_step "NOT YET" "$what" "$CHECKS_SKIP_REASON" "$anchor"
       return 0
     fi
     if [[ $st -ne 0 ]]; then
@@ -132,7 +132,7 @@ verify_named_ruleset() {
   fi
   capture_ruleset_diff "$file" "$GH_API_BODY"
   if [[ $DIFF_RC -eq 0 ]]; then
-    log_step OK "$what" "${name} matches" "$anchor"
+    log_step ALREADY "$what" "${name} matches" "$anchor"
     return 0
   fi
   log_step FAIL "$what" "$(shorten "$DIFF_TEXT")" "$anchor"
@@ -169,7 +169,7 @@ step_agent() {
     return 0
   fi
   if [[ $perm == write ]]; then
-    log_step OK "$what" "${AGENT} has write" "agent-write-access"
+    log_step ALREADY "$what" "${AGENT} has write" "agent-write-access"
     return 0
   fi
   log_step FAIL "$what" "role is ${perm:-unknown}, expected write" "agent-write-access"
@@ -177,7 +177,7 @@ step_agent() {
 }
 
 step_codeowners() {
-  local what="Check CODEOWNERS lists the owner GitHub account" st text
+  local what="Check CODEOWNERS matches the owner GitHub account" st text
   if [[ $REPO_EMPTY -eq 1 ]]; then
     log_step FAIL "$what" "repository is empty; push an initial commit to ${DEFAULT_BRANCH}, then re-run" "codeowners"
     return 0
@@ -185,7 +185,7 @@ step_codeowners() {
   st=0
   branch_file_status ".github/CODEOWNERS" || st=$?
   if [[ $st -eq 1 ]]; then
-    log_step FAIL "$what" "missing on ${DEFAULT_BRANCH}. Expected a * rule listing @${LOGIN}." "codeowners"
+    log_step FAIL "$what" "missing on ${DEFAULT_BRANCH}. Expected \`* @${LOGIN}\`." "codeowners"
     return 0
   fi
   if [[ $st -ne 0 ]]; then
@@ -194,11 +194,11 @@ step_codeowners() {
   fi
   decode_content_body
   text=$CONTENT_TEXT
-  if codeowners_lists_login "$text"; then
-    log_step OK "$what" "lists @${LOGIN} on the * rule" "codeowners"
+  if codeowners_matches "$text"; then
+    log_step ALREADY "$what" "matches * @${LOGIN}" "codeowners"
     return 0
   fi
-  log_step FAIL "$what" "does not list the owner GitHub account @${LOGIN} on the * rule" "codeowners"
+  log_step FAIL "$what" "does not match * @${LOGIN}" "codeowners"
   return 0
 }
 
@@ -211,7 +211,7 @@ step_token() {
   perms=$(jq -r '.default_workflow_permissions // empty' <<<"$GH_API_BODY")
   approve=$(jq -r '.can_approve_pull_request_reviews // false' <<<"$GH_API_BODY")
   if [[ $perms == read && $approve == false ]]; then
-    log_step OK "$what" "read-only and cannot approve pull requests" "read-only-token"
+    log_step ALREADY "$what" "read-only and cannot approve pull requests" "read-only-token"
     return 0
   fi
   log_step FAIL "$what" "default_workflow_permissions is ${perms:-unknown}, can_approve_pull_request_reviews is ${approve:-unknown}" "read-only-token"
@@ -221,12 +221,12 @@ step_token() {
 step_fork() {
   local what="Check fork pull request approval" policy
   if [[ $PRIVATE -eq 1 ]]; then
-    log_step SKIPPED "$what" "private repository; fork approval from outside collaborators is a public repository setting" "fork-approval"
+    log_step ALREADY "$what" "private repository; outside-collaborator fork approval is a public repository setting" "fork-approval"
     return 0
   fi
   if ! gh_api "repos/${SLUG}/actions/permissions/fork-pr-contributor-approval"; then
     if is_not_found; then
-      log_step SKIPPED "$what" "$FORK_MANUAL_REASON" "fork-approval"
+      log_step FAIL "$what" "$FORK_MANUAL_REASON" "fork-approval"
       return 0
     fi
     log_step FAIL "$what" "cannot read fork approval ($(collapse "$GH_API_ERROR"))" "fork-approval"
@@ -234,7 +234,7 @@ step_fork() {
   fi
   policy=$(jq -r '.approval_policy // empty' <<<"$GH_API_BODY")
   if [[ $policy == all_external_contributors ]]; then
-    log_step OK "$what" "requires approval for all outside collaborators" "fork-approval"
+    log_step ALREADY "$what" "requires approval for all outside collaborators" "fork-approval"
     return 0
   fi
   log_step FAIL "$what" "approval_policy is ${policy:-unknown}, expected all_external_contributors" "fork-approval"
@@ -268,7 +268,7 @@ step_actions() {
     log_step FAIL "$what" "selected actions do not match workflows on ${DEFAULT_BRANCH}. patterns_allowed applies to public repositories only." "pinned-actions"
     return 0
   fi
-  log_step OK "$what" "GitHub-owned actions plus the actions used on ${DEFAULT_BRANCH}" "pinned-actions"
+  log_step ALREADY "$what" "GitHub-owned actions plus the actions used on ${DEFAULT_BRANCH}" "pinned-actions"
   return 0
 }
 
@@ -282,7 +282,7 @@ step_pins() {
   fi
   list=$(unpinned_uses | paste -sd ', ' -)
   if [[ -z $list ]]; then
-    log_step OK "$what" "every uses value is a full commit SHA, or there are none" "pinned-actions"
+    log_step ALREADY "$what" "every uses value is a full commit SHA, or there are none" "pinned-actions"
     return 0
   fi
   log_step OK "$what" "warning: ${list}" "pinned-actions"

@@ -39,16 +39,16 @@ Sometimes you change things yourself, for example the `CODEOWNERS` file. GitHub 
 
 1. You open a PR, as usual.
 2. You merge it through the bypass. The bypass is for the **admin role, pull requests only**.
-3. Every bypass is **logged** (Rule Insights), so you can always see when it was used.
+3. Every bypass is logged in Rule Insights (Settings → Rules → Insights), so you can see when it was used.
 
 ### Why you can't push directly to `main`, even as owner
 
 The bypass is set to **"pull requests only"**, not "always". So you still have to go through a PR. That gives you:
 
 - **A record of every change.** Each change to `main` has a PR showing what changed and why, even your own.
-- **Checks still run.** Automated checks run on the PR before merge, catching mistakes before they land.
-- **Protection if your account is misused.** A stolen session or a tool acting as you can't silently push to `main`. It would have to open a visible PR.
 - **One way in.** Everything, from the agent or from you, enters `main` the same way. That's simple to understand and to audit.
+
+Required checks are not part of this layer. They arrive with `.github/workflows/checks.yml` in layer 2. Until that file is on the default branch, `require-checks` is NOT YET.
 
 ## What the script configures
 
@@ -67,11 +67,11 @@ Apply is idempotent. Run it again after each layer is merged. A setting that alr
 
 | Step | What it sets |
 |---|---|
+| `CODEOWNERS` | First, before `protect-main`. Write `* @<login>` for the logged-in owner GitHub account. Rewrite the file if it names anyone else. If `protect-main` already exists and the file is wrong, stop and fix it in a pull request. See [why](why.md#codeowners). |
 | `protect-main` | Default branch: no deletion, no force push, pull request required, 1 approval, code-owner review, dismiss stale reviews. Admin bypass for pull requests only. |
-| `protect-tags` | All tags: block creation, update, and deletion. Admin bypass only. |
-| `require-checks` | Required check `checks / gate` on the default branch, strict, no bypass. Created only when `.github/workflows/checks.yml` is already on the default branch. |
+| `protect-tags` | All tags: block creation, update, and deletion. Only an admin may bypass, because only the owner creates releases. |
+| `require-checks` | Required check `checks / gate` on the default branch, strict, no bypass. NOT YET until `.github/workflows/checks.yml` is on the default branch (layer 2). |
 | Agent access | Invite `AGENT_LOGIN` with write. Does not remove admin if you already granted it. |
-| `CODEOWNERS` | If missing, write `* @<login>` for the logged-in owner GitHub account. If the file already lists that login, leave it. If it lists someone else, stop and do not overwrite it. |
 | Actions token | Default `GITHUB_TOKEN` is read-only and cannot approve pull requests. |
 | Fork approval | On a public repository, require approval for fork pull request workflows from all outside collaborators. |
 | Allowed actions | GitHub-owned actions, plus the exact `uses:` values in workflows on the default branch. |
@@ -85,7 +85,15 @@ The agent GitHub account must accept the collaborator invitation before verify's
 The script keeps more than one ruleset. GitHub applies every active ruleset that matches a ref. A bypass applies only inside its own ruleset.
 
 - The admin bypass on `protect-main` lets you merge a pull request without a second review. It does not let you force-push, and it does not apply to tags.
-- `protect-tags` has its own admin bypass. The pull-request bypass mode is not valid for tags, so this one is "always", and only the admin role is on the list. The agent GitHub account has write, not admin, so it cannot create, move, or delete a tag.
-- `require-checks` has an empty bypass list. An admin cannot skip `checks / gate`. Merging through the `protect-main` bypass still waits for that check once the check exists.
+- `protect-tags` has its own admin bypass. The pull-request bypass mode is not valid for tags, so this one is "always", and only the admin role is on the list. Only the owner creates a release tag. The agent GitHub account has write, not admin, so it cannot create, move, or delete a tag, and it cannot fake a release.
+- `require-checks` has an empty bypass list. It is NOT YET until layer 2 adds `.github/workflows/checks.yml`. After that, an admin cannot skip `checks / gate`, and the `protect-main` bypass does not skip it either.
+
+## Manual setup
+
+Do these as the owner GitHub account, in this order. The script does the same thing.
+
+1. **Write CODEOWNERS with your own account**, before any ruleset. Add `.github/CODEOWNERS` containing `* @YOUR_LOGIN`. [Why](why.md#codeowners).
+2. Create `protect-main`, then `protect-tags`. Leave `require-checks` until layer 2.
+3. Invite the agent GitHub account with write, not admin.
 
 JSON for the three rulesets lives in [setup/rulesets](../setup/rulesets).

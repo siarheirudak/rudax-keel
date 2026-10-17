@@ -342,6 +342,28 @@ codeowners_lists_login() {
   return 1
 }
 
+# 0 when the only owner line is "* @LOGIN" (blank lines and comments allowed).
+codeowners_matches() {
+  local text=$1 login_lc line owner saw=0
+  login_lc=$(lower "$LOGIN")
+  while IFS= read -r line || [[ -n $line ]]; do
+    case $line in
+      ''|\#*) continue ;;
+    esac
+    set -f
+    # shellcheck disable=SC2086
+    set -- $line
+    set +f
+    [[ ${1-} == '*' ]] || return 1
+    shift
+    [[ $# -eq 1 ]] || return 1
+    owner=$(lower "${1#@}")
+    [[ $owner == "$login_lc" ]] || return 1
+    saw=1
+  done <<<"$text"
+  [[ $saw -eq 1 ]]
+}
+
 load_repo_fields() {
   local priv
   priv=$(jq -r '.private // false' <<<"$GH_API_BODY")
