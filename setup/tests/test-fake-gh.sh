@@ -19,7 +19,7 @@ cat >"$BIN/gh" <<EOF
 exec python3 "$ROOT/setup/tests/mock-gh.py" "\$@"
 EOF
 chmod +x "$BIN/gh"
-for tool in date tee mkdir cat sed grep tr mktemp dirname pwd base64; do
+for tool in date tee mkdir cat sed grep tr mktemp dirname pwd base64 python3; do
   src=$(command -v "$tool")
   ln -s "$src" "$BASIC/$tool"
 done
@@ -137,8 +137,47 @@ assert_rc 2
 need "Unknown option"
 ok "unknown flag"
 
+# --- old gh rejects --slurp; scripts must not pass it ---
+reset
+rc=0
+out=$("$BIN/gh" api --paginate --slurp repos/owner/repo/rulesets 2>&1) || rc=$?
+assert_rc 1
+need "unknown flag: --slurp"
+need "Usage:"
+ok "old gh rejects --slurp"
+
+if grep -nE '^[^#]*--slurp' "$APPLY" "$VERIFY" "$ROOT/setup/common.sh" | grep -v 'slurpfile'; then
+  fail "script still passes --slurp"
+fi
+ok "scripts do not pass --slurp"
+
+# --- gh older than 1.7.0 stops before any API call ---
+reset
+mutate 'state["gh_version"]="1.6.0"'
+run "$APPLY" owner/repo agent
+assert_rc 1
+need "older than 1.7.0"
+need "https://cli.github.com/"
+forbid "Usage:"
+forbid "Flags:"
+if [[ -s $GH_MOCK_LOG ]]; then
+  fail "old gh called the API"
+fi
+ok "old gh version"
+
+# --- a usage page from gh becomes one line ---
+reset
+mutate 'state["usage_flag"]="--paginate"'
+run "$APPLY" owner/repo agent
+assert_rc 1
+need "unknown flag: --paginate"
+forbid "Flags:"
+forbid "Make additional HTTP requests"
+ok "gh usage stays one line"
+
 # --- missing jq ---
 hash -r
+: >"$GH_MOCK_LOG"
 rc=0
 out=$(PATH="$BASIC" "$BASH_BIN" "$APPLY" owner/repo agent 2>&1) || rc=$?
 hash -r

@@ -52,6 +52,9 @@ RISK_REASON="GitHub Free on a private repository has no rulesets. The agent GitH
 CHECKS_SKIP_REASON="CI not added yet; re-run after layer 2 merge"
 # shellcheck disable=SC2034
 FORK_MANUAL_REASON="API unavailable. Do this by hand: Settings → Actions → General → Fork pull request workflows → Require approval for all outside collaborators."
+# gh api --jq arrived in 1.7.0. --paginate, --input, --method, and -f are older.
+# shellcheck disable=SC2034
+MIN_GH_VERSION=1.7.0
 
 # shellcheck disable=SC2034,SC2016
 PENDING_INVITE_JQ='
@@ -234,6 +237,28 @@ skip_remaining() {
   done
 }
 
+# First useful line only. gh prints its whole usage page after "unknown flag".
+gh_error_line() {
+  local err=$1 body=$2 line msg=""
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=${line%$'\r'}
+    [[ -z $line ]] && continue
+    case $line in
+      Usage:*|usage:*|USAGE:*|Flags:*) continue ;;
+      "  "*|"-"*) continue ;;
+    esac
+    msg=$line
+    break
+  done <<<"$err"
+  if [[ -z $msg ]]; then
+    msg=$(jq -r '.message // empty' <<<"$body" 2>/dev/null || true)
+  fi
+  if [[ -z $msg ]]; then
+    msg="gh failed"
+  fi
+  collapse "$msg"
+}
+
 gh_api() {
   local err_file body_file err_text body_text
   err_file=$(mktemp)
@@ -248,9 +273,84 @@ gh_api() {
   err_text=$(cat "$err_file")
   body_text=$(cat "$body_file")
   GH_API_BODY=$body_text
-  GH_API_ERROR=$(collapse "${err_text} ${body_text}")
+  GH_API_ERROR=$(gh_error_line "$err_text" "$body_text")
   rm -f "$err_file" "$body_file"
   return 1
+}
+
+# List every page as one JSON array. --jq '.[]' works on gh 1.7.0 and later.
+# --slurp does not: that flag needs gh 2.48.0.
+gh_api_collect() {
+  local err_file body_file err_text body_text
+  err_file=$(mktemp)
+  body_file=$(mktemp)
+  GH_API_BODY=""
+  GH_API_ERROR=""
+  if gh api --paginate --jq '.[]' "$@" >"$body_file" 2>"$err_file"; then
+    if ! GH_API_BODY=$(jq -s '.' <"$body_file" 2>"$err_file"); then
+      GH_API_ERROR=$(gh_error_line "$(cat "$err_file")" "")
+      rm -f "$err_file" "$body_file"
+      return 1
+    fi
+    rm -f "$err_file" "$body_file"
+    return 0
+  fi
+  err_text=$(cat "$err_file")
+  body_text=$(cat "$body_file")
+  GH_API_BODY=$body_text
+  GH_API_ERROR=$(gh_error_line "$err_text" "$body_text")
+  rm -f "$err_file" "$body_file"
+  return 1
+}
+
+gh_cli_version() {
+  local text line
+  text=$(gh --version 2>/dev/null) || return 1
+  line=${text%%$'\n'*}
+  if [[ $line =~ gh[[:space:]]version[[:space:]]([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+    printf '%s' "${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+    return 0
+  fi
+  return 1
+}
+
+version_at_least() {
+  local have=$1 need=$2
+  local have_major have_minor have_patch
+  local need_major need_minor need_patch
+  IFS=. read -r have_major have_minor have_patch <<<"$have"
+  IFS=. read -r need_major need_minor need_patch <<<"$need"
+  have_major=${have_major:-0}
+  have_minor=${have_minor:-0}
+  have_patch=${have_patch:-0}
+  need_major=${need_major:-0}
+  need_minor=${need_minor:-0}
+  need_patch=${need_patch:-0}
+  have_patch=${have_patch%%[^0-9]*}
+  need_patch=${need_patch%%[^0-9]*}
+  if ((10#$have_major > 10#$need_major)); then return 0; fi
+  if ((10#$have_major < 10#$need_major)); then return 1; fi
+  if ((10#$have_minor > 10#$need_minor)); then return 0; fi
+  if ((10#$have_minor < 10#$need_minor)); then return 1; fi
+  ((10#$have_patch >= 10#$need_patch))
+}
+
+step_gh_version() {
+  local what="Check gh version" ver
+  if ! command -v gh >/dev/null 2>&1; then
+    log_step FAIL "$what" "gh is not on PATH. Install gh ${MIN_GH_VERSION} or newer: https://cli.github.com/" "gh-version"
+    return 1
+  fi
+  if ! ver=$(gh_cli_version); then
+    log_step FAIL "$what" "could not read gh version. Install gh ${MIN_GH_VERSION} or newer: https://cli.github.com/" "gh-version"
+    return 1
+  fi
+  if ! version_at_least "$ver" "$MIN_GH_VERSION"; then
+    log_step FAIL "$what" "gh ${ver} is older than ${MIN_GH_VERSION}. Upgrade gh: https://cli.github.com/ . Needed: gh api --paginate and gh api --jq." "gh-version"
+    return 1
+  fi
+  log_step OK "$what" "gh ${ver}" "gh-version"
+  return 0
 }
 
 api_blob() {
@@ -629,7 +729,7 @@ touch_shared_state() {
   : "$LOGIN" "$DEFAULT_BRANCH" "$REPO_EMPTY" "$DIFF_RC" "$DIFF_TEXT" \
     "$RULESETS_OFF" "$PRIVATE" "$PLAN" "$REPO_OWNER" "$OWNER_TYPE" \
     "$ACCEPT_RISK" "$REWRITE_CODEOWNERS" "$REPO_ADMIN" "$CONTENT_TEXT" "$USES_LIST" "$AUTH_ERROR" \
-    "$RISK_REASON" "$CHECKS_SKIP_REASON" "$FORK_MANUAL_REASON" "$GH_API_BODY" \
+    "$RISK_REASON" "$CHECKS_SKIP_REASON" "$FORK_MANUAL_REASON" "$MIN_GH_VERSION" "$GH_API_BODY" \
     "$GH_API_ERROR" "$LOG_FILE" "$STEP" "$FAIL_COUNT" "$SUMMARY" "$SLUG" "$AGENT"
 }
 touch_shared_state

@@ -132,7 +132,7 @@ apply_named_ruleset() {
     log_step FAIL "$what" "${file} is not valid JSON" "$anchor"
     return 0
   fi
-  if ! gh_api --paginate --slurp "repos/${SLUG}/rulesets?includes_parents=false&per_page=100"; then
+  if ! gh_api_collect "repos/${SLUG}/rulesets?includes_parents=false&per_page=100"; then
     log_step FAIL "$what" "cannot list rulesets ($(collapse "$GH_API_ERROR"))" "$anchor"
     return 0
   fi
@@ -200,7 +200,7 @@ step_invite() {
     log_step FAIL "$what" "cannot check collaborator ($(collapse "$GH_API_ERROR"))" "agent-write-access"
     return 0
   fi
-  if ! gh_api --paginate --slurp "repos/${SLUG}/invitations"; then
+  if ! gh_api_collect "repos/${SLUG}/invitations"; then
     log_step FAIL "$what" "cannot list invitations ($(collapse "$GH_API_ERROR"))" "agent-write-access"
     return 0
   fi
@@ -223,7 +223,7 @@ protect_main_present() {
     printf '0'
     return 0
   fi
-  if ! gh_api --paginate --slurp "repos/${SLUG}/rulesets?includes_parents=false&per_page=100"; then
+  if ! gh_api_collect "repos/${SLUG}/rulesets?includes_parents=false&per_page=100"; then
     return 1
   fi
   ids=$(ruleset_ids "protect-main")
@@ -437,6 +437,10 @@ step_actions() {
   return 0
 }
 
+if ! step_gh_version; then
+  skip_rest "not run: gh version check failed"
+  finish
+fi
 if ! step_auth; then
   skip_rest "not run: caller is not an authenticated admin"
   finish
