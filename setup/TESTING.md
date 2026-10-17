@@ -29,24 +29,29 @@ Expected, with no FAIL:
 - Fork approval is OK, reason `not applicable (private repo)`.
 - Token permissions and allowed actions are OK or ALREADY.
 
-The agent GitHub account must accept the invitation. Then:
+The agent accepts the invitation in step (b), before cloning. Until then, verify's agent-role step is FAIL.
 
 ```bash
 bash setup/verify-github-rules.sh siarheirudak/rudax-keel-sandbix isiarheiridak-agent
 ```
 
-Expected: no FAIL. `require-checks` is still NOT YET. The agent role is ALREADY only after the invite is accepted.
+Expected now: the agent-role step is FAIL (invitation pending), `require-checks` is NOT YET, and nothing else is FAIL. After step (b), the verify in (d) expects no FAIL.
 
 If apply prints the GitHub Free private warning, stop. Do not pass `--accept-risk`. This sandbox is on Pro so rulesets exist. A Free result means the test does not count.
 
-`main` needs at least two commits. The force-push attack rewinds to `main~1`. If `git rev-list --count origin/main` is less than 2, open a pull request that adds an empty commit and merge it yourself (admin bypass, pull requests only), then fetch again.
-
-Create the tag the agent will try to move and delete. This uses the owner bypass on `protect-tags`:
+`main` on the sandbox needs at least two commits. The force-push attack rewinds to `main~1`. This checkout is the template, so count the sandbox with the API:
 
 ```bash
-git fetch origin
-git tag keel-test origin/main~1
-git push origin refs/tags/keel-test
+gh api repos/siarheirudak/rudax-keel-sandbix/commits --jq length
+```
+
+If that length is less than 2, add a second commit on the sandbox through a pull request and merge it yourself (admin bypass, pull requests only), then run the count again.
+
+Create `keel-test` on the sandbox, pointing at the parent of `main`. This uses the owner bypass on `protect-tags`. Do not tag this template checkout.
+
+```bash
+sha=$(gh api repos/siarheirudak/rudax-keel-sandbix/commits/main --jq '.parents[0].sha')
+gh api -X POST repos/siarheirudak/rudax-keel-sandbix/git/refs -f ref=refs/tags/keel-test -f sha="$sha"
 ```
 
 Expected: the tag is created.
@@ -61,6 +66,15 @@ gh api user --jq .login
 ```
 
 This must print `isiarheiridak-agent`. If it prints anything else, stop. The attacks below would be a false pass, because you would be acting as the owner.
+
+Accept the collaborator invitation before cloning. The sandbox is private.
+
+```bash
+gh api user/repository_invitations --jq '.[] | select(.repository.full_name=="siarheirudak/rudax-keel-sandbix") | .id'
+gh api -X PATCH user/repository_invitations/ID
+```
+
+Use the id from the first command as `ID`. If the first command prints nothing, the invitation is already accepted.
 
 ```bash
 git clone https://github.com/siarheirudak/rudax-keel-sandbix.git
@@ -116,7 +130,7 @@ Expected: rejected, `GH013`, the branch cannot be deleted.
 
 **Create, move, and delete a tag**
 
-The owner already pushed `keel-test` in step (a).
+The owner already created `keel-test` on the sandbox in step (a).
 
 ```bash
 git tag attack-new
@@ -138,7 +152,7 @@ git push -u origin attack-merge
 gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-merge --title "attack: merge" --body "sandbox test"
 method=$(gh api repos/siarheirudak/rudax-keel-sandbix --jq 'if .allow_merge_commit then "merge" elif .allow_squash_merge then "squash" elif .allow_rebase_merge then "rebase" else "none" end')
 test "$method" != none
-gh pr merge --repo siarheirudak/rudax-keel-sandbix --"$method"
+gh pr merge attack-merge --repo siarheirudak/rudax-keel-sandbix --"$method"
 ```
 
 Expected: merge blocked, and the output contains a review-required line (`At least 1 approving review is required`, or `Review required`). A failure that only says the merge method is disabled does not count.
@@ -146,7 +160,7 @@ Expected: merge blocked, and the output contains a review-required line (`At lea
 **Agent approves its own pull request**
 
 ```bash
-gh pr review --repo siarheirudak/rudax-keel-sandbix --approve --body "self approve"
+gh pr review attack-merge --repo siarheirudak/rudax-keel-sandbix --approve --body "self approve"
 ```
 
 Expected: refused. You cannot approve your own pull request.
@@ -199,7 +213,7 @@ Wait until that run exists and has finished. No run means this attack does not p
 
 ```bash
 gh run view RUN_ID --repo siarheirudak/rudax-keel-sandbix --log
-gh pr view --repo siarheirudak/rudax-keel-sandbix --json reviews --jq '[.reviews[] | select(.author.login=="github-actions")]'
+gh pr view attack-merge --repo siarheirudak/rudax-keel-sandbix --json reviews --jq '[.reviews[] | select(.author.login=="github-actions")]'
 ```
 
 Pass only when all three are true: a workflow run exists for that commit, its log contains `not permitted to approve`, and the pull request has no approval from `github-actions[bot]`.
@@ -216,17 +230,17 @@ git commit -m "attack: rewrite CODEOWNERS"
 git push -u origin attack-codeowners
 gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-codeowners --title "attack: CODEOWNERS" --body "sandbox test"
 method=$(gh api repos/siarheirudak/rudax-keel-sandbix --jq 'if .allow_merge_commit then "merge" elif .allow_squash_merge then "squash" elif .allow_rebase_merge then "rebase" else "none" end')
-gh pr merge --repo siarheirudak/rudax-keel-sandbix --"$method"
+gh pr merge attack-codeowners --repo siarheirudak/rudax-keel-sandbix --"$method"
 ```
 
 Expected: merge refused, with the same review-required message. The agent is not the code owner.
 
 **Stale review on attack-merge**
 
-In the owner shell, approve the current `attack-merge` pull request:
+In the owner shell, approve that pull request by branch name. The owner shell is the template checkout, so `gh` must not infer the pull request from the current branch.
 
 ```bash
-gh pr review --repo siarheirudak/rudax-keel-sandbix --approve --body "owner approval"
+gh pr review attack-merge --repo siarheirudak/rudax-keel-sandbix --approve --body "owner approval"
 ```
 
 Back in the agent shell, add one commit and try the merge again, with the same `$method` as above:
@@ -235,14 +249,29 @@ Back in the agent shell, add one commit and try the merge again, with the same `
 git switch attack-merge
 git commit --allow-empty -m "attack: stale review"
 git push
-gh pr merge --repo siarheirudak/rudax-keel-sandbix --"$method"
+gh pr merge attack-merge --repo siarheirudak/rudax-keel-sandbix --"$method"
 ```
 
 Expected: the owner approval is dismissed. Merge is blocked, with the review-required message.
 
 **Stale review on attack-codeowners**
 
-Same two steps on `attack-codeowners`. The owner approves that pull request. The agent pushes one more commit and tries to merge. Expected: the approval is dismissed and the merge is blocked with the review-required message.
+In the owner shell:
+
+```bash
+gh pr review attack-codeowners --repo siarheirudak/rudax-keel-sandbix --approve --body "owner approval"
+```
+
+In the agent shell:
+
+```bash
+git switch attack-codeowners
+git commit --allow-empty -m "attack: stale review"
+git push
+gh pr merge attack-codeowners --repo siarheirudak/rudax-keel-sandbix --"$method"
+```
+
+Expected: the approval is dismissed and the merge is blocked with the review-required message.
 
 ## (d) Verify, as the owner
 
@@ -281,10 +310,10 @@ git push origin :refs/tags/attack-new
 
 `git push origin --delete attack-direct` errors because that branch was never pushed. That error is expected. `attack-new` was never created if the tag push was rejected; a delete error for a missing tag is fine.
 
-In the owner shell, delete the tag created in step (a):
+In the owner shell, delete the tag created in step (a). This is the sandbox, not the template checkout:
 
 ```bash
-git push origin :refs/tags/keel-test
+gh api -X DELETE repos/siarheirudak/rudax-keel-sandbix/git/refs/tags/keel-test
 ```
 
 Close any leftover pull requests in the sandbox UI. To reset rules, stay in the owner shell and run apply again. Matching settings come back ALREADY. To remove the rulesets entirely, delete them under Settings → Rules → Rulesets, then run apply if you want them again. Do not delete the sandbox repository.
