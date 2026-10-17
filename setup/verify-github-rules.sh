@@ -106,7 +106,7 @@ verify_named_ruleset() {
     log_step FAIL "$what" "missing ${file}" "$anchor"
     return 0
   fi
-  if ! gh_api --paginate --slurp "repos/${SLUG}/rulesets?includes_parents=false&per_page=100"; then
+  if ! gh_api_collect "repos/${SLUG}/rulesets?includes_parents=false&per_page=100"; then
     log_step FAIL "$what" "cannot list rulesets ($(collapse "$GH_API_ERROR")). Reading rulesets requires admin on the repo." "$anchor"
     return 0
   fi
@@ -146,7 +146,7 @@ step_agent() {
       log_step FAIL "$what" "cannot check collaborator ($(collapse "$GH_API_ERROR"))" "agent-write-access"
       return 0
     fi
-    if ! gh_api --paginate --slurp "repos/${SLUG}/invitations"; then
+    if ! gh_api_collect "repos/${SLUG}/invitations"; then
       log_step FAIL "$what" "not a collaborator, and invitations could not be read ($(collapse "$GH_API_ERROR"))" "agent-write-access"
       return 0
     fi
@@ -289,6 +289,10 @@ step_pins() {
   return 0
 }
 
+if ! step_gh_version; then
+  skip_rest "not run: gh version check failed"
+  finish
+fi
 if ! step_auth; then
   skip_rest "not run: gh auth check failed"
   finish

@@ -18,6 +18,18 @@ Each log line from the setup scripts links to a section below.
 
 **How to disable explicitly.** There is nothing to turn off. Log in as the owner GitHub account with `gh auth login` before you run the scripts.
 
+<a id="gh-version"></a>
+
+## gh version
+
+**Rule.** Apply and verify need `gh` 1.7.0 or newer.
+
+**Why.** Listing rulesets uses `gh api --paginate` and `gh api --jq`. Those flags exist from 1.7.0. `gh api --slurp` needs 2.48.0, so these scripts do not use it. An older `gh` answers an unknown flag with its whole usage page, and the rules are not applied.
+
+**If disabled.** The version check fails and the script stops. Nothing is written.
+
+**How to disable explicitly.** There is nothing to turn off. Upgrade `gh` from <https://cli.github.com/>.
+
 <a id="agent-environment"></a>
 
 ## Where the coding agent runs

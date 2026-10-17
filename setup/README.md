@@ -1,6 +1,6 @@
 # Setup
 
-`gh` logged in as the owner GitHub account, with admin on the repo (`gh auth login`). Never the agent GitHub account's token. No config file: the script uses the account that `gh` is logged in as.
+`gh` 1.7.0 or newer (`gh --version`), logged in as the owner GitHub account, with admin on the repo (`gh auth login`). Never the agent GitHub account's token. The scripts use `gh api --paginate` and `gh api --jq` (both in 1.7.0). They do not use `gh api --slurp`, which needs 2.48.0. An older `gh` stops at the version check. Upgrade: <https://cli.github.com/>. No config file: the script uses the account that `gh` is logged in as.
 
 From the repository root:
 

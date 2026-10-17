@@ -74,12 +74,15 @@ def default_state():
             "patterns_allowed": [],
         },
         "calls": [],
+        "gh_version": "2.4.0",
+        "usage_flag": "",
     }
 
 
 def parse(argv):
     method = None
     slurp = False
+    jq_filter = ""
     input_file = None
     fields = {}
     endpoint = None
@@ -102,6 +105,7 @@ def parse(argv):
             fields[key] = value
             index += 2
         elif arg == "--jq":
+            jq_filter = argv[index + 1]
             index += 2
         elif arg.startswith("-"):
             sys.stderr.write(f"mock unknown flag {arg}\n")
@@ -119,7 +123,7 @@ def parse(argv):
     if endpoint is None:
         sys.stderr.write("mock missing endpoint\n")
         sys.exit(99)
-    return method, endpoint.split("?", 1)[0], slurp, fields, body
+    return method, endpoint.split("?", 1)[0], slurp, jq_filter, fields, body
 
 
 def wrapped_b64(text):
@@ -134,7 +138,17 @@ def repo_rest(path):
     return match.group(3) or ""
 
 
-def emit(code, payload, slurp):
+def old_gh_usage(flag):
+    sys.stderr.write(
+        f"unknown flag: {flag}\n\n"
+        "Usage:  gh api <endpoint> [flags]\n\n"
+        "Flags:\n"
+        "      --paginate           Make additional HTTP requests to fetch all pages of results\n"
+        "  -X, --method string      The HTTP method for the request\n"
+    )
+
+
+def emit(code, payload, jq_filter):
     if code == 204:
         return 0
     if code == 99:
@@ -144,11 +158,13 @@ def emit(code, payload, slurp):
         sys.stdout.write(json.dumps({"message": payload}))
         sys.stderr.write(f"gh: {payload} (HTTP {code})\n")
         return 1
-    if slurp and isinstance(payload, list):
-        text = json.dumps([payload])
-    else:
-        text = json.dumps(payload)
-    sys.stdout.write(text)
+    if jq_filter == ".[]" and isinstance(payload, list):
+        lines = [json.dumps(item) for item in payload]
+        sys.stdout.write("\n".join(lines))
+        if lines:
+            sys.stdout.write("\n")
+        return 0
+    sys.stdout.write(json.dumps(payload))
     return 0
 
 
@@ -339,16 +355,30 @@ def main():
     if sys.argv[1:] == ["--init"]:
         save(default_state())
         return 0
+    if sys.argv[1:] in (["--version"], ["version"]):
+        version = "2.4.0"
+        path = os.environ.get("GH_MOCK_STATE")
+        if path and os.path.exists(path):
+            version = load().get("gh_version") or version
+        sys.stdout.write(f"gh version {version} (test)\n")
+        return 0
     if len(sys.argv) < 2 or sys.argv[1] != "api":
         sys.stderr.write("mock: only gh api is implemented\n")
         return 99
-    method, path, slurp, fields, body = parse(sys.argv[2:])
+    method, path, slurp, jq_filter, fields, body = parse(sys.argv[2:])
     state = load()
+    usage_flag = state.get("usage_flag") or ""
+    if slurp:
+        old_gh_usage("--slurp")
+        return 1
+    if usage_flag and usage_flag in sys.argv:
+        old_gh_usage(usage_flag)
+        return 1
     state["calls"].append({"method": method, "path": path, "body": body, "fields": fields})
     log_line(method, path)
     code, payload, _route_slurp = route(state, method, path, fields, body)
     save(state)
-    return emit(code, payload, slurp)
+    return emit(code, payload, jq_filter)
 
 
 if __name__ == "__main__":
