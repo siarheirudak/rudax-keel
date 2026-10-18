@@ -18,6 +18,8 @@ git checkout setup/github-protection
 bash setup/apply-github-rules.sh siarheirudak/rudax-keel-sandbix isiarheiridak-agent
 ```
 
+This checkout is only for layer 1. Layer 2 runs apply and verify from the template's `layer2/checks` (or from `main` after that pull request is merged), not from `setup/github-protection`.
+
 The login must be the owner GitHub account, not `isiarheiridak-agent`.
 
 Expected, with no FAIL:
@@ -299,7 +301,9 @@ gh api user --jq .login
 bash setup/verify-github-rules.sh siarheirudak/rudax-keel-sandbix isiarheiridak-agent
 ```
 
-The login is the owner GitHub account. Expected: no FAIL. `require-checks` is NOT YET until both workflows are on the sandbox default branch and every required check-run name has been reported by GitHub Actions app 15368. `keel-process-files-separate` reports on a pull request, not on a push to the default branch.
+The login is the owner GitHub account. Expected at this point: no FAIL. `require-checks` is NOT YET because `checks.yml` and `scope.yml` are not both on the sandbox default branch yet.
+
+That is not what verify does once the files are there. After both workflows are on the default branch, a missing or different `require-checks` ruleset is FAIL, reason `owner: run setup/apply-github-rules.sh`. Verify does not wait for the checks to have reported. Apply is the step that stays NOT YET until every required name has been reported.
 
 ## (e) Record the results
 
@@ -337,48 +341,150 @@ Close any leftover pull requests in the sandbox UI. To reset rules, stay in the 
 
 ## Layer 2
 
-Do this after the template's layer 2 is on the sandbox default branch. The check-run names are `keel-gate` and `keel-process-files-separate`. `keel-gate` runs on push to the default branch and on pull requests (`opened`, `synchronize`, `reopened`, `edited`). `keel-process-files-separate` runs only on pull requests. Open one pull request so scope reports, and let checks run on the default branch.
+The check-run names are `keel-gate` and `keel-process-files-separate`. `keel-gate` runs on push to the default branch and on pull requests (`opened`, `synchronize`, `reopened`, `edited`). `keel-process-files-separate` runs only on pull requests. Scope reads `scripts/check-scope.py` from the pull request's base, so that file has to be on the sandbox default branch before a warm-up pull request can report it.
 
-In the agent shell, before anything else:
+Run apply and verify from a clone of the template (`siarheirudak/rudax-keel`) checked out at `layer2/checks`, or at `main` after pull request #5 is merged. Do not use `setup/github-protection`. That branch does not have this layer's ruleset. The scripts' target is still the sandbox. Do not point them at the template.
+
+The owner shell is `gh auth login` as `siarheirudak`. Do not put the owner token in the environment. `unset GH_TOKEN` in that shell so a leftover agent token is not used.
 
 ```bash
-export GIT_TERMINAL_PROMPT=0
-export GH_TOKEN="${GH_TOKEN:?set GH_TOKEN to the agent GitHub account token}"
-gh auth setup-git
+unset GH_TOKEN
 gh api user --jq .login
-```
-
-This must print `isiarheiridak-agent`. If it prints anything else, stop. If this is a new clone, run `gh auth setup-git` before `git clone`, with `GIT_TERMINAL_PROMPT=0`, the same way as step (b).
-
-In the owner shell:
-
-```bash
-export GIT_TERMINAL_PROMPT=0
-export GH_TOKEN="${GH_TOKEN:?set GH_TOKEN to the owner GitHub account token}"
-gh api user --jq .login
-bash setup/apply-github-rules.sh siarheirudak/rudax-keel-sandbix isiarheiridak-agent
-bash setup/verify-github-rules.sh siarheirudak/rudax-keel-sandbix isiarheiridak-agent
-```
-
-The login must be `siarheirudak`. Expected: `require-checks` is OK or ALREADY, and verify has no FAIL. If a required name has not reported yet, apply is NOT YET and the reason lists `reported [...]` and `missing [...]`. A red `checks` push to the default branch is WARN, not FAIL. A red pull request run is not that warning.
-
-In each shell, pick a merge method the repository allows. Reuse `$method` below. Do not hardcode `--merge`.
-
-```bash
 method=$(gh api repos/siarheirudak/rudax-keel-sandbix --jq 'if .allow_merge_commit then "merge" elif .allow_squash_merge then "squash" elif .allow_rebase_merge then "rebase" else "none" end')
 test "$method" != none
 ```
 
-The attacks below are in the agent shell, except where a step says owner shell. Do not approve or merge as the agent.
+The login must be `siarheirudak`. If it is not, stop. Reuse `$method` below. Do not hardcode `--merge`.
 
-Start every attack branch from a fresh `origin/main`. Do not branch from another attack branch. If the local name already exists, delete it with `git branch -D` and start again.
+**Import the layer 2 tree onto the sandbox**
+
+In the owner's sandbox clone (not the template clone):
+
+```bash
+git fetch origin
+git switch -c layer2-import origin/main
+git fetch https://github.com/siarheirudak/rudax-keel.git layer2/checks
+git read-tree -u --reset FETCH_HEAD
+grep -qx '* @siarheirudak' .github/CODEOWNERS
+git diff --cached --stat
+git commit -m "Import layer 2 from rudax-keel layer2/checks"
+git push -u origin layer2-import
+gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head layer2-import --title "Import layer 2" --body "sandbox import"
+```
+
+`git read-tree` replaces the whole tree, including `scripts/`. Scope later downloads `scripts/check-scope.py` from the base commit, so a partial copy is not enough. `CODEOWNERS` must still be the single line `* @siarheirudak`. If the grep fails, stop. Do not commit a file that names the agent.
+
+Wait until `keel-gate` is success on that pull request. Scope does not run yet: `scope.yml` is not on the base. Then merge with the admin bypass:
+
+```bash
+gh pr merge layer2-import --repo siarheirudak/rudax-keel-sandbix --"$method" --admin
+```
+
+Wait for the `checks` run on the sandbox default branch (the push from the merge). `keel-gate` on that run is what the first apply looks for.
+
+**First apply**
+
+In the template clone, on `layer2/checks` (or `main` after pull request #5 is merged):
+
+```bash
+unset GH_TOKEN
+gh api user --jq .login
+bash setup/apply-github-rules.sh siarheirudak/rudax-keel-sandbix isiarheiridak-agent
+```
+
+Expected: `require-checks` is NOT YET. The reason contains `reported [keel-gate]; missing [keel-process-files-separate]`. The ruleset is not created. Do not continue until that is the reason. A red `checks` push to the default branch is WARN, not FAIL. A red pull request run is not that warning.
+
+**Agent shell**
+
+Open a new shell. Repeat the isolation from step (b). Do not reuse the owner's `gh` login or the owner's git config.
+
+```bash
+export HOME="$(mktemp -d)"
+export AGENT_HOME="$HOME"
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
+export GH_CONFIG_DIR="$HOME/gh"
+export GIT_TERMINAL_PROMPT=0
+unset GITHUB_TOKEN
+unset GIT_ASKPASS
+export GH_TOKEN="${GH_TOKEN:?set GH_TOKEN to the agent GitHub account token}"
+gh auth setup-git
+git config --global user.name isiarheiridak-agent
+git config --global user.email 335914113+isiarheiridak-agent@users.noreply.github.com
+gh api user --jq .login
+```
+
+This must print `isiarheiridak-agent`. If it prints anything else, stop. `git config --global` writes into the temp HOME because `GIT_CONFIG_GLOBAL` points there.
+
+`gh auth setup-git` is before the clone so git does not prompt. `GIT_TERMINAL_PROMPT=0` makes a missing credential fail instead of waiting. Cases (d) and (g) push files under `.github/workflows/`. The agent token must include the `workflow` scope (`gh auth status`). A push rejected for a missing `workflow` scope means that case does not count.
+
+If the collaborator invitation is still pending, accept it as in step (b). Then clone:
+
+```bash
+git clone https://github.com/siarheirudak/rudax-keel-sandbix.git rudax-keel-sandbix-l2
+cd rudax-keel-sandbix-l2
+git config --show-origin --get-all credential.helper
+```
+
+Every helper that prints must be the agent one (`gh auth git-credential`). If a keychain, store, or other helper is also listed, stop.
+
+```bash
+git switch -c attack-identity-l2
+git commit --allow-empty -m "identity check"
+git push -u origin attack-identity-l2
+gh api repos/siarheirudak/rudax-keel-sandbix/events --jq '[.[] | select(.type=="PushEvent" and .payload.ref=="refs/heads/attack-identity-l2") | .actor.login] | unique | .[]'
+```
+
+The only login printed must be `isiarheiridak-agent`. If the events list is empty, wait and run it again. If it stays empty, the commit author, the committer, and `gh api user --jq .login` must all be `isiarheiridak-agent`.
+
+```bash
+method=$(gh api repos/siarheirudak/rudax-keel-sandbix --jq 'if .allow_merge_commit then "merge" elif .allow_squash_merge then "squash" elif .allow_rebase_merge then "rebase" else "none" end')
+test "$method" != none
+why() {
+  gh pr view "$1" --repo siarheirudak/rudax-keel-sandbix --json mergeStateStatus,statusCheckRollup --jq '{mergeStateStatus, checks: [.statusCheckRollup[]? | {name: (.name // .context // ""), conclusion: (.conclusion // .state // "")}]}'
+}
+```
+
+`gh pr merge` does not name the failed check. After every blocked merge, run `why PR`. The result counts only when `mergeStateStatus` is `BLOCKED` and the rollup shows the expected check red or missing. `BEHIND` does not count, even if a check is also red. To clear `BEHIND`, merge `origin/main` into the branch and push. That push dismisses the owner's approval. The owner approves again, then run `why` again. Do not record `BEHIND` as the result.
+
+The attacks below are in this agent shell, except where a step says owner shell. Do not approve or merge as the agent. Start every attack branch from a fresh `origin/main`:
 
 ```bash
 git fetch origin
 git switch -c NAME origin/main
 ```
 
-When a merge is blocked, read the message. The block must be the expected one for that case (red or missing `keel-gate`, or a failed `keel-process-files-separate`). A message that only says the branch is behind, or not up to date, does not count. Fetch, merge `origin/main` into the branch, push, wait for the checks, and try once more.
+**Warm-up pull request, so scope reports**
+
+```bash
+git fetch origin
+git switch -c warmup-scope origin/main
+printf '\n\nScope warm-up.\n' >> docs/why.md
+git add docs/why.md
+git commit -m "sandbox: scope warm-up"
+git push -u origin warmup-scope
+gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head warmup-scope --title "sandbox: scope warm-up" --body "sandbox test"
+```
+
+Wait until `keel-process-files-separate` is success. Do not merge it.
+
+**Second apply, then verify**
+
+Back in the owner shell, same template checkout as the first apply (`layer2/checks`, or `main` after pull request #5 is merged). `unset GH_TOKEN` is still in effect. The login is still `siarheirudak`.
+
+```bash
+bash setup/apply-github-rules.sh siarheirudak/rudax-keel-sandbix isiarheiridak-agent
+bash setup/verify-github-rules.sh siarheirudak/rudax-keel-sandbix isiarheiridak-agent
+```
+
+Expected: apply creates `require-checks` (or says it already matches). Verify has no FAIL.
+
+Warm-up cleanup, after that verify. The check run stays on the commit.
+
+```bash
+gh pr close --repo siarheirudak/rudax-keel-sandbix warmup-scope
+git push origin --delete warmup-scope
+```
 
 **Positive: owner merges a docs-only pull request**
 
@@ -394,14 +500,14 @@ git push -u origin attack-docs-merge
 gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-docs-merge --title "sandbox: docs only merge" --body "sandbox test"
 ```
 
-Wait until `keel-gate` and `keel-process-files-separate` are both success. In the owner shell:
+Wait until `keel-gate` and `keel-process-files-separate` are both success. In the agent shell, `why attack-docs-merge` must not be `BEHIND`. If it is, merge `origin/main` into the branch, push, and wait for the checks again before the owner approves. In the owner shell:
 
 ```bash
 gh pr review attack-docs-merge --repo siarheirudak/rudax-keel-sandbix --approve --body "owner approval"
 gh pr merge attack-docs-merge --repo siarheirudak/rudax-keel-sandbix --"$method"
 ```
 
-Expected: the merge succeeds. Later attacks in this section fetch again and branch from the new default branch. The merged commit stays. Do not force-push the default branch to undo it.
+Expected: the merge succeeds. Later attacks in this section fetch again and branch from the new default branch. The merged commit stays. Do not force-push the default branch to undo it. Delete the remote branch in cleanup; do not leave `attack-docs-merge` on the sandbox.
 
 **(a) Failing check, then approval**
 
@@ -425,19 +531,20 @@ Back in the agent shell:
 
 ```bash
 gh pr merge attack-red --repo siarheirudak/rudax-keel-sandbix --"$method"
+why attack-red
 ```
 
-Expected: merge blocked because `keel-gate` is red. The approval does not override it. Read the message and confirm it names that check. A message that only says the branch is behind does not count.
+Expected: `mergeStateStatus` is `BLOCKED`, and the rollup shows `keel-gate` red. The approval does not override it. `BEHIND` does not count. Updating the branch to clear `BEHIND` dismisses this approval, so the owner approves again before you retry.
 
 **(b) Owner bypass still blocked by require-checks**
 
-In the owner shell, on the same red pull request:
+In the owner shell, on the same red pull request. Define `why` in that shell too if you want to read it there; the agent shell can run it after the attempt.
 
 ```bash
 gh pr merge attack-red --repo siarheirudak/rudax-keel-sandbix --"$method" --admin
 ```
 
-Expected: still blocked because `keel-gate` is red. `protect-main` has an admin bypass. `require-checks` does not. Read the message and confirm it names the check, not only that the branch is behind.
+Expected: still blocked. `protect-main` has an admin bypass. `require-checks` does not. `why attack-red` is `BLOCKED` and `keel-gate` is red. `BEHIND` does not count.
 
 **(c) Fake success status**
 
@@ -447,11 +554,14 @@ On the head commit of a pull request whose real `keel-gate` is red. This posts a
 sha=$(gh pr view attack-red --repo siarheirudak/rudax-keel-sandbix --json headRefOid --jq .headRefOid)
 gh api --method POST "repos/siarheirudak/rudax-keel-sandbix/statuses/${sha}" -f state=success -f context='keel-gate' -f description='fake'
 gh pr merge attack-red --repo siarheirudak/rudax-keel-sandbix --"$method"
+why attack-red
 ```
 
-Expected: merge still blocked because the real `keel-gate` is red or missing from GitHub Actions. The ruleset accepts that name only from GitHub Actions (`integration_id` 15368). A status posted with the agent token does not count. Read the message and confirm it is that check, not "branch is behind".
+Expected: `BLOCKED`, and the rollup's `keel-gate` from GitHub Actions is still red. The ruleset accepts that name only from GitHub Actions (`integration_id` 15368). A status posted with the agent token does not count. `BEHIND` does not count.
 
 **(d) Process file and a normal file**
+
+The agent token needs the `workflow` scope. Without it, GitHub rejects the push of `checks.yml` and this case does not count.
 
 ```bash
 git fetch origin
@@ -462,9 +572,11 @@ git add .github/workflows/checks.yml README.md
 git commit -m "attack: mix process and product"
 git push -u origin attack-mix
 gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-mix --title "attack: mix" --body "sandbox test"
+gh pr merge attack-mix --repo siarheirudak/rudax-keel-sandbix --"$method"
+why attack-mix
 ```
 
-Expected: `keel-process-files-separate` fails. The log has a how-to-fix line. Merge is blocked. Read the message and confirm it is that failed check, not "branch is behind".
+Expected: `keel-process-files-separate` fails. The log has a how-to-fix line. `why` is `BLOCKED` and that check is red. `BEHIND` does not count.
 
 **(e) Process files only**
 
@@ -496,20 +608,29 @@ Expected: `keel-gate` is green. `keel-process-files-separate` is green. Do not m
 
 **(g) Check run posted by a workflow on another branch**
 
-`workflow_dispatch` only runs a workflow that is already on the default branch, so it cannot start this case. Use `on: push` on a side branch. The push runs that branch's workflow. The workflow looks up another pull request's head SHA by branch name and posts a check run named `keel-gate` with conclusion `success`. The pull request diff does not contain the workflow.
+`workflow_dispatch` only runs a workflow that is already on the default branch, so it cannot start this case. Use `on: push` on a side branch. The push runs that branch's workflow. The workflow looks up the target pull request's head SHA by branch name and posts a check run named `keel-gate` with conclusion `success`. The target diff does not contain the workflow.
 
-Do not use `attack-red`. That pull request already has the owner approval from step (a). A forged green `keel-gate` there can merge, and the result is then the approval, not this case. Use a fresh pull request with no approval.
+The target is a fresh pull request whose real `keel-gate` is red, with no owner approval. Do not use `attack-red`: that one already has the approval from step (a). This case asks whether a forged success overrides that red gate. The agent token needs the `workflow` scope, or the push of `forge-check.yml` is rejected and the case does not count.
 
-This has not been observed in this repository yet. Run it and write down what GitHub does. Do not treat a green check as proof the agent was honest.
+A later real `checks` run replaces an earlier forged check run of the same name. The ruleset follows whichever `keel-gate` is latest. Record `started_at` and `completed_at` for every `keel-gate` on the head. Do not push to `attack-forge-pr` after the forge, or the real workflow runs again and replaces the forged run.
+
+This has not been observed in this repository yet. Write down what GitHub does. Do not treat a green check as proof the agent was honest.
 
 ```bash
 git fetch origin
 git switch -c attack-forge-pr origin/main
-printf '\n\nHarmless forge target.\n' >> docs/why.md
-git add docs/why.md
-git commit -m "sandbox: forge target"
+printf '%s\n' 'not json' > attack-forge-red.json
+git add attack-forge-red.json
+git commit -m "attack: red gate, no approval"
 git push -u origin attack-forge-pr
-gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-forge-pr --title "sandbox: forge target" --body "no approval"
+gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-forge-pr --title "attack: forge target" --body "no approval"
+```
+
+Wait until the real `keel-gate` is failure. Do not approve. Record that check run, then push the side branch:
+
+```bash
+sha=$(gh api "repos/siarheirudak/rudax-keel-sandbix/pulls?head=siarheirudak:attack-forge-pr&state=open" --jq '.[0].head.sha')
+gh api "repos/siarheirudak/rudax-keel-sandbix/commits/${sha}/check-runs?check_name=keel-gate" --jq '.check_runs[] | {name,conclusion,started_at,completed_at,app_id:.app.id,app_slug:.app.slug}'
 git fetch origin
 git switch -c attack-forge origin/main
 mkdir -p .github/workflows
@@ -546,22 +667,14 @@ git commit -m "attack: forge a check run from another branch"
 git push -u origin attack-forge
 ```
 
-Wait for the `forge-check` run on `attack-forge`. Then, with `sha` from the open pull request `attack-forge-pr`:
+Wait for the `forge-check` run on `attack-forge`. Run the check-run query again and compare timestamps. Then:
 
 ```bash
-sha=$(gh api "repos/siarheirudak/rudax-keel-sandbix/pulls?head=siarheirudak:attack-forge-pr&state=open" --jq '.[0].head.sha')
-gh api "repos/siarheirudak/rudax-keel-sandbix/commits/${sha}/check-runs" --jq '.check_runs[] | {name,conclusion,app_id:.app.id,app_slug:.app.slug}'
 gh pr merge attack-forge-pr --repo siarheirudak/rudax-keel-sandbix --"$method"
+why attack-forge-pr
 ```
 
-Write down:
-
-- whether a check run named `keel-gate` appeared
-- its `app.id` and `app.slug`
-- whether that run's conclusion is `success`
-- the merge command's exact block reason
-
-Honest expectation, before you run it: the push runs the side-branch workflow, and GitHub Actions app 15368 may create that check run even though the workflow is not in the pull request diff. The merge should stay blocked because this pull request has no approval. If the block reason is only "branch is behind", that does not count; update the branch and try again. If GitHub refuses to create the check run, or the merge succeeds, write that result down instead. Do not approve this pull request. Either way, the owner review is the control. Do not claim this was already observed.
+Write down each `keel-gate` (conclusion, app id, `started_at`, `completed_at`) and which one is latest. Honest expectation, before you run it: GitHub Actions app 15368 may add a successful `keel-gate` that is newer than the real failure, and the ruleset may then treat the name as success even though the real job failed. `why` should still be `BLOCKED` because there is no approval. `BEHIND` does not count; updating the branch to clear it starts a new real `checks` run, which can replace the forged one, so record the timestamps before you do that. If GitHub refuses the create, or the latest `keel-gate` is still the real failure, or the merge succeeds, write that down instead. Do not approve this pull request. Either way, the owner review is the control. Do not claim this was already observed.
 
 **(h) Rename**
 
@@ -572,9 +685,11 @@ git mv README.md .github/README-from-product.md
 git commit -m "attack: rename a product file into a process path"
 git push -u origin attack-rename
 gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-rename --title "attack: rename" --body "sandbox test"
+gh pr merge attack-rename --repo siarheirudak/rudax-keel-sandbix --"$method"
+why attack-rename
 ```
 
-Expected: `keel-process-files-separate` fails. The old path (`README.md`) is not a process file and the new path is. The reverse, a process path renamed to a product path, fails the same way. If you try to merge, read the message and confirm it is that failed check, not "branch is behind".
+Expected: `keel-process-files-separate` fails. The old path (`README.md`) is not a process file and the new path is. The reverse, a process path renamed to a product path, fails the same way. `why attack-rename` is `BLOCKED` and that check is red. `BEHIND` does not count.
 
 **(i) Retarget the base**
 
@@ -606,24 +721,17 @@ Expected, after the edit:
 
 **Results**
 
-Fill the Actual column, then post the table from the agent shell on template pull request **#5**. If that token cannot comment, add the same table as a file on `layer2/checks` instead.
+Fill the Actual column, then post this comment from the agent shell on template pull request **#5**. There is no file fallback. The owner does not post it.
 
-| Attack | Expected | Actual |
-|---|---|---|
-| Agent login | `isiarheiridak-agent` | |
-| Owner login | `siarheirudak` | |
-| Docs-only merge | merge succeeds with `$method` | |
-| (a) red keel-gate | blocked, message names red `keel-gate` | |
-| (b) admin bypass | still blocked, message names red `keel-gate` | |
-| (c) fake status | blocked, real `keel-gate` still red or missing | |
-| (d) mix | `keel-process-files-separate` fails | |
-| (e) process only | scope passes; not merged | |
-| (f) docs only | both checks green; not merged | |
-| (g) forged check run | what GitHub did; merge blocked, no approval | |
-| (h) rename | scope fails on `previous_filename` | |
-| (i) retarget | new `keel-gate` run, scope fails on the base | |
+```bash
+gh api --method POST repos/siarheirudak/rudax-keel/issues/5/comments --input - <<'EOF'
+{"body":"Layer 2 sandbox results for rudax-keel-sandbix.\n\n| Step | Expected | Actual |\n|---|---|---|\n| Import CODEOWNERS | `* @siarheirudak` | |\n| Import merge | admin bypass, then keel-gate on main | |\n| First apply | NOT YET, reported [keel-gate], missing [keel-process-files-separate] | |\n| Warm-up | keel-process-files-separate success | |\n| Second apply | require-checks created | |\n| Verify | 0 FAIL | |\n| Agent login | isiarheiridak-agent | |\n| Owner login | siarheirudak | |\n| Docs-only merge | merge succeeds | |\n| (a) red keel-gate | BLOCKED, keel-gate red | |\n| (b) admin bypass | BLOCKED, keel-gate red | |\n| (c) fake status | BLOCKED, real keel-gate still red | |\n| (d) mix | BLOCKED, keel-process-files-separate red | |\n| (e) process only | scope passes; not merged | |\n| (f) docs only | both checks green; not merged | |\n| (g) forged check | timestamps; whether the latest keel-gate is the forged success; BLOCKED, no approval | |\n| (h) rename | BLOCKED, scope red on previous_filename | |\n| (i) retarget | new keel-gate run, scope fails on the base | |"}
+EOF
+```
 
 **Cleanup**
+
+In the agent shell, after the comment is posted. `attack-docs-merge` was merged; delete the remote branch anyway. `warmup-scope` may already be closed. `attack-identity` is the layer 1 branch. A delete error for a branch that is already gone is fine. Do not delete the default branch. Do not delete tags.
 
 ```bash
 gh pr close --repo siarheirudak/rudax-keel-sandbix attack-red
@@ -633,10 +741,24 @@ gh pr close --repo siarheirudak/rudax-keel-sandbix attack-docs
 gh pr close --repo siarheirudak/rudax-keel-sandbix attack-forge-pr
 gh pr close --repo siarheirudak/rudax-keel-sandbix attack-rename
 gh pr close --repo siarheirudak/rudax-keel-sandbix attack-retarget
-git push origin --delete attack-red attack-mix attack-process attack-docs attack-forge-pr attack-rename attack-retarget attack-forge other-base
+gh pr close --repo siarheirudak/rudax-keel-sandbix warmup-scope
+git push origin --delete attack-docs-merge attack-red attack-mix attack-process attack-docs attack-forge-pr attack-rename attack-retarget attack-forge other-base warmup-scope attack-identity attack-identity-l2
 git fetch origin
 git switch --detach origin/main
-git branch -D attack-docs-merge attack-red attack-mix attack-process attack-docs attack-forge-pr attack-rename attack-retarget attack-forge other-base
+git branch -D attack-docs-merge attack-red attack-mix attack-process attack-docs attack-forge-pr attack-rename attack-retarget attack-forge other-base warmup-scope attack-identity-l2
+rm -rf "$AGENT_HOME"
 ```
 
-`attack-docs-merge` was merged. Do not delete the default branch. A delete error for a branch that is already gone is fine. `git branch -D` removes only the local branches. Do not delete tags. `keel-test` is the owner's to remove, if it is still there. A forged check run stays on the commit it was posted to; closing the pull request does not delete it.
+`AGENT_HOME` is the temp directory from the layer 2 agent preamble. Remove that directory only. Leave the sandbox clone. A forged check run stays on the commit it was posted to; closing the pull request does not delete it.
+
+In the owner shell, in the sandbox clone, delete the import branch:
+
+```bash
+unset GH_TOKEN
+git push origin --delete layer2-import
+git fetch origin
+git switch --detach origin/main
+git branch -D layer2-import
+```
+
+`keel-test` is the owner's to remove, if it is still there.
