@@ -5,7 +5,8 @@ import pathlib
 import re
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+TYPES = "types: [opened, synchronize, reopened, edited]"
 
 
 def fail(message):
@@ -39,6 +40,12 @@ def job_blocks(text):
     return blocks
 
 
+def require_types(text, label):
+    header = text.split("\njobs:", 1)[0]
+    if TYPES not in header:
+        fail("{0} must include {1}".format(label, TYPES))
+
+
 def main():
     listed = [
         line.strip()
@@ -48,6 +55,7 @@ def main():
     if not listed:
         fail("scripts/gate-jobs.txt is empty")
     checks = (ROOT / ".github" / "workflows" / "checks.yml").read_text(encoding="utf-8")
+    require_types(checks, "checks.yml")
     blocks = job_blocks(checks)
     missing = [job for job in listed if job not in blocks]
     if missing:
@@ -66,10 +74,9 @@ def main():
         if needle not in gate:
             fail("missing env {0}".format(needle))
     scope = (ROOT / ".github" / "workflows" / "scope.yml").read_text(encoding="utf-8")
+    require_types(scope, "scope.yml")
     if "name: keel-process-files-separate" not in scope:
         fail("scope job name must be keel-process-files-separate")
-    if "edited" not in scope:
-        fail("scope workflow must rerun when the pull request is edited")
     return 0
 
 

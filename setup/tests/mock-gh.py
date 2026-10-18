@@ -335,7 +335,15 @@ def route(state, method, path, fields, body, query):
         wanted_event = query.get("event", [None])[0]
         if wanted_event is not None:
             runs = [item for item in runs if item.get("event") == wanted_event]
-        return 200, {"total_count": len(runs), "workflow_runs": runs}, False
+        per_page = int((query.get("per_page") or ["100"])[0] or "100")
+        page = int((query.get("page") or ["1"])[0] or "1")
+        if per_page < 1:
+            per_page = 1
+        if page < 1:
+            page = 1
+        start = (page - 1) * per_page
+        page_runs = runs[start : start + per_page]
+        return 200, {"total_count": len(runs), "workflow_runs": page_runs}, False
 
     run_jobs = re.fullmatch(r"actions/runs/(\d+)/jobs", rest)
     if run_jobs:

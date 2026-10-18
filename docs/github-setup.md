@@ -100,7 +100,7 @@ JSON for the three rulesets lives in [setup/rulesets](../setup/rulesets).
 
 ## Layer 2
 
-A status check is a pass or fail name on a commit. The required names are `keel-gate` and `keel-process-files-separate`. `keel-gate` fails if any job in [checks.yml](../.github/workflows/checks.yml) failed, was cancelled, or was skipped. Add this repository's tests only in `project_checks()` in [`scripts/check.sh`](../scripts/check.sh). The workflow `project` job only calls that function. `bash scripts/check.sh` is the local run.
+A status check is a pass or fail name on a commit. The required names are `keel-gate` and `keel-process-files-separate`. `keel-gate` fails if any job in [checks.yml](../.github/workflows/checks.yml) failed, was cancelled, or was skipped. `checks` runs on `opened`, `synchronize`, `reopened`, and `edited`, so a base change runs the gate again. Add this repository's tests only in `project_checks()` in [`scripts/check.sh`](../scripts/check.sh). The workflow `project` job only calls that function. `bash scripts/check.sh` is the local run. The template's own check tests live in `scripts/tests/`. Product tests live in `tests/`.
 
 `require-checks` requires those two check-run names. The pull request branch must be up to date. Both are limited to GitHub Actions (`integration_id` 15368), so a status posted with a user token does not count. That does not stop a workflow with `checks: write` from posting the same name. Owner review is the control against a deliberately malicious agent. Apply waits until both workflow files are on the default branch and each exact name has been reported by app 15368. Scope does not run on a push to the default branch.
 

@@ -663,6 +663,19 @@ fi
 ok "require-checks created then skipped"
 
 reset
+mutate 'state["files"][".github/workflows/checks.yml"]="name: checks\n"; state["files"][".github/workflows/scope.yml"]="name: scope\n"; state["workflow_runs"]={"checks.yml":[{"id":1,"conclusion":"success","head_branch":"main","head_sha":"sha-checks","event":"push","jobs":[{"name":"keel-gate"}]},{"id":3,"conclusion":"success","head_branch":"main","head_sha":"sha-later","event":"push","jobs":[{"name":"keel-gate"},{"name":"actionlint"}]}],"scope.yml":[{"id":2,"conclusion":"success","head_branch":"pr","head_sha":"sha-scope","event":"pull_request_target","jobs":[{"name":"keel-process-files-separate"}]},{"id":5,"conclusion":"success","head_branch":"pr","head_sha":"sha-scope-later","event":"pull_request_target","jobs":[{"name":"keel-process-files-separate"}]}]}; state["check_runs"]=[{"head_sha":"sha-checks","name":"keel-gate","conclusion":"success","app_id":15368},{"head_sha":"sha-later","name":"keel-gate","conclusion":"success","app_id":15368},{"head_sha":"sha-scope","name":"keel-process-files-separate","conclusion":"success","app_id":15368},{"head_sha":"sha-scope-later","name":"keel-process-files-separate","conclusion":"success","app_id":15368}]'
+run "$APPLY" owner/repo agent
+assert_rc 0
+need "created require-checks"
+if [[ $(grep -c 'check-runs' "$GH_MOCK_LOG") -ne 2 ]]; then
+  fail "check-run lookups: $(grep -c 'check-runs' "$GH_MOCK_LOG")"
+fi
+if grep -q 'sha-later' "$GH_MOCK_LOG" || grep -q 'sha-scope-later' "$GH_MOCK_LOG"; then
+  fail "kept scanning after both names were found"
+fi
+ok "require-checks stops once both check runs are found"
+
+reset
 ready_checks
 run "$APPLY" owner/repo agent
 assert_rc 0

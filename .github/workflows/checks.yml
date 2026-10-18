@@ -2,6 +2,8 @@ name: checks
 
 on:
   pull_request:
+    # edited covers a base change, so a green gate from another base does not stay.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches:
       - main
@@ -54,7 +56,7 @@ jobs:
       - name: Markdown links
         run: |
           python3 scripts/check-md-links.py
-          python3 tests/test_md_links.py
+          python3 scripts/tests/test_md_links.py
 
   action-pins:
     runs-on: ubuntu-latest
@@ -78,7 +80,7 @@ jobs:
       - name: Scope rule
         run: python3 scripts/check-scope.py --self-test
       - name: Gate job list
-        run: python3 tests/test_gate_jobs.py
+        run: python3 scripts/tests/test_gate_jobs.py
 
   project:
     runs-on: ubuntu-latest

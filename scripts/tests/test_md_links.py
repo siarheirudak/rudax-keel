@@ -6,7 +6,7 @@ import pathlib
 import sys
 import tempfile
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
     "check_md_links", ROOT / "scripts" / "check-md-links.py"
 )
@@ -16,7 +16,10 @@ SPEC.loader.exec_module(MOD)
 
 def fail(message):
     print(message, file=sys.stderr)
-    print("how to fix: fix scripts/check-md-links.py so tests/test_md_links.py passes", file=sys.stderr)
+    print(
+        "how to fix: fix scripts/check-md-links.py so scripts/tests/test_md_links.py passes",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 
@@ -64,13 +67,8 @@ def main():
         if "use-code" not in code_anchors:
             fail("inline-code anchor: {0}".format(sorted(code_anchors)))
         errors = MOD.check_tree(root)
-        broken = {path.name + ":" + raw for path, raw in errors}
-        if broken != {"page.md:[gone](/missing.md)"} and not any(
-            raw.startswith("[gone]") or "/missing.md" in raw for _path, raw in errors
-        ):
-            fail("unexpected link errors: {0}".format(sorted(broken)))
-        if len(errors) != 1:
-            fail("expected one broken link, got {0}".format(errors))
+        if len(errors) != 1 or "/missing.md" not in errors[0][1]:
+            fail("unexpected link errors: {0}".format(errors))
 
     if MOD.main() != 0:
         fail("repository markdown links failed")

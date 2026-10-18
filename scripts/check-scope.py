@@ -3,8 +3,9 @@
 
 Process files are .github/**, setup/**, scripts/**, .cursor/**, .claude/**,
 and these names anywhere in the tree: CODEOWNERS, AGENTS.md, CLAUDE.md,
-.cursorrules, .windsurfrules, .clinerules. scripts/ is included because CI
-runs those checks from the pull request. A docs file counts only when it is
+CLAUDE.local.md, .cursorrules, .windsurfrules, .clinerules, .mcp.json, and
+.shellcheckrc. scripts/ is included because CI runs those checks from the
+pull request, including scripts/tests/. A docs file counts only when it is
 itself an agent-rule file. tests/ is not a process path. Labels are not read
 and are not permission.
 
@@ -28,10 +29,13 @@ PROCESS_PREFIXES = (".github/", "setup/", "scripts/", ".cursor/", ".claude/")
 AGENT_RULE_NAMES = {
     "AGENTS.md",
     "CLAUDE.md",
+    "CLAUDE.local.md",
     "CODEOWNERS",
     ".cursorrules",
     ".windsurfrules",
     ".clinerules",
+    ".mcp.json",
+    ".shellcheckrc",
 }
 FILE_CAP = 3000
 
@@ -143,6 +147,18 @@ def self_test():
         ([entry(".cursorrules")], 1, "main", "main", False, ""),
         ([entry(".windsurfrules"), entry("src/app.py")], 2, "main", "main", True, ".windsurfrules"),
         ([entry("docs/.clinerules")], 1, "main", "main", False, ""),
+        ([entry(".mcp.json")], 1, "main", "main", False, ""),
+        ([entry("CLAUDE.local.md"), entry("README.md")], 2, "main", "main", True, "CLAUDE.local.md"),
+        ([entry(".shellcheckrc")], 1, "main", "main", False, ""),
+        ([entry("scripts/tests/test_md_links.py")], 1, "main", "main", False, ""),
+        (
+            [entry("scripts/tests/test_md_links.py"), entry("README.md")],
+            2,
+            "main",
+            "main",
+            True,
+            "README.md",
+        ),
         (
             [entry(".github/README-from-product.md", "README.md")],
             1,

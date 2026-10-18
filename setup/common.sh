@@ -57,6 +57,7 @@ CHECKS_RED=0
 CHECKS_CONCLUSION=""
 CHECKS_REPORT_REASON=""
 REPORTED_NAMES=""
+REQUIRED_CONTEXTS=""
 # shellcheck disable=SC2034
 FORK_MANUAL_REASON="API unavailable. Do this by hand: Settings → Actions → General → Fork pull request workflows → Require approval for all outside collaborators."
 # gh api --jq arrived in 1.7.0. --paginate, --input, --method, and -f are older.
@@ -648,40 +649,91 @@ check_run_from_app() {
   return 1
 }
 
+context_is_required() {
+  local name=$1 line
+  while IFS= read -r line; do
+    [[ $line == "$name" ]] && return 0
+  done <<<"$REQUIRED_CONTEXTS"
+  return 1
+}
+
+all_required_found() {
+  local line saw=0
+  [[ -n $REQUIRED_CONTEXTS ]] || return 1
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    saw=1
+    name_is_reported "$line" || return 1
+  done <<<"$REQUIRED_CONTEXTS"
+  [[ $saw -eq 1 ]]
+}
+
 collect_reported_names() {
-  local file runs_json run_id sha jobs_json job_name rc
+  local file page runs_json run_id sha jobs_json job_name rc count
   REPORTED_NAMES=""
+  REQUIRED_CONTEXTS=$(required_check_contexts)
+  # Two pages of runs per workflow, 20 each. One page of jobs and of check
+  # runs. Stop as soon as every require-checks context has been seen.
   for file in checks.yml scope.yml; do
-    if ! gh_api "repos/${SLUG}/actions/workflows/${file}/runs?per_page=100"; then
-      if is_not_found; then
-        continue
-      fi
-      return 2
+    if all_required_found; then
+      return 0
     fi
-    runs_json=$GH_API_BODY
-    while IFS= read -r run_id; do
-      [[ -n $run_id && $run_id != null ]] || continue
-      sha=$(jq -r --arg id "$run_id" '.workflow_runs[] | select((.id | tostring) == $id) | .head_sha' <<<"$runs_json")
-      [[ -n $sha && $sha != null ]] || continue
-      if ! gh_api "repos/${SLUG}/actions/runs/${run_id}/jobs?per_page=100"; then
+    page=1
+    while [[ $page -le 2 ]]; do
+      if all_required_found; then
+        return 0
+      fi
+      if ! gh_api "repos/${SLUG}/actions/workflows/${file}/runs?per_page=20&page=${page}"; then
         if is_not_found; then
-          continue
+          break
         fi
         return 2
       fi
-      jobs_json=$GH_API_BODY
-      while IFS= read -r job_name; do
-        [[ -n $job_name ]] || continue
-        rc=0
-        check_run_from_app "$sha" "$job_name" || rc=$?
-        if [[ $rc -eq 2 ]]; then
+      runs_json=$GH_API_BODY
+      count=$(jq -r '.workflow_runs | length' <<<"$runs_json")
+      if [[ $count -eq 0 ]]; then
+        break
+      fi
+      while IFS= read -r run_id; do
+        [[ -n $run_id && $run_id != null ]] || continue
+        if all_required_found; then
+          return 0
+        fi
+        sha=$(jq -r --arg id "$run_id" '.workflow_runs[] | select((.id | tostring) == $id) | .head_sha' <<<"$runs_json")
+        [[ -n $sha && $sha != null ]] || continue
+        if ! gh_api "repos/${SLUG}/actions/runs/${run_id}/jobs?per_page=100&page=1"; then
+          if is_not_found; then
+            continue
+          fi
           return 2
         fi
-        if [[ $rc -eq 0 ]]; then
-          note_reported_name "$job_name"
-        fi
-      done < <(jq -r '.jobs[]?.name // empty' <<<"$jobs_json")
-    done < <(jq -r '.workflow_runs[]?.id // empty' <<<"$runs_json")
+        jobs_json=$GH_API_BODY
+        while IFS= read -r job_name; do
+          [[ -n $job_name ]] || continue
+          if ! context_is_required "$job_name"; then
+            continue
+          fi
+          if name_is_reported "$job_name"; then
+            continue
+          fi
+          rc=0
+          check_run_from_app "$sha" "$job_name" || rc=$?
+          if [[ $rc -eq 2 ]]; then
+            return 2
+          fi
+          if [[ $rc -eq 0 ]]; then
+            note_reported_name "$job_name"
+          fi
+          if all_required_found; then
+            return 0
+          fi
+        done < <(jq -r '.jobs[]?.name // empty' <<<"$jobs_json")
+      done < <(jq -r '.workflow_runs[]?.id // empty' <<<"$runs_json")
+      if [[ $count -lt 20 ]]; then
+        break
+      fi
+      page=$((page + 1))
+    done
   done
 }
 
@@ -885,7 +937,7 @@ touch_shared_state() {
     "$ACCEPT_RISK" "$REWRITE_CODEOWNERS" "$REPO_ADMIN" "$CONTENT_TEXT" "$USES_LIST" "$AUTH_ERROR" \
     "$RISK_REASON" "$CHECKS_SKIP_REASON" "$OWNER_APPLY_REASON" "$FORK_MANUAL_REASON" "$MIN_GH_VERSION" "$GH_API_BODY" \
     "$REQUIRE_CHECKS_FILES" "$REQUIRE_CHECKS_REPORTED" "$CHECKS_RED" "$CHECKS_CONCLUSION" \
-    "$CHECKS_REPORT_REASON" "$REPORTED_NAMES" \
+    "$CHECKS_REPORT_REASON" "$REPORTED_NAMES" "$REQUIRED_CONTEXTS" \
     "$GH_API_ERROR" "$LOG_FILE" "$STEP" "$FAIL_COUNT" "$SUMMARY" "$SLUG" "$AGENT"
 }
 touch_shared_state
