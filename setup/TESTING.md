@@ -60,8 +60,15 @@ Expected: the tag is created.
 
 Open a **separate shell**. Put only the agent GitHub account's token in `GH_TOKEN`. Do not use a login that belongs to the owner. A cloud VM, a separate OS user, or a container is the right place. A laptop where the owner is logged in to `gh` is the wrong place.
 
+A coding agent's own git config must not be used. That config can hold a credential helper or an `insteadOf` rewrite that authenticates as someone else. Use a temporary `HOME` and `GIT_CONFIG_NOSYSTEM=1` so git ignores the system config and the agent's home directory.
+
 ```bash
+export HOME="$(mktemp -d)"
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
+export GH_CONFIG_DIR="$HOME/gh"
 unset GITHUB_TOKEN
+unset GIT_ASKPASS
 gh api user --jq .login
 ```
 
@@ -94,7 +101,7 @@ git push -u origin attack-identity
 gh api repos/siarheirudak/rudax-keel-sandbix/events --jq '[.[] | select(.type=="PushEvent" and .payload.ref=="refs/heads/attack-identity") | .actor.login] | unique | .[]'
 ```
 
-The only login printed must be `isiarheiridak-agent`. If the events list is empty, wait a moment and run the `gh api` line again. If it prints any other login, stop.
+The only login printed must be `isiarheiridak-agent`. If the events list is empty, wait a moment and run the `gh api` line again. The events feed can lag. If it is still empty, use the commit author and committer plus `gh api user --jq .login`. All of those must be `isiarheiridak-agent`. If any of them is a different login, stop.
 
 ## (c) Attacks
 
@@ -126,7 +133,7 @@ Expected: `GH013`, and the message is the force-push or non-fast-forward rule (`
 git push origin :refs/heads/main
 ```
 
-Expected: rejected, `GH013`, the branch cannot be deleted.
+Expected: rejected, and `main` unchanged. Either `GH013` (the branch cannot be deleted) or `refusing to delete the current branch`. GitHub never lets you delete the default branch, so that message can come back before the ruleset runs.
 
 **Create, move, and delete a tag**
 
@@ -290,7 +297,7 @@ From the agent shell (the agent token), post this table as a comment on pull req
 
 ```bash
 gh api --method POST repos/siarheirudak/rudax-keel/issues/3/comments --input - <<'EOF'
-{"body":"Sandbox results for rudax-keel-sandbix.\n\n| Attack | Expected | Actual |\n|---|---|---|\n| Identity push | pusher isiarheiridak-agent | |\n| Direct push to main | GH013, pull request required | |\n| Force push main~1 | GH013, force-push or non-fast-forward | |\n| Delete main | GH013, cannot delete | |\n| Create tag | GH013, cannot create | |\n| Move keel-test | GH013, cannot update protected ref | |\n| Delete keel-test | GH013, cannot delete | |\n| Merge without approval | review required | |\n| Self-approve | refused | |\n| Edit rulesets | 403 or 404; any 2xx is a fail | |\n| GITHUB_TOKEN approve | run exists, log says not permitted to approve, no github-actions approval | |\n| CODEOWNERS without owner review | review required | |\n| Stale review on attack-merge | approval dismissed, review required | |\n| Stale review on attack-codeowners | approval dismissed, review required | |"}
+{"body":"Sandbox results for rudax-keel-sandbix.\n\n| Attack | Expected | Actual |\n|---|---|---|\n| Identity push | pusher isiarheiridak-agent, or author and committer if events lag | |\n| Direct push to main | GH013, pull request required | |\n| Force push main~1 | GH013, force-push or non-fast-forward | |\n| Delete main | GH013, or refusing to delete the current branch | |\n| Create tag | GH013, cannot create | |\n| Move keel-test | GH013, cannot update protected ref | |\n| Delete keel-test | GH013, cannot delete | |\n| Merge without approval | review required | |\n| Self-approve | refused | |\n| Edit rulesets | 403 or 404; any 2xx is a fail | |\n| GITHUB_TOKEN approve | run exists, log says not permitted to approve, no github-actions approval | |\n| CODEOWNERS without owner review | review required | |\n| Stale review on attack-merge | approval dismissed, review required | |\n| Stale review on attack-codeowners | approval dismissed, review required | |"}
 EOF
 ```
 
