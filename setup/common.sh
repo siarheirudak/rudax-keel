@@ -49,7 +49,13 @@ AUTH_ERROR=""
 # shellcheck disable=SC2034
 RISK_REASON="GitHub Free on a private repository has no rulesets. The agent GitHub account could push directly to main, there is no review, and checks are only advisory. Make the repository public or use GitHub Pro."
 # shellcheck disable=SC2034
-CHECKS_SKIP_REASON="CI not added yet; re-run after layer 2 merge"
+CHECKS_SKIP_REASON="waiting for checks.yml and scope.yml on the default branch, and for checks / gate and scope / process-files-separate to have reported at least once"
+OWNER_APPLY_REASON="owner: run setup/apply-github-rules.sh"
+REQUIRE_CHECKS_FILES=0
+REQUIRE_CHECKS_REPORTED=0
+WORKFLOW_REPORTED=0
+CHECKS_RED=0
+CHECKS_CONCLUSION=""
 # shellcheck disable=SC2034
 FORK_MANUAL_REASON="API unavailable. Do this by hand: Settings → Actions → General → Fork pull request workflows → Require approval for all outside collaborators."
 # gh api --jq arrived in 1.7.0. --paginate, --input, --method, and -f are older.
@@ -103,7 +109,7 @@ def norm:
                 do_not_enforce_on_create: flag(.parameters.do_not_enforce_on_create),
                 required_status_checks: (
                   (.parameters.required_status_checks // [])
-                  | map({context})
+                  | map({context, integration_id: (.integration_id // null)})
                   | sort_by(.context)
                 )
               }
@@ -583,6 +589,70 @@ mark_empty_repo() {
   return 1
 }
 
+require_checks_files_ready() {
+  local st_checks=0 st_scope=0
+  REQUIRE_CHECKS_FILES=0
+  branch_file_status ".github/workflows/checks.yml" || st_checks=$?
+  if [[ $st_checks -eq 2 ]]; then
+    REQUIRE_CHECKS_FILES=2
+    return 0
+  fi
+  branch_file_status ".github/workflows/scope.yml" || st_scope=$?
+  if [[ $st_scope -eq 2 ]]; then
+    REQUIRE_CHECKS_FILES=2
+    return 0
+  fi
+  if [[ $st_checks -eq 0 && $st_scope -eq 0 ]]; then
+    REQUIRE_CHECKS_FILES=1
+  fi
+}
+
+workflow_reported() {
+  local file=$1 count
+  WORKFLOW_REPORTED=0
+  if ! gh_api "repos/${SLUG}/actions/workflows/${file}/runs?per_page=1"; then
+    if is_not_found; then
+      return 0
+    fi
+    return 2
+  fi
+  count=$(jq -r '.total_count // 0' <<<"$GH_API_BODY")
+  if [[ $count -gt 0 ]]; then
+    WORKFLOW_REPORTED=1
+  fi
+}
+
+require_checks_reported() {
+  REQUIRE_CHECKS_REPORTED=0
+  workflow_reported "checks.yml" || return 2
+  if [[ $WORKFLOW_REPORTED -ne 1 ]]; then
+    return 0
+  fi
+  workflow_reported "scope.yml" || return 2
+  if [[ $WORKFLOW_REPORTED -eq 1 ]]; then
+    REQUIRE_CHECKS_REPORTED=1
+  fi
+}
+
+latest_checks_is_red() {
+  CHECKS_RED=0
+  CHECKS_CONCLUSION=""
+  if ! gh_api "repos/${SLUG}/actions/workflows/checks.yml/runs?per_page=1&branch=${DEFAULT_BRANCH}"; then
+    return 0
+  fi
+  CHECKS_CONCLUSION=$(jq -r '(.workflow_runs // [])[0].conclusion // empty' <<<"$GH_API_BODY")
+  case $CHECKS_CONCLUSION in
+    failure|cancelled|timed_out|startup_failure) CHECKS_RED=1 ;;
+  esac
+}
+
+warn_if_checks_red() {
+  latest_checks_is_red || true
+  if [[ $CHECKS_RED -eq 1 ]]; then
+    log_step WARN "Latest checks run on ${DEFAULT_BRANCH}" "conclusion is ${CHECKS_CONCLUSION}" "require-checks"
+  fi
+}
+
 branch_file_status() {
   local path=$1
   if gh_api --method GET "repos/${SLUG}/contents/${path}" -f "ref=${DEFAULT_BRANCH}"; then
@@ -729,7 +799,8 @@ touch_shared_state() {
   : "$LOGIN" "$DEFAULT_BRANCH" "$REPO_EMPTY" "$DIFF_RC" "$DIFF_TEXT" \
     "$RULESETS_OFF" "$PRIVATE" "$PLAN" "$REPO_OWNER" "$OWNER_TYPE" \
     "$ACCEPT_RISK" "$REWRITE_CODEOWNERS" "$REPO_ADMIN" "$CONTENT_TEXT" "$USES_LIST" "$AUTH_ERROR" \
-    "$RISK_REASON" "$CHECKS_SKIP_REASON" "$FORK_MANUAL_REASON" "$MIN_GH_VERSION" "$GH_API_BODY" \
+    "$RISK_REASON" "$CHECKS_SKIP_REASON" "$OWNER_APPLY_REASON" "$FORK_MANUAL_REASON" "$MIN_GH_VERSION" "$GH_API_BODY" \
+    "$REQUIRE_CHECKS_FILES" "$REQUIRE_CHECKS_REPORTED" "$WORKFLOW_REPORTED" "$CHECKS_RED" "$CHECKS_CONCLUSION" \
     "$GH_API_ERROR" "$LOG_FILE" "$STEP" "$FAIL_COUNT" "$SUMMARY" "$SLUG" "$AGENT"
 }
 touch_shared_state

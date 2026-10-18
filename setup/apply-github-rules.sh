@@ -98,7 +98,7 @@ apply_named_ruleset() {
   local name=$1 anchor=$2
   local file="$SCRIPT_DIR/rulesets/${name}.json"
   local what="Create or update ruleset ${name}"
-  local ids count id st
+  local ids count id
 
   if [[ $RULESETS_OFF -eq 1 ]]; then
     log_step FAIL "$what" "$RISK_REASON" "$anchor"
@@ -113,14 +113,21 @@ apply_named_ruleset() {
     return 0
   fi
   if [[ $name == require-checks ]]; then
-    st=0
-    branch_file_status ".github/workflows/checks.yml" || st=$?
-    if [[ $st -eq 1 ]]; then
+    require_checks_files_ready
+    if [[ $REQUIRE_CHECKS_FILES -eq 2 ]]; then
+      log_step FAIL "$what" "cannot read workflows on ${DEFAULT_BRANCH} ($(collapse "$GH_API_ERROR"))" "$anchor"
+      return 0
+    fi
+    if [[ $REQUIRE_CHECKS_FILES -ne 1 ]]; then
       log_step "NOT YET" "$what" "$CHECKS_SKIP_REASON" "$anchor"
       return 0
     fi
-    if [[ $st -ne 0 ]]; then
-      log_step FAIL "$what" "cannot read .github/workflows/checks.yml ($(collapse "$GH_API_ERROR"))" "$anchor"
+    if ! require_checks_reported; then
+      log_step FAIL "$what" "cannot read workflow runs ($(collapse "$GH_API_ERROR"))" "$anchor"
+      return 0
+    fi
+    if [[ $REQUIRE_CHECKS_REPORTED -ne 1 ]]; then
+      log_step "NOT YET" "$what" "$CHECKS_SKIP_REASON" "$anchor"
       return 0
     fi
   fi

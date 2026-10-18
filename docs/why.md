@@ -82,13 +82,25 @@ Each log line from the setup scripts links to a section below.
 
 ## Require checks
 
-**Rule.** The default branch cannot be updated unless the status check `checks / gate` has passed on the latest commit. The check is strict. This ruleset has no bypass list.
+**Rule.** The default branch cannot be updated unless `checks / gate` and `scope / process-files-separate` have passed on the latest commit. The rule is strict: the branch must be up to date before merge. There is no bypass list. Each check is restricted to GitHub Actions (`integration_id` 15368, the id from `GET /apps/github-actions`).
 
-**Why.** Review is not a test run. The check has to pass even for an admin. A bypass on `protect-main` does not skip this ruleset.
+**Why.** A status check is a pass or fail name GitHub stores on a commit. `gate` fails if any job in `.github/workflows/checks.yml` failed, was cancelled, or was skipped. Limiting the name to GitHub Actions means a success status the agent posts through the API does not count. Strict means a new commit has to run the checks again. Apply creates the ruleset only when both workflow files are on the default branch and each check has reported at least once. Until then the step is NOT YET. Verify fails with `owner: run setup/apply-github-rules.sh` when those files are on the default branch and the ruleset is missing or different. A red checks run on the default branch is WARN, not FAIL.
 
-**If disabled.** A pull request can be merged while tests are red or missing. The agent GitHub account, or a tired owner, can land a broken tree.
+**If disabled.** A pull request can be merged while tests are red or missing. The admin bypass on `protect-main` does not skip this ruleset.
 
-**How to disable explicitly.** Delete the `require-checks` ruleset, and delete `setup/rulesets/require-checks.json`. Apply creates it only when `.github/workflows/checks.yml` is already on the default branch. Until that file exists, the step is NOT YET: `CI not added yet; re-run after layer 2 merge`. Required checks are not on in this layer.
+**How to disable explicitly.** Delete the `require-checks` ruleset, and delete `setup/rulesets/require-checks.json`. Apply creates it again once both workflows are on the default branch and have reported.
+
+<a id="scope"></a>
+
+## Scope
+
+**Rule.** A pull request that changes a process file must contain only process files. Process files are `.github/**`, `setup/**`, `scripts/**`, `CODEOWNERS`, `AGENTS.md`, `CLAUDE.md`, `.cursor/**`, and `.claude/**`. `scripts/` is included because the checks run those files from the pull request. A file under `docs/` counts only when its name is `AGENTS.md` or `CLAUDE.md`. `tests/` is not a process path. Labels are not permission.
+
+**Why.** The check runs from `pull_request_target`, so the workflow file is the one on the default branch, not the copy in the pull request. The job does not check out pull request code. Its token can only read contents and pull requests. That is safe. The same trigger is dangerous if the job checks out the pull request head or the token can write: untrusted code would then run with the default branch's credentials. Keeping process edits in their own pull request means the checks that judge other changes are the ones already on the default branch.
+
+**If disabled.** One pull request can change a check and the code that check should reject.
+
+**How to disable explicitly.** Delete `.github/workflows/scope.yml`. Apply puts the check back into `require-checks` while that file is on the default branch and has reported.
 
 <a id="read-only-token"></a>
 

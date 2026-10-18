@@ -19,8 +19,9 @@ Logs: `setup/logs/apply-<timestamp>.log` and `setup/logs/verify-<timestamp>.log`
 
 - **OK** — just applied.
 - **ALREADY** — was already correct.
-- **NOT YET** — intentionally later. `require-checks` is NOT YET until `checks.yml` exists.
+- **NOT YET** — intentionally later. `require-checks` is NOT YET until `checks.yml` and `scope.yml` are on the default branch and both checks have reported at least once.
 - **FAIL** — not done. The script exits non-zero if any step is FAIL. A line that names a Settings page is a manual step the API cannot do.
+- **WARN** — noted, and the script still exits zero if nothing else failed. Verify uses this when the latest `checks` run on the default branch is red.
 
 An unpinned `uses:` is OK with a reason starting `warning:`.
 

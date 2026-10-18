@@ -1,0 +1,35 @@
+name: scope
+
+# pull_request_target reads this file from the default branch, not from the
+# pull request. The job does not check out pull request code. The token can
+# only read. Do not add a checkout of the pull request head, and do not widen
+# permissions: that would run untrusted code with this token.
+on:
+  pull_request_target:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  process-files-separate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Process files stay in their own pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          dest=$(mktemp)
+          url="https://api.github.com/repos/${REPO}/contents/scripts/check-scope.py?ref=${BASE_SHA}"
+          curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github.raw" \
+            -H "User-Agent: rudax-keel-scope" \
+            -o "$dest" \
+            "$url"
+          python3 "$dest"

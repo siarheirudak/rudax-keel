@@ -48,7 +48,7 @@ The bypass is set to **"pull requests only"**, not "always". So you still have t
 - **A record of every change.** Each change to `main` has a PR showing what changed and why, even your own.
 - **One way in.** Everything, from the agent or from you, enters `main` the same way. That's simple to understand and to audit.
 
-Required checks are not part of this layer. They arrive with `.github/workflows/checks.yml` in layer 2. Until that file is on the default branch, `require-checks` is NOT YET.
+Layer 2 adds the status checks. Until both workflow files are on the default branch and have reported, `require-checks` is NOT YET. See [Layer 2](#layer-2).
 
 ## What the script configures
 
@@ -70,7 +70,7 @@ Apply is idempotent. Run it again after each layer is merged. A setting that alr
 | `CODEOWNERS` | First, before `protect-main`. Write `* @<login>` only when the file is missing or is still the template line. If it already matches the logged-in owner, no commit is made. Any other content is FAIL unless you pass `--rewrite-codeowners`, and that flag does nothing once `protect-main` exists. If this step FAILs, `protect-main` is still created. The fix is a pull request the owner merges. See [why](why.md#codeowners). |
 | `protect-main` | Default branch: no deletion, no force push, pull request required, 1 approval, code-owner review, dismiss stale reviews. Admin bypass for pull requests only. |
 | `protect-tags` | All tags: block creation, update, and deletion. Only an admin may bypass, because only the owner creates releases. |
-| `require-checks` | Required check `checks / gate` on the default branch, strict, no bypass. NOT YET until `.github/workflows/checks.yml` is on the default branch (layer 2). |
+| `require-checks` | Requires `checks / gate` and `scope / process-files-separate`, strict (branch up to date), no bypass, each limited to GitHub Actions (`integration_id` 15368). NOT YET until both workflows are on the default branch and have reported. |
 | Agent access | Invite `AGENT_LOGIN` with write. If that account already has admin, the step is FAIL and the role is left unchanged. |
 | Actions token | Default `GITHUB_TOKEN` is read-only and cannot approve pull requests. |
 | Fork approval | On a public repository, require approval for fork pull request workflows from all outside collaborators. On a private repository the step is OK: `not applicable (private repo)`. |
@@ -86,14 +86,22 @@ The script keeps more than one ruleset. GitHub applies every active ruleset that
 
 - The admin bypass on `protect-main` lets you merge a pull request without a second review. It does not let you force-push, and it does not apply to tags.
 - `protect-tags` has its own admin bypass. The pull-request bypass mode is not valid for tags, so this one is "always", and only the admin role is on the list. Only the owner creates a release tag. The agent GitHub account has write, not admin, so it cannot create, move, or delete a tag, and it cannot fake a release.
-- `require-checks` has an empty bypass list. It is NOT YET until layer 2 adds `.github/workflows/checks.yml`. After that, an admin cannot skip `checks / gate`, and the `protect-main` bypass does not skip it either.
+- `require-checks` has an empty bypass list. After it is active, an admin cannot skip `checks / gate` or `scope / process-files-separate`, and the `protect-main` bypass does not skip them either. The branch must be up to date. A status posted through the API does not count, because the check is limited to GitHub Actions.
 
 ## Manual setup
 
 Do these as the owner GitHub account, in this order. The script does the same thing.
 
 1. **Write CODEOWNERS with your own account**, before any ruleset. Add `.github/CODEOWNERS` containing `* @YOUR_LOGIN`. [Why](why.md#codeowners).
-2. Create `protect-main`, then `protect-tags`. Leave `require-checks` until layer 2.
+2. Create `protect-main`, then `protect-tags`. Create `require-checks` after `checks` and `scope` have each reported once on the default branch.
 3. Invite the agent GitHub account with write, not admin.
 
 JSON for the three rulesets lives in [setup/rulesets](../setup/rulesets).
+
+## Layer 2
+
+A status check is a pass or fail name on a commit. `checks / gate` fails if any job in [checks.yml](../.github/workflows/checks.yml) failed, was cancelled, or was skipped. Add this repository's tests in the `project` job there, and the same commands in [`scripts/check.sh`](../scripts/check.sh). `bash scripts/check.sh` is the local run.
+
+`require-checks` requires `checks / gate` and `scope / process-files-separate`. The pull request branch must be up to date. Both checks are limited to GitHub Actions (`integration_id` 15368), so the agent cannot satisfy them by posting a status. Apply waits until both workflow files are on the default branch and each has reported once.
+
+`scope` is triggered with `pull_request_target` so the workflow definition is the one on the default branch. The job does not check out the pull request and the token is read-only. That is the safe use of that trigger. A pull request that touches process files must not also touch other files. [Why](why.md#scope).

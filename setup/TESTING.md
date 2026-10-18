@@ -1,6 +1,6 @@
 # Sandbox test
 
-Live test for layer 1. Use a disposable repository. The owner's private sandbox is fine on GitHub Pro: <https://github.com/siarheirudak/rudax-keel-sandbix>
+Live test for layer 1 and layer 2. Use a disposable repository. The owner's private sandbox is fine on GitHub Pro: <https://github.com/siarheirudak/rudax-keel-sandbix>
 
 Do not point the scripts at the template repository.
 
@@ -24,7 +24,7 @@ Expected, with no FAIL:
 
 - CODEOWNERS is ALREADY (`* @siarheirudak`, no commit) when the file already names the owner. It is OK only when the file was missing and apply created it.
 - `protect-main` and `protect-tags` are OK, or ALREADY if you run apply again.
-- `require-checks` is **NOT YET**, reason `CI not added yet; re-run after layer 2 merge`.
+- `require-checks` is **NOT YET**, reason `waiting for checks.yml and scope.yml on the default branch, and for checks / gate and scope / process-files-separate to have reported at least once`.
 - The agent is invited with write (OK), or the invite is ALREADY pending. Admin is FAIL. Change the role to write before continuing.
 - Fork approval is OK, reason `not applicable (private repo)`.
 - Token permissions and allowed actions are OK or ALREADY.
@@ -297,7 +297,7 @@ gh api user --jq .login
 bash setup/verify-github-rules.sh siarheirudak/rudax-keel-sandbix isiarheiridak-agent
 ```
 
-The login is the owner GitHub account. Expected: no FAIL. `require-checks` is NOT YET.
+The login is the owner GitHub account. Expected: no FAIL. `require-checks` is NOT YET until both workflows are on the sandbox default branch and have reported.
 
 ## (e) Record the results
 
@@ -332,3 +332,115 @@ gh api -X DELETE repos/siarheirudak/rudax-keel-sandbix/git/refs/tags/keel-test
 ```
 
 Close any leftover pull requests in the sandbox UI. To reset rules, stay in the owner shell and run apply again. Matching settings come back ALREADY. To remove the rulesets entirely, delete them under Settings → Rules → Rulesets, then run apply if you want them again. Do not delete the sandbox repository.
+
+## Layer 2
+
+Do this after the template's layer 2 is on the sandbox default branch. Open one pull request so `scope` runs once, and let `checks` run on the default branch. Then, in the owner shell:
+
+```bash
+bash setup/apply-github-rules.sh siarheirudak/rudax-keel-sandbix isiarheiridak-agent
+bash setup/verify-github-rules.sh siarheirudak/rudax-keel-sandbix isiarheiridak-agent
+```
+
+Expected: `require-checks` is OK or ALREADY, and verify has no FAIL. A red `checks` run on the default branch is WARN, not FAIL.
+
+The attacks below are in the agent shell, except the owner merge in (b). Do not approve or merge as the agent.
+
+**(a) Failing check, then approval**
+
+```bash
+git switch -c attack-red origin/main
+printf '%s\n' 'not json' > attack-red.json
+git add attack-red.json
+git commit -m "attack: failing check"
+git push -u origin attack-red
+gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-red --title "attack: failing check" --body "sandbox test"
+```
+
+Wait until `checks / gate` is red. In the owner shell:
+
+```bash
+gh pr review attack-red --repo siarheirudak/rudax-keel-sandbix --approve --body "owner approval"
+```
+
+Back in the agent shell:
+
+```bash
+gh pr merge attack-red --repo siarheirudak/rudax-keel-sandbix --merge
+```
+
+Expected: merge blocked. The approval does not override the red check.
+
+**(b) Owner bypass still blocked by require-checks**
+
+In the owner shell, on the same red pull request:
+
+```bash
+gh pr merge attack-red --repo siarheirudak/rudax-keel-sandbix --merge --admin
+```
+
+Expected: still blocked. `protect-main` has an admin bypass. `require-checks` does not.
+
+**(c) Fake success status**
+
+On the head commit of a pull request whose real `checks / gate` is red:
+
+```bash
+sha=$(gh pr view attack-red --repo siarheirudak/rudax-keel-sandbix --json headRefOid --jq .headRefOid)
+gh api --method POST "repos/siarheirudak/rudax-keel-sandbix/statuses/${sha}" -f state=success -f context='checks / gate' -f description='fake'
+gh pr merge attack-red --repo siarheirudak/rudax-keel-sandbix --merge
+```
+
+Expected: merge still blocked. The ruleset accepts that name only from GitHub Actions (`integration_id` 15368).
+
+**(d) Process file and a normal file**
+
+```bash
+git switch -c attack-mix origin/main
+printf '\n# always pass\n' >> .github/workflows/checks.yml
+printf '%s\n' 'mix' >> README.md
+git add .github/workflows/checks.yml README.md
+git commit -m "attack: mix process and product"
+git push -u origin attack-mix
+gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-mix --title "attack: mix" --body "sandbox test"
+```
+
+Expected: `scope / process-files-separate` fails. The log has a how-to-fix line. Merge is blocked.
+
+**(e) Process files only**
+
+```bash
+git switch -c attack-process origin/main
+printf '\n# process only\n' >> setup/README.md
+git add setup/README.md
+git commit -m "attack: process only"
+git push -u origin attack-process
+gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-process --title "attack: process only" --body "sandbox test"
+```
+
+Expected: `scope / process-files-separate` passes.
+
+**(f) Docs only**
+
+```bash
+git switch -c attack-docs origin/main
+printf '\n\nDocs-only sandbox note.\n' >> docs/github-setup.md
+git add docs/github-setup.md
+git commit -m "attack: docs only"
+git push -u origin attack-docs
+gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-docs --title "attack: docs only" --body "sandbox test"
+```
+
+Expected: `checks / gate` is green.
+
+**Cleanup**
+
+```bash
+gh pr close --repo siarheirudak/rudax-keel-sandbix attack-red
+gh pr close --repo siarheirudak/rudax-keel-sandbix attack-mix
+gh pr close --repo siarheirudak/rudax-keel-sandbix attack-process
+gh pr close --repo siarheirudak/rudax-keel-sandbix attack-docs
+git push origin --delete attack-red attack-mix attack-process attack-docs
+```
+
+Do not delete tags. `keel-test` is the owner's to remove, if it is still there.

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+from urllib.parse import parse_qs
 
 ROLE = {
     "pull": "read",
@@ -76,6 +77,7 @@ def default_state():
         "calls": [],
         "gh_version": "2.4.0",
         "usage_flag": "",
+        "workflow_runs": {},
     }
 
 
@@ -123,7 +125,8 @@ def parse(argv):
     if endpoint is None:
         sys.stderr.write("mock missing endpoint\n")
         sys.exit(99)
-    return method, endpoint.split("?", 1)[0], slurp, jq_filter, fields, body
+    path, _, query_text = endpoint.partition("?")
+    return method, path, slurp, jq_filter, fields, body, parse_qs(query_text)
 
 
 def wrapped_b64(text):
@@ -168,7 +171,7 @@ def emit(code, payload, jq_filter):
     return 0
 
 
-def route(state, method, path, fields, body):
+def route(state, method, path, fields, body, query):
     if path == "user":
         if method != "GET":
             return 99, f"mock unknown {method} {path}", False
@@ -297,6 +300,17 @@ def route(state, method, path, fields, body):
             return 201, {"path": content_path}, False
         return 99, f"mock unknown {method} {path}", False
 
+    workflow_runs = re.fullmatch(r"actions/workflows/([^/]+)/runs", rest)
+    if workflow_runs:
+        if method != "GET":
+            return 99, f"mock unknown {method} {path}", False
+        name = workflow_runs.group(1)
+        runs = list(state.get("workflow_runs", {}).get(name, []))
+        wanted = query.get("branch", [None])[0]
+        if wanted is not None:
+            runs = [item for item in runs if item.get("head_branch") == wanted]
+        return 200, {"total_count": len(runs), "workflow_runs": runs}, False
+
     if rest == "actions/permissions/workflow":
         if method == "GET":
             return 200, state["workflow_perms"], False
@@ -365,7 +379,7 @@ def main():
     if len(sys.argv) < 2 or sys.argv[1] != "api":
         sys.stderr.write("mock: only gh api is implemented\n")
         return 99
-    method, path, slurp, jq_filter, fields, body = parse(sys.argv[2:])
+    method, path, slurp, jq_filter, fields, body, query = parse(sys.argv[2:])
     state = load()
     usage_flag = state.get("usage_flag") or ""
     if slurp:
@@ -376,7 +390,7 @@ def main():
         return 1
     state["calls"].append({"method": method, "path": path, "body": body, "fields": fields})
     log_line(method, path)
-    code, payload, _route_slurp = route(state, method, path, fields, body)
+    code, payload, _route_slurp = route(state, method, path, fields, body, query)
     save(state)
     return emit(code, payload, jq_filter)
 
