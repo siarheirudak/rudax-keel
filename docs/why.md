@@ -150,6 +150,14 @@ Each log line from the setup scripts links to a section below.
 
 **How to disable explicitly.** Remove the agent GitHub account from collaborators. Apply invites it again on the next run. If you granted admin, change the role to write yourself; apply will not do that for you.
 
+<a id="who-merges"></a>
+
+## Who merges
+
+Technically the agent is not forbidden from merging a pull request after the owner approves it. A personal repository cannot restrict who merges. The workflow does not include that. The acceptance criterion is the human approval. The workflow is: the human approves and the human merges. An agent merging an approved pull request cannot add code, since any new push dismisses the approval.
+
+You may instruct the agent to enable GitHub auto-merge on its pull requests. That has pitfalls: several pull requests merging one after another, conflicts between them surfacing in `main`, and until required checks exist it merges even with failing checks. The template does not do it by default.
+
 <a id="free-private-risk"></a>
 
 ## Free private repository

@@ -286,7 +286,7 @@ gh pr merge attack-codeowners --repo siarheirudak/rudax-keel-sandbix --"$method"
 
 Expected: the approval is `DISMISSED`, `reviewDecision` is `REVIEW_REQUIRED`, and the merge is blocked the same way.
 
-Known limit: an agent with write can merge a pull request the owner has already approved. A personal repository cannot restrict who merges. A later layer addresses this.
+Technically the agent is not forbidden from merging a pull request after the owner approves it (a personal repository cannot restrict who merges), but the workflow does not include it. The acceptance criterion is the human approval; the workflow is: the human approves and the human merges. An agent merging an approved pull request cannot add code, since any new push dismisses the approval.
 
 ## (d) Verify, as the owner
 
