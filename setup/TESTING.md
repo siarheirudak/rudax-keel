@@ -250,16 +250,19 @@ In the owner shell, approve that pull request by branch name. The owner shell is
 gh pr review attack-merge --repo siarheirudak/rudax-keel-sandbix --approve --body "owner approval"
 ```
 
-Back in the agent shell, add one commit and try the merge again, with the same `$method` as above:
+Back in the agent shell, push a real content change and try the merge again, with the same `$method` as above. Do not use `git commit --allow-empty`. An empty commit is not a reviewable push, so GitHub does not dismiss the approval. The first live run merged for that reason.
 
 ```bash
 git switch attack-merge
-git commit --allow-empty -m "attack: stale review"
+printf '%s\n' 'v2' > stale-test.txt
+git add stale-test.txt
+git commit -m "attack: stale review"
 git push
+gh pr view attack-merge --repo siarheirudak/rudax-keel-sandbix --json reviewDecision,reviews
 gh pr merge attack-merge --repo siarheirudak/rudax-keel-sandbix --"$method"
 ```
 
-Expected: the owner approval is dismissed. Merge is blocked, with the review-required message.
+Expected: the owner approval is `DISMISSED`, and `reviewDecision` is `REVIEW_REQUIRED`. Merge is blocked. `gh` may print `the base branch policy prohibits the merge` together with that `reviewDecision`. The older review-required or code-owner sentence also counts.
 
 **Stale review on attack-codeowners**
 
@@ -269,16 +272,21 @@ In the owner shell:
 gh pr review attack-codeowners --repo siarheirudak/rudax-keel-sandbix --approve --body "owner approval"
 ```
 
-In the agent shell:
+In the agent shell, change `CODEOWNERS` again. Another empty commit does not count.
 
 ```bash
 git switch attack-codeowners
-git commit --allow-empty -m "attack: stale review"
+printf '%s\n' '* @isiarheiridak-agent @siarheirudak' > .github/CODEOWNERS
+git add .github/CODEOWNERS
+git commit -m "attack: stale review"
 git push
+gh pr view attack-codeowners --repo siarheirudak/rudax-keel-sandbix --json reviewDecision,reviews
 gh pr merge attack-codeowners --repo siarheirudak/rudax-keel-sandbix --"$method"
 ```
 
-Expected: the approval is dismissed and the merge is blocked with the review-required message.
+Expected: the approval is `DISMISSED`, `reviewDecision` is `REVIEW_REQUIRED`, and the merge is blocked the same way.
+
+Known limit: an agent with write can merge a pull request the owner has already approved. A personal repository cannot restrict who merges. A later layer addresses this.
 
 ## (d) Verify, as the owner
 
@@ -297,7 +305,7 @@ From the agent shell (the agent token), post this table as a comment on pull req
 
 ```bash
 gh api --method POST repos/siarheirudak/rudax-keel/issues/3/comments --input - <<'EOF'
-{"body":"Sandbox results for rudax-keel-sandbix.\n\n| Attack | Expected | Actual |\n|---|---|---|\n| Identity push | pusher isiarheiridak-agent, or author and committer if events lag | |\n| Direct push to main | GH013, pull request required | |\n| Force push main~1 | GH013, force-push or non-fast-forward | |\n| Delete main | GH013, or refusing to delete the current branch | |\n| Create tag | GH013, cannot create | |\n| Move keel-test | GH013, cannot update protected ref | |\n| Delete keel-test | GH013, cannot delete | |\n| Merge without approval | review required | |\n| Self-approve | refused | |\n| Edit rulesets | 403 or 404; any 2xx is a fail | |\n| GITHUB_TOKEN approve | run exists, log says not permitted to approve, no github-actions approval | |\n| CODEOWNERS without owner review | review required | |\n| Stale review on attack-merge | approval dismissed, review required | |\n| Stale review on attack-codeowners | approval dismissed, review required | |"}
+{"body":"Sandbox results for rudax-keel-sandbix.\n\n| Attack | Expected | Actual |\n|---|---|---|\n| Identity push | pusher isiarheiridak-agent, or author and committer if events lag | |\n| Direct push to main | GH013, pull request required | |\n| Force push main~1 | GH013, force-push or non-fast-forward | |\n| Delete main | GH013, or refusing to delete the current branch | |\n| Create tag | GH013, cannot create | |\n| Move keel-test | GH013, cannot update protected ref | |\n| Delete keel-test | GH013, cannot delete | |\n| Merge without approval | review required | |\n| Self-approve | refused | |\n| Edit rulesets | 403 or 404; any 2xx is a fail | |\n| GITHUB_TOKEN approve | run exists, log says not permitted to approve, no github-actions approval | |\n| CODEOWNERS without owner review | review required | |\n| Stale review on attack-merge | approval dismissed, REVIEW_REQUIRED, or base branch policy prohibits the merge | |\n| Stale review on attack-codeowners | approval dismissed, REVIEW_REQUIRED, or base branch policy prohibits the merge | |"}
 EOF
 ```
 
