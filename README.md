@@ -1,5 +1,7 @@
 # rudax-keel
 
+Rudax Keel — a guarded production line for building software with AI agents.
+
 _The keel is laid first; everything else is built on it._
 
 A template for building software with AI coding agents safely. The agent GitHub account proposes changes. The owner GitHub account decides what reaches the default branch.
