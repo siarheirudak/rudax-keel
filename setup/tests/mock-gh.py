@@ -78,6 +78,7 @@ def default_state():
         "gh_version": "2.4.0",
         "usage_flag": "",
         "workflow_runs": {},
+        "check_runs": [],
     }
 
 
@@ -199,6 +200,28 @@ def route(state, method, path, fields, body, query):
             "owner": {"login": state["owner_login"], "type": state["owner_type"]},
         }, False
 
+    check_runs = re.fullmatch(r"commits/([^/]+)/check-runs", rest)
+    if check_runs:
+        if method != "GET":
+            return 99, f"mock unknown {method} {path}", False
+        sha = check_runs.group(1)
+        wanted_name = query.get("check_name", [None])[0]
+        wanted_app = query.get("app_id", [None])[0]
+        matched = []
+        for item in state.get("check_runs", []):
+            if item.get("head_sha") != sha:
+                continue
+            if wanted_name is not None and item.get("name") != wanted_name:
+                continue
+            if wanted_app is not None and str(item.get("app_id")) != str(wanted_app):
+                continue
+            matched.append({
+                "name": item.get("name"),
+                "conclusion": item.get("conclusion"),
+                "app": {"id": item.get("app_id"), "slug": "github-actions"},
+            })
+        return 200, {"total_count": len(matched), "check_runs": matched}, False
+
     if rest.startswith("commits/"):
         if state["empty"]:
             return 409, "Git Repository is empty.", False
@@ -309,7 +332,21 @@ def route(state, method, path, fields, body, query):
         wanted = query.get("branch", [None])[0]
         if wanted is not None:
             runs = [item for item in runs if item.get("head_branch") == wanted]
+        wanted_event = query.get("event", [None])[0]
+        if wanted_event is not None:
+            runs = [item for item in runs if item.get("event") == wanted_event]
         return 200, {"total_count": len(runs), "workflow_runs": runs}, False
+
+    run_jobs = re.fullmatch(r"actions/runs/(\d+)/jobs", rest)
+    if run_jobs:
+        if method != "GET":
+            return 99, f"mock unknown {method} {path}", False
+        wanted_id = int(run_jobs.group(1))
+        for runs in state.get("workflow_runs", {}).values():
+            for run in runs:
+                if int(run.get("id", -1)) == wanted_id:
+                    return 200, {"jobs": run.get("jobs") or []}, False
+        return 404, "Not Found", False
 
     if rest == "actions/permissions/workflow":
         if method == "GET":

@@ -1,11 +1,15 @@
 name: scope
 
-# pull_request_target reads this file from the default branch, not from the
-# pull request. The job does not check out pull request code. The token can
-# only read. Do not add a checkout of the pull request head, and do not widen
-# permissions: that would run untrusted code with this token.
+# pull_request_target reads this file from the pull request's base branch,
+# not from the head. edited is included so changing the base runs it again.
+# A retarget test needs that base branch to contain this file (branch it from
+# the default branch after this file exists). The job does not check out
+# pull request code. The token can only read. Do not add a checkout of the
+# pull request head, and do not widen permissions: that would run untrusted
+# code with this token.
 on:
   pull_request_target:
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
@@ -13,6 +17,7 @@ permissions:
 
 jobs:
   process-files-separate:
+    name: keel-process-files-separate
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -22,6 +27,7 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           set -euo pipefail
           dest=$(mktemp)

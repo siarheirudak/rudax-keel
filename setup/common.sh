@@ -49,13 +49,14 @@ AUTH_ERROR=""
 # shellcheck disable=SC2034
 RISK_REASON="GitHub Free on a private repository has no rulesets. The agent GitHub account could push directly to main, there is no review, and checks are only advisory. Make the repository public or use GitHub Pro."
 # shellcheck disable=SC2034
-CHECKS_SKIP_REASON="waiting for checks.yml and scope.yml on the default branch, and for checks / gate and scope / process-files-separate to have reported at least once"
+CHECKS_SKIP_REASON="waiting for checks.yml and scope.yml on the default branch, and for every require-checks context to be reported by GitHub Actions app 15368"
 OWNER_APPLY_REASON="owner: run setup/apply-github-rules.sh"
 REQUIRE_CHECKS_FILES=0
 REQUIRE_CHECKS_REPORTED=0
-WORKFLOW_REPORTED=0
 CHECKS_RED=0
 CHECKS_CONCLUSION=""
+CHECKS_REPORT_REASON=""
+REPORTED_NAMES=""
 # shellcheck disable=SC2034
 FORK_MANUAL_REASON="API unavailable. Do this by hand: Settings → Actions → General → Fork pull request workflows → Require approval for all outside collaborators."
 # gh api --jq arrived in 1.7.0. --paginate, --input, --method, and -f are older.
@@ -607,40 +608,123 @@ require_checks_files_ready() {
   fi
 }
 
-workflow_reported() {
-  local file=$1 count
-  WORKFLOW_REPORTED=0
-  if ! gh_api "repos/${SLUG}/actions/workflows/${file}/runs?per_page=1"; then
+required_check_contexts() {
+  jq -r '
+    .rules[]
+    | select(.type == "required_status_checks")
+    | .parameters.required_status_checks[].context
+  ' "$SCRIPT_DIR/rulesets/require-checks.json"
+}
+
+name_is_reported() {
+  local name=$1 line
+  while IFS= read -r line; do
+    [[ $line == "$name" ]] && return 0
+  done <<<"$REPORTED_NAMES"
+  return 1
+}
+
+note_reported_name() {
+  if name_is_reported "$1"; then
+    return 0
+  fi
+  REPORTED_NAMES="${REPORTED_NAMES}${1}"$'\n'
+}
+
+check_run_from_app() {
+  local sha=$1 name=$2 encoded
+  encoded=$(jq -nr --arg s "$name" '$s|@uri')
+  if ! gh_api "repos/${SLUG}/commits/${sha}/check-runs?check_name=${encoded}&app_id=15368&per_page=20"; then
     if is_not_found; then
-      return 0
+      return 1
     fi
     return 2
   fi
-  count=$(jq -r '.total_count // 0' <<<"$GH_API_BODY")
-  if [[ $count -gt 0 ]]; then
-    WORKFLOW_REPORTED=1
+  if jq -e --arg name "$name" '
+    any(.check_runs[]?; .name == $name and ((.app.id // 0) == 15368))
+  ' <<<"$GH_API_BODY" >/dev/null; then
+    return 0
   fi
+  return 1
+}
+
+collect_reported_names() {
+  local file runs_json run_id sha jobs_json job_name rc
+  REPORTED_NAMES=""
+  for file in checks.yml scope.yml; do
+    if ! gh_api "repos/${SLUG}/actions/workflows/${file}/runs?per_page=100"; then
+      if is_not_found; then
+        continue
+      fi
+      return 2
+    fi
+    runs_json=$GH_API_BODY
+    while IFS= read -r run_id; do
+      [[ -n $run_id && $run_id != null ]] || continue
+      sha=$(jq -r --arg id "$run_id" '.workflow_runs[] | select((.id | tostring) == $id) | .head_sha' <<<"$runs_json")
+      [[ -n $sha && $sha != null ]] || continue
+      if ! gh_api "repos/${SLUG}/actions/runs/${run_id}/jobs?per_page=100"; then
+        if is_not_found; then
+          continue
+        fi
+        return 2
+      fi
+      jobs_json=$GH_API_BODY
+      while IFS= read -r job_name; do
+        [[ -n $job_name ]] || continue
+        rc=0
+        check_run_from_app "$sha" "$job_name" || rc=$?
+        if [[ $rc -eq 2 ]]; then
+          return 2
+        fi
+        if [[ $rc -eq 0 ]]; then
+          note_reported_name "$job_name"
+        fi
+      done < <(jq -r '.jobs[]?.name // empty' <<<"$jobs_json")
+    done < <(jq -r '.workflow_runs[]?.id // empty' <<<"$runs_json")
+  done
 }
 
 require_checks_reported() {
+  local ctx reported missing saw
   REQUIRE_CHECKS_REPORTED=0
-  workflow_reported "checks.yml" || return 2
-  if [[ $WORKFLOW_REPORTED -ne 1 ]]; then
+  CHECKS_REPORT_REASON=""
+  reported=""
+  missing=""
+  saw=0
+  collect_reported_names || return 2
+  while IFS= read -r ctx; do
+    [[ -n $ctx ]] || continue
+    saw=1
+    if name_is_reported "$ctx"; then
+      reported="${reported}${ctx} "
+    else
+      missing="${missing}${ctx} "
+    fi
+  done < <(required_check_contexts)
+  reported=${reported% }
+  missing=${missing% }
+  if [[ $saw -eq 1 && -z $missing ]]; then
+    REQUIRE_CHECKS_REPORTED=1
     return 0
   fi
-  workflow_reported "scope.yml" || return 2
-  if [[ $WORKFLOW_REPORTED -eq 1 ]]; then
-    REQUIRE_CHECKS_REPORTED=1
+  if [[ $saw -eq 0 ]]; then
+    missing="(none listed in require-checks.json)"
   fi
+  CHECKS_REPORT_REASON="reported [${reported:-none}]; missing [${missing}]; need every require-checks context from GitHub Actions app 15368"
 }
 
 latest_checks_is_red() {
   CHECKS_RED=0
   CHECKS_CONCLUSION=""
-  if ! gh_api "repos/${SLUG}/actions/workflows/checks.yml/runs?per_page=1&branch=${DEFAULT_BRANCH}"; then
+  if ! gh_api "repos/${SLUG}/actions/workflows/checks.yml/runs?per_page=20&branch=${DEFAULT_BRANCH}&event=push"; then
     return 0
   fi
-  CHECKS_CONCLUSION=$(jq -r '(.workflow_runs // [])[0].conclusion // empty' <<<"$GH_API_BODY")
+  CHECKS_CONCLUSION=$(jq -r --arg branch "$DEFAULT_BRANCH" '
+    [ .workflow_runs[]?
+      | select(.head_branch == $branch and .event == "push")
+    ][0].conclusion // empty
+  ' <<<"$GH_API_BODY")
   case $CHECKS_CONCLUSION in
     failure|cancelled|timed_out|startup_failure) CHECKS_RED=1 ;;
   esac
@@ -800,7 +884,8 @@ touch_shared_state() {
     "$RULESETS_OFF" "$PRIVATE" "$PLAN" "$REPO_OWNER" "$OWNER_TYPE" \
     "$ACCEPT_RISK" "$REWRITE_CODEOWNERS" "$REPO_ADMIN" "$CONTENT_TEXT" "$USES_LIST" "$AUTH_ERROR" \
     "$RISK_REASON" "$CHECKS_SKIP_REASON" "$OWNER_APPLY_REASON" "$FORK_MANUAL_REASON" "$MIN_GH_VERSION" "$GH_API_BODY" \
-    "$REQUIRE_CHECKS_FILES" "$REQUIRE_CHECKS_REPORTED" "$WORKFLOW_REPORTED" "$CHECKS_RED" "$CHECKS_CONCLUSION" \
+    "$REQUIRE_CHECKS_FILES" "$REQUIRE_CHECKS_REPORTED" "$CHECKS_RED" "$CHECKS_CONCLUSION" \
+    "$CHECKS_REPORT_REASON" "$REPORTED_NAMES" \
     "$GH_API_ERROR" "$LOG_FILE" "$STEP" "$FAIL_COUNT" "$SUMMARY" "$SLUG" "$AGENT"
 }
 touch_shared_state

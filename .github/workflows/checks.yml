@@ -52,7 +52,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Markdown links
-        run: python3 scripts/check-md-links.py
+        run: |
+          python3 scripts/check-md-links.py
+          python3 tests/test_md_links.py
 
   action-pins:
     runs-on: ubuntu-latest
@@ -75,6 +77,8 @@ jobs:
         run: bash setup/tests/test-fake-gh.sh
       - name: Scope rule
         run: python3 scripts/check-scope.py --self-test
+      - name: Gate job list
+        run: python3 tests/test_gate_jobs.py
 
   project:
     runs-on: ubuntu-latest
@@ -84,19 +88,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Project checks
-        # Single place for this repository's own tests.
-        # Examples:
-        #   npm test
-        #   pytest
-        #   go test ./...
-        run: |
-          if [ -f scripts/check.sh ]; then
-            bash scripts/check.sh --project-only
-          else
-            echo "no project checks yet"
-          fi
+        # Commands live in project_checks() in scripts/check.sh.
+        run: bash scripts/check.sh --project-only
 
   gate:
+    name: keel-gate
     needs: [actionlint, shellcheck, json, md-links, action-pins, fake-gh, project]
     if: always()
     runs-on: ubuntu-latest

@@ -127,7 +127,7 @@ apply_named_ruleset() {
       return 0
     fi
     if [[ $REQUIRE_CHECKS_REPORTED -ne 1 ]]; then
-      log_step "NOT YET" "$what" "$CHECKS_SKIP_REASON" "$anchor"
+      log_step "NOT YET" "$what" "${CHECKS_REPORT_REASON:-$CHECKS_SKIP_REASON}" "$anchor"
       return 0
     fi
   fi

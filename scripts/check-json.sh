@@ -69,8 +69,8 @@ if ! jq -e '
     and .parameters.strict_required_status_checks_policy == true
     and .parameters.do_not_enforce_on_create == false
     and (.parameters.required_status_checks | sort_by(.context)) == [
-      {"context": "checks / gate", "integration_id": 15368},
-      {"context": "scope / process-files-separate", "integration_id": 15368}
+      {"context": "keel-gate", "integration_id": 15368},
+      {"context": "keel-process-files-separate", "integration_id": 15368}
     ]
   )
 ' setup/rulesets/require-checks.json >/dev/null; then

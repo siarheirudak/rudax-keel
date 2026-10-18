@@ -24,7 +24,7 @@ Expected, with no FAIL:
 
 - CODEOWNERS is ALREADY (`* @siarheirudak`, no commit) when the file already names the owner. It is OK only when the file was missing and apply created it.
 - `protect-main` and `protect-tags` are OK, or ALREADY if you run apply again.
-- `require-checks` is **NOT YET**, reason `waiting for checks.yml and scope.yml on the default branch, and for checks / gate and scope / process-files-separate to have reported at least once`.
+- `require-checks` is **NOT YET**, reason `waiting for checks.yml and scope.yml on the default branch, and for every require-checks context to be reported by GitHub Actions app 15368`.
 - The agent is invited with write (OK), or the invite is ALREADY pending. Admin is FAIL. Change the role to write before continuing.
 - Fork approval is OK, reason `not applicable (private repo)`.
 - Token permissions and allowed actions are OK or ALREADY.
@@ -297,7 +297,7 @@ gh api user --jq .login
 bash setup/verify-github-rules.sh siarheirudak/rudax-keel-sandbix isiarheiridak-agent
 ```
 
-The login is the owner GitHub account. Expected: no FAIL. `require-checks` is NOT YET until both workflows are on the sandbox default branch and have reported.
+The login is the owner GitHub account. Expected: no FAIL. `require-checks` is NOT YET until both workflows are on the sandbox default branch and every required check-run name has been reported by GitHub Actions app 15368. `keel-process-files-separate` reports on a pull request, not on a push to the default branch.
 
 ## (e) Record the results
 
@@ -335,16 +335,38 @@ Close any leftover pull requests in the sandbox UI. To reset rules, stay in the 
 
 ## Layer 2
 
-Do this after the template's layer 2 is on the sandbox default branch. Open one pull request so `scope` runs once, and let `checks` run on the default branch. Then, in the owner shell:
+Do this after the template's layer 2 is on the sandbox default branch. The check-run names are `keel-gate` and `keel-process-files-separate`. `keel-gate` runs on push to the default branch and on pull requests. `keel-process-files-separate` runs only on pull requests. Open one pull request so scope reports, and let checks run on the default branch. Then, in the owner shell:
 
 ```bash
 bash setup/apply-github-rules.sh siarheirudak/rudax-keel-sandbix isiarheiridak-agent
 bash setup/verify-github-rules.sh siarheirudak/rudax-keel-sandbix isiarheiridak-agent
 ```
 
-Expected: `require-checks` is OK or ALREADY, and verify has no FAIL. A red `checks` run on the default branch is WARN, not FAIL.
+Expected: `require-checks` is OK or ALREADY, and verify has no FAIL. If a required name has not reported yet, apply is NOT YET and the reason lists `reported [...]` and `missing [...]`. A red `checks` push to the default branch is WARN, not FAIL. A red pull request run is not that warning.
 
-The attacks below are in the agent shell, except the owner merge in (b). Do not approve or merge as the agent.
+The attacks below are in the agent shell, except where a step says owner shell. Do not approve or merge as the agent.
+
+**Positive: owner merges a docs-only pull request**
+
+Do this after require-checks is applied. It must succeed.
+
+```bash
+git switch -c attack-docs-merge origin/main
+printf '\n\nDocs-only merge note.\n' >> docs/github-setup.md
+git add docs/github-setup.md
+git commit -m "sandbox: docs only merge"
+git push -u origin attack-docs-merge
+gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-docs-merge --title "sandbox: docs only merge" --body "sandbox test"
+```
+
+Wait until `keel-gate` and `keel-process-files-separate` are both success. In the owner shell:
+
+```bash
+gh pr review attack-docs-merge --repo siarheirudak/rudax-keel-sandbix --approve --body "owner approval"
+gh pr merge attack-docs-merge --repo siarheirudak/rudax-keel-sandbix --merge
+```
+
+Expected: the merge succeeds. Later attacks in this section branch from the new default branch. The merged commit stays. Do not force-push the default branch to undo it.
 
 **(a) Failing check, then approval**
 
@@ -357,7 +379,7 @@ git push -u origin attack-red
 gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-red --title "attack: failing check" --body "sandbox test"
 ```
 
-Wait until `checks / gate` is red. In the owner shell:
+Wait until `keel-gate` is red. In the owner shell:
 
 ```bash
 gh pr review attack-red --repo siarheirudak/rudax-keel-sandbix --approve --body "owner approval"
@@ -383,15 +405,15 @@ Expected: still blocked. `protect-main` has an admin bypass. `require-checks` do
 
 **(c) Fake success status**
 
-On the head commit of a pull request whose real `checks / gate` is red:
+On the head commit of a pull request whose real `keel-gate` is red. This posts a commit status, not a check run:
 
 ```bash
 sha=$(gh pr view attack-red --repo siarheirudak/rudax-keel-sandbix --json headRefOid --jq .headRefOid)
-gh api --method POST "repos/siarheirudak/rudax-keel-sandbix/statuses/${sha}" -f state=success -f context='checks / gate' -f description='fake'
+gh api --method POST "repos/siarheirudak/rudax-keel-sandbix/statuses/${sha}" -f state=success -f context='keel-gate' -f description='fake'
 gh pr merge attack-red --repo siarheirudak/rudax-keel-sandbix --merge
 ```
 
-Expected: merge still blocked. The ruleset accepts that name only from GitHub Actions (`integration_id` 15368).
+Expected: merge still blocked. The ruleset accepts that name only from GitHub Actions (`integration_id` 15368). A status posted with the agent token does not count.
 
 **(d) Process file and a normal file**
 
@@ -405,7 +427,7 @@ git push -u origin attack-mix
 gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-mix --title "attack: mix" --body "sandbox test"
 ```
 
-Expected: `scope / process-files-separate` fails. The log has a how-to-fix line. Merge is blocked.
+Expected: `keel-process-files-separate` fails. The log has a how-to-fix line. Merge is blocked.
 
 **(e) Process files only**
 
@@ -418,20 +440,106 @@ git push -u origin attack-process
 gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-process --title "attack: process only" --body "sandbox test"
 ```
 
-Expected: `scope / process-files-separate` passes.
+Expected: `keel-process-files-separate` passes. This pull request can still weaken the checks. Owner review of a process-only pull request is the control, by design. Do not merge it unless that review is what you mean to test.
 
 **(f) Docs only**
 
 ```bash
 git switch -c attack-docs origin/main
-printf '\n\nDocs-only sandbox note.\n' >> docs/github-setup.md
-git add docs/github-setup.md
+printf '\n\nDocs-only sandbox note.\n' >> docs/why.md
+git add docs/why.md
 git commit -m "attack: docs only"
 git push -u origin attack-docs
 gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-docs --title "attack: docs only" --body "sandbox test"
 ```
 
-Expected: `checks / gate` is green.
+Expected: `keel-gate` is green. `keel-process-files-separate` is green. Do not merge this one; the positive test above is the merge.
+
+**(g) Check run posted by a workflow on another branch**
+
+This is the case a user-token status does not cover. It has not been observed in this repository yet. Run it and write down what GitHub does. Do not treat a green result as proof the agent was honest.
+
+On a branch that is not the pull request, add a workflow that requests `checks: write` and creates a check run named `keel-gate` with conclusion `success` on the head SHA of `attack-red`. Dispatch that workflow on the branch that contains it. The pull request diff does not contain the workflow.
+
+```bash
+git switch -c attack-forge origin/main
+mkdir -p .github/workflows
+cat > .github/workflows/forge-check.yml <<'EOF'
+name: forge-check
+on:
+  workflow_dispatch:
+    inputs:
+      head_sha:
+        required: true
+        type: string
+permissions:
+  checks: write
+jobs:
+  forge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Post keel-gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name='keel-gate' \
+            -f head_sha="$HEAD_SHA" \
+            -f status='completed' \
+            -f conclusion='success'
+EOF
+git add .github/workflows/forge-check.yml
+git commit -m "attack: forge a check run from another branch"
+git push -u origin attack-forge
+sha=$(gh pr view attack-red --repo siarheirudak/rudax-keel-sandbix --json headRefOid --jq .headRefOid)
+gh workflow run forge-check --repo siarheirudak/rudax-keel-sandbix --ref attack-forge -f "head_sha=${sha}"
+```
+
+Write down, from `gh api repos/siarheirudak/rudax-keel-sandbix/commits/${sha}/check-runs`:
+
+- whether a check run named `keel-gate` appeared
+- its `app.id` and `app.slug`
+- whether that run's conclusion is `success`
+- whether `gh pr merge` on `attack-red` then succeeds or stays blocked
+
+Honest expectation, before you run it: GitHub Actions app 15368 can create that check run, because the token is the Actions token, and the ruleset may then treat `keel-gate` as success even though the workflow is not in the pull request diff. If GitHub refuses the create, or the merge stays blocked, write that result down instead. Either way, the owner review is the control. Do not claim this was already observed.
+
+**(h) Rename**
+
+```bash
+git switch -c attack-rename origin/main
+git mv README.md .github/README-from-product.md
+git commit -m "attack: rename a product file into a process path"
+git push -u origin attack-rename
+gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-rename --title "attack: rename" --body "sandbox test"
+```
+
+Expected: `keel-process-files-separate` fails. The old path (`README.md`) is not a process file and the new path is. The reverse, a process path renamed to a product path, fails the same way.
+
+**(i) Retarget the base**
+
+`pull_request_target` reads `scope.yml` from the pull request's base branch. Branch the other base from the default branch after `scope.yml` is already there. `edited` is what runs the check again when the base changes.
+
+```bash
+git switch -c other-base origin/main
+git push -u origin other-base
+git switch -c attack-retarget origin/main
+printf '\n\nRetarget note.\n' >> docs/why.md
+git add docs/why.md
+git commit -m "attack: retarget"
+git push -u origin attack-retarget
+gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-retarget --title "attack: retarget" --body "sandbox test"
+```
+
+Wait until `keel-process-files-separate` is success on base `main`. Then:
+
+```bash
+gh pr edit attack-retarget --repo siarheirudak/rudax-keel-sandbix --base other-base
+```
+
+Expected: scope runs again. `keel-process-files-separate` fails because the base is not the default branch. The log says to retarget onto the default branch.
 
 **Cleanup**
 
@@ -440,7 +548,9 @@ gh pr close --repo siarheirudak/rudax-keel-sandbix attack-red
 gh pr close --repo siarheirudak/rudax-keel-sandbix attack-mix
 gh pr close --repo siarheirudak/rudax-keel-sandbix attack-process
 gh pr close --repo siarheirudak/rudax-keel-sandbix attack-docs
-git push origin --delete attack-red attack-mix attack-process attack-docs
+gh pr close --repo siarheirudak/rudax-keel-sandbix attack-rename
+gh pr close --repo siarheirudak/rudax-keel-sandbix attack-retarget
+git push origin --delete attack-red attack-mix attack-process attack-docs attack-rename attack-retarget attack-forge other-base
 ```
 
-Do not delete tags. `keel-test` is the owner's to remove, if it is still there.
+`attack-docs-merge` was merged. Do not delete the default branch. A delete error for a branch that was never pushed is fine. Do not delete tags. `keel-test` is the owner's to remove, if it is still there. A forged check run stays on the commit it was posted to; closing the pull request does not delete it.
