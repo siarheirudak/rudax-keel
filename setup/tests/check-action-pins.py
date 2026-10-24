@@ -23,5 +23,11 @@ for path in (ROOT / ".github" / "workflows").glob("*.y*ml"):
             BAD.append(f"{path.relative_to(ROOT)}:{number}:{uses}")
 
 if BAD:
-    print("unpinned actions:\n" + "\n".join(BAD))
+    print("unpinned actions:\n" + "\n".join(BAD), file=sys.stderr)
+    first = BAD[0]
+    path, number, uses = first.split(":", 2)
+    print(
+        f"how to fix: pin {uses} in {path}:{number} to a full 40-character commit SHA",
+        file=sys.stderr,
+    )
     sys.exit(1)

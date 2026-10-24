@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+from urllib.parse import parse_qs
 
 ROLE = {
     "pull": "read",
@@ -76,6 +77,8 @@ def default_state():
         "calls": [],
         "gh_version": "2.4.0",
         "usage_flag": "",
+        "workflow_runs": {},
+        "check_runs": [],
     }
 
 
@@ -123,7 +126,8 @@ def parse(argv):
     if endpoint is None:
         sys.stderr.write("mock missing endpoint\n")
         sys.exit(99)
-    return method, endpoint.split("?", 1)[0], slurp, jq_filter, fields, body
+    path, _, query_text = endpoint.partition("?")
+    return method, path, slurp, jq_filter, fields, body, parse_qs(query_text)
 
 
 def wrapped_b64(text):
@@ -168,7 +172,7 @@ def emit(code, payload, jq_filter):
     return 0
 
 
-def route(state, method, path, fields, body):
+def route(state, method, path, fields, body, query):
     if path == "user":
         if method != "GET":
             return 99, f"mock unknown {method} {path}", False
@@ -195,6 +199,28 @@ def route(state, method, path, fields, body):
             "permissions": {"admin": bool(state["admin"]), "push": True, "pull": True},
             "owner": {"login": state["owner_login"], "type": state["owner_type"]},
         }, False
+
+    check_runs = re.fullmatch(r"commits/([^/]+)/check-runs", rest)
+    if check_runs:
+        if method != "GET":
+            return 99, f"mock unknown {method} {path}", False
+        sha = check_runs.group(1)
+        wanted_name = query.get("check_name", [None])[0]
+        wanted_app = query.get("app_id", [None])[0]
+        matched = []
+        for item in state.get("check_runs", []):
+            if item.get("head_sha") != sha:
+                continue
+            if wanted_name is not None and item.get("name") != wanted_name:
+                continue
+            if wanted_app is not None and str(item.get("app_id")) != str(wanted_app):
+                continue
+            matched.append({
+                "name": item.get("name"),
+                "conclusion": item.get("conclusion"),
+                "app": {"id": item.get("app_id"), "slug": "github-actions"},
+            })
+        return 200, {"total_count": len(matched), "check_runs": matched}, False
 
     if rest.startswith("commits/"):
         if state["empty"]:
@@ -297,6 +323,39 @@ def route(state, method, path, fields, body):
             return 201, {"path": content_path}, False
         return 99, f"mock unknown {method} {path}", False
 
+    workflow_runs = re.fullmatch(r"actions/workflows/([^/]+)/runs", rest)
+    if workflow_runs:
+        if method != "GET":
+            return 99, f"mock unknown {method} {path}", False
+        name = workflow_runs.group(1)
+        runs = list(state.get("workflow_runs", {}).get(name, []))
+        wanted = query.get("branch", [None])[0]
+        if wanted is not None:
+            runs = [item for item in runs if item.get("head_branch") == wanted]
+        wanted_event = query.get("event", [None])[0]
+        if wanted_event is not None:
+            runs = [item for item in runs if item.get("event") == wanted_event]
+        per_page = int((query.get("per_page") or ["100"])[0] or "100")
+        page = int((query.get("page") or ["1"])[0] or "1")
+        if per_page < 1:
+            per_page = 1
+        if page < 1:
+            page = 1
+        start = (page - 1) * per_page
+        page_runs = runs[start : start + per_page]
+        return 200, {"total_count": len(runs), "workflow_runs": page_runs}, False
+
+    run_jobs = re.fullmatch(r"actions/runs/(\d+)/jobs", rest)
+    if run_jobs:
+        if method != "GET":
+            return 99, f"mock unknown {method} {path}", False
+        wanted_id = int(run_jobs.group(1))
+        for runs in state.get("workflow_runs", {}).values():
+            for run in runs:
+                if int(run.get("id", -1)) == wanted_id:
+                    return 200, {"jobs": run.get("jobs") or []}, False
+        return 404, "Not Found", False
+
     if rest == "actions/permissions/workflow":
         if method == "GET":
             return 200, state["workflow_perms"], False
@@ -365,7 +424,7 @@ def main():
     if len(sys.argv) < 2 or sys.argv[1] != "api":
         sys.stderr.write("mock: only gh api is implemented\n")
         return 99
-    method, path, slurp, jq_filter, fields, body = parse(sys.argv[2:])
+    method, path, slurp, jq_filter, fields, body, query = parse(sys.argv[2:])
     state = load()
     usage_flag = state.get("usage_flag") or ""
     if slurp:
@@ -376,7 +435,7 @@ def main():
         return 1
     state["calls"].append({"method": method, "path": path, "body": body, "fields": fields})
     log_line(method, path)
-    code, payload, _route_slurp = route(state, method, path, fields, body)
+    code, payload, _route_slurp = route(state, method, path, fields, body, query)
     save(state)
     return emit(code, payload, jq_filter)
 

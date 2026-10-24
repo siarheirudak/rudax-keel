@@ -17,7 +17,12 @@
         "do_not_enforce_on_create": false,
         "required_status_checks": [
           {
-            "context": "checks / gate"
+            "context": "keel-gate",
+            "integration_id": 15368
+          },
+          {
+            "context": "keel-process-files-separate",
+            "integration_id": 15368
           }
         ]
       }

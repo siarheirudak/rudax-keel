@@ -34,6 +34,7 @@ out=""
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   printf '%s\n' "$out" >&2
+  printf 'how to fix: fix the fake-gh failure (%s) in the setup scripts or setup/tests/test-fake-gh.sh\n' "$*" >&2
   if [[ -f $GH_MOCK_LOG ]]; then
     printf 'calls:\n' >&2
     cat "$GH_MOCK_LOG" >&2 || true
@@ -114,7 +115,7 @@ accept_agent() {
 
 assert_links() {
   local bad
-  bad=$(printf '%s\n' "$out" | grep -E ' - (OK|ALREADY|NOT YET|FAIL)' | grep -v 'docs/why.md#' || true)
+  bad=$(printf '%s\n' "$out" | grep -E ' - (OK|ALREADY|NOT YET|FAIL|WARN)' | grep -v 'docs/why.md#' || true)
   if [[ -n $bad ]]; then
     out=$bad
     fail "step without why.md link"
@@ -195,7 +196,7 @@ run "$APPLY" owner/repo agent
 assert_rc 0
 need "created protect-main"
 need "created protect-tags"
-need "CI not added yet; re-run after layer 2 merge"
+need "waiting for checks.yml and scope.yml on the default branch, and for every require-checks context to be reported by GitHub Actions app 15368"
 need "invitation sent with write"
 forbid "created require-checks"
 assert_links
@@ -250,7 +251,7 @@ run "$APPLY" owner/repo agent
 assert_rc 0
 need "already matches setup/rulesets/protect-main.json"
 need "already matches setup/rulesets/protect-tags.json"
-need "CI not added yet; re-run after layer 2 merge"
+need "waiting for checks.yml and scope.yml on the default branch, and for every require-checks context to be reported by GitHub Actions app 15368"
 need "invitation already pending"
 if [[ $(write_count) -ne 0 ]]; then
   fail "second apply wrote: $(write_count)"
@@ -269,7 +270,7 @@ run "$VERIFY" owner/repo agent
 assert_rc 0
 need "protect-main matches"
 need "protect-tags matches"
-need "CI not added yet; re-run after layer 2 merge"
+need "waiting for checks.yml and scope.yml on the default branch, and for every require-checks context to be reported by GitHub Actions app 15368"
 need "agent has write"
 forbid "warning:"
 if [[ $(write_count) -ne 0 ]]; then
@@ -309,7 +310,7 @@ mutate 'state["empty"]=True'
 run "$APPLY" owner/repo agent
 assert_rc 1
 need "repository is empty"
-forbid "CI not added yet"
+forbid "GitHub Actions app 15368"
 if [[ $(count_method POST /rulesets) -ne 0 ]]; then
   fail "empty repo created a ruleset"
 fi
@@ -591,8 +592,48 @@ PY
 ok "CODEOWNERS ruleset rejection"
 
 # --- require-checks ---
+ready_checks() {
+  mutate 'state["files"][".github/workflows/checks.yml"]="name: checks\n"; state["files"][".github/workflows/scope.yml"]="name: scope\n"; state["workflow_runs"]={"checks.yml":[{"id":1,"conclusion":"success","head_branch":"main","head_sha":"sha-checks","event":"push","jobs":[{"name":"keel-gate"}]}],"scope.yml":[{"id":2,"conclusion":"success","head_branch":"pr","head_sha":"sha-scope","event":"pull_request_target","jobs":[{"name":"keel-process-files-separate"}]}]}; state["check_runs"]=[{"head_sha":"sha-checks","name":"keel-gate","conclusion":"success","app_id":15368},{"head_sha":"sha-scope","name":"keel-process-files-separate","conclusion":"success","app_id":15368}]'
+}
+
 reset
 mutate 'state["files"][".github/workflows/checks.yml"]="name: checks\n"'
+run "$APPLY" owner/repo agent
+assert_rc 0
+need "waiting for checks.yml and scope.yml on the default branch, and for every require-checks context to be reported by GitHub Actions app 15368"
+forbid "created require-checks"
+ok "require-checks waits for both workflows"
+
+reset
+mutate 'state["files"][".github/workflows/checks.yml"]="name: checks\n"; state["files"][".github/workflows/scope.yml"]="name: scope\n"'
+run "$APPLY" owner/repo agent
+assert_rc 0
+need "missing ["
+need "keel-gate"
+need "keel-process-files-separate"
+forbid "created require-checks"
+ok "require-checks waits until both check runs have reported"
+
+reset
+mutate 'state["files"][".github/workflows/checks.yml"]="name: checks\n"; state["files"][".github/workflows/scope.yml"]="name: scope\n"; state["workflow_runs"]={"checks.yml":[{"id":1,"conclusion":"success","head_branch":"main","head_sha":"sha-checks","event":"push","jobs":[{"name":"gate"}]}],"scope.yml":[{"id":2,"conclusion":"success","head_branch":"pr","head_sha":"sha-scope","event":"pull_request_target","jobs":[{"name":"process-files-separate"}]}]}; state["check_runs"]=[{"head_sha":"sha-checks","name":"gate","conclusion":"success","app_id":15368},{"head_sha":"sha-scope","name":"process-files-separate","conclusion":"success","app_id":15368}]'
+run "$APPLY" owner/repo agent
+assert_rc 0
+need "missing ["
+need "keel-gate"
+forbid "created require-checks"
+ok "require-checks ignores a check run whose name is not the context"
+
+reset
+mutate 'state["files"][".github/workflows/checks.yml"]="name: checks\n"; state["files"][".github/workflows/scope.yml"]="name: scope\n"; state["workflow_runs"]={"checks.yml":[{"id":1,"conclusion":"success","head_branch":"main","head_sha":"sha-checks","event":"push","jobs":[{"name":"keel-gate"}]}],"scope.yml":[{"id":2,"conclusion":"success","head_branch":"pr","head_sha":"sha-scope","event":"pull_request_target","jobs":[{"name":"keel-process-files-separate"}]}]}; state["check_runs"]=[{"head_sha":"sha-checks","name":"keel-gate","conclusion":"success","app_id":1},{"head_sha":"sha-scope","name":"keel-process-files-separate","conclusion":"success","app_id":15368}]'
+run "$APPLY" owner/repo agent
+assert_rc 0
+need "missing ["
+need "keel-gate"
+forbid "created require-checks"
+ok "require-checks ignores a check run from another app"
+
+reset
+ready_checks
 run "$APPLY" owner/repo agent
 assert_rc 0
 need "created require-checks"
@@ -603,7 +644,11 @@ live = next(item for item in state["rulesets"] if item["name"] == "require-check
 if live["bypass_actors"] != []:
     sys.exit("bypass not empty")
 checks = live["rules"][0]["parameters"]["required_status_checks"]
-if checks != [{"context": "checks / gate"}]:
+want = [
+    {"context": "keel-gate", "integration_id": 15368},
+    {"context": "keel-process-files-separate", "integration_id": 15368},
+]
+if sorted(checks, key=lambda item: item["context"]) != want:
     sys.exit(str(checks))
 if live["rules"][0]["parameters"]["strict_required_status_checks_policy"] is not True:
     sys.exit("not strict")
@@ -618,18 +663,54 @@ fi
 ok "require-checks created then skipped"
 
 reset
-mutate 'state["files"][".github/workflows/checks.yml"]="name: checks\n"'
+mutate 'state["files"][".github/workflows/checks.yml"]="name: checks\n"; state["files"][".github/workflows/scope.yml"]="name: scope\n"; state["workflow_runs"]={"checks.yml":[{"id":1,"conclusion":"success","head_branch":"main","head_sha":"sha-checks","event":"push","jobs":[{"name":"keel-gate"}]},{"id":3,"conclusion":"success","head_branch":"main","head_sha":"sha-later","event":"push","jobs":[{"name":"keel-gate"},{"name":"actionlint"}]}],"scope.yml":[{"id":2,"conclusion":"success","head_branch":"pr","head_sha":"sha-scope","event":"pull_request_target","jobs":[{"name":"keel-process-files-separate"}]},{"id":5,"conclusion":"success","head_branch":"pr","head_sha":"sha-scope-later","event":"pull_request_target","jobs":[{"name":"keel-process-files-separate"}]}]}; state["check_runs"]=[{"head_sha":"sha-checks","name":"keel-gate","conclusion":"success","app_id":15368},{"head_sha":"sha-later","name":"keel-gate","conclusion":"success","app_id":15368},{"head_sha":"sha-scope","name":"keel-process-files-separate","conclusion":"success","app_id":15368},{"head_sha":"sha-scope-later","name":"keel-process-files-separate","conclusion":"success","app_id":15368}]'
+run "$APPLY" owner/repo agent
+assert_rc 0
+need "created require-checks"
+if [[ $(grep -c 'check-runs' "$GH_MOCK_LOG") -ne 2 ]]; then
+  fail "check-run lookups: $(grep -c 'check-runs' "$GH_MOCK_LOG")"
+fi
+if grep -q 'sha-later' "$GH_MOCK_LOG" || grep -q 'sha-scope-later' "$GH_MOCK_LOG"; then
+  fail "kept scanning after both names were found"
+fi
+ok "require-checks stops once both check runs are found"
+
+reset
+ready_checks
 run "$APPLY" owner/repo agent
 assert_rc 0
 mutate 'state["rulesets"]=[item for item in state["rulesets"] if item["name"]!="require-checks"]'
 accept_agent
 run "$VERIFY" owner/repo agent
 assert_rc 1
-need "no repository ruleset named require-checks"
-ok "verify fails when checks.yml exists and require-checks is missing"
+need "owner: run setup/apply-github-rules.sh"
+ok "verify fails when workflows are on main and require-checks is missing"
 
 reset
-mutate 'state["files"][".github/workflows/checks.yml"]="name: checks\n"'
+mutate 'state["files"][".github/workflows/checks.yml"]="name: checks\n"; state["files"][".github/workflows/scope.yml"]="name: scope\n"'
+accept_agent
+run "$VERIFY" owner/repo agent
+assert_rc 1
+need "owner: run setup/apply-github-rules.sh"
+ok "verify fails when the workflows are on the default branch and require-checks is missing"
+
+reset
+ready_checks
+run "$APPLY" owner/repo agent
+assert_rc 0
+mutate '''
+for item in state["rulesets"]:
+    if item["name"] == "require-checks":
+        item["rules"][0]["parameters"]["required_status_checks"][0]["integration_id"] = 1
+'''
+accept_agent
+run "$VERIFY" owner/repo agent
+assert_rc 1
+need "owner: run setup/apply-github-rules.sh"
+ok "verify fails when integration_id does not match"
+
+reset
+ready_checks
 run "$APPLY" owner/repo agent
 assert_rc 0
 mutate '''
@@ -640,8 +721,34 @@ for item in state["rulesets"]:
 accept_agent
 run "$VERIFY" owner/repo agent
 assert_rc 1
-need "require-checks enforcement is disabled, expected active"
+need "owner: run setup/apply-github-rules.sh"
 ok "verify fails when require-checks is disabled"
+
+reset
+ready_checks
+run "$APPLY" owner/repo agent
+assert_rc 0
+mutate 'state["workflow_runs"]["checks.yml"]=[{"id":1,"conclusion":"failure","head_branch":"main","head_sha":"sha-checks","event":"push","jobs":[{"name":"keel-gate"}]}]'
+accept_agent
+run "$VERIFY" owner/repo agent
+assert_rc 0
+need "require-checks matches"
+need " - WARN:"
+need "conclusion is failure"
+forbid " - FAIL:"
+ok "verify warns when the latest checks run on main is red"
+
+reset
+ready_checks
+run "$APPLY" owner/repo agent
+assert_rc 0
+mutate 'state["workflow_runs"]["checks.yml"]=[{"id":9,"conclusion":"failure","head_branch":"feature","head_sha":"sha-pr","event":"pull_request","jobs":[]},{"id":1,"conclusion":"success","head_branch":"main","head_sha":"sha-checks","event":"push","jobs":[{"name":"keel-gate"}]}]'
+accept_agent
+run "$VERIFY" owner/repo agent
+assert_rc 0
+need "require-checks matches"
+forbid " - WARN:"
+ok "verify ignores a red pull_request run when the default-branch push is green"
 
 # --- Free private ---
 reset

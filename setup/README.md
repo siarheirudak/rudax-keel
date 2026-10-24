@@ -19,8 +19,9 @@ Logs: `setup/logs/apply-<timestamp>.log` and `setup/logs/verify-<timestamp>.log`
 
 - **OK** — just applied.
 - **ALREADY** — was already correct.
-- **NOT YET** — intentionally later. `require-checks` is NOT YET until `checks.yml` exists.
+- **NOT YET** — intentionally later. `require-checks` is NOT YET until `checks.yml` and `scope.yml` are on the default branch and every require-checks context has been reported by GitHub Actions app 15368. The reason lists the names that reported and the names still missing.
 - **FAIL** — not done. The script exits non-zero if any step is FAIL. A line that names a Settings page is a manual step the API cannot do.
+- **WARN** — noted, and the script still exits zero if nothing else failed. Verify uses this when the latest `checks` push to the default branch is red. A red pull request run does not count.
 
 An unpinned `uses:` is OK with a reason starting `warning:`.
 

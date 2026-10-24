@@ -1,0 +1,115 @@
+name: checks
+
+on:
+  pull_request:
+    # edited covers a base change, so a green gate from another base does not stay.
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: bash scripts/check-actionlint.sh
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: shellcheck
+        run: bash scripts/check-shellcheck.sh
+
+  json:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: json
+        run: bash scripts/check-json.sh
+
+  md-links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Markdown links
+        run: |
+          python3 scripts/check-md-links.py
+          python3 scripts/tests/test_md_links.py
+
+  action-pins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Action pins
+        run: python3 setup/tests/check-action-pins.py
+
+  fake-gh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Fake gh tests
+        run: bash setup/tests/test-fake-gh.sh
+      - name: Scope rule
+        run: python3 scripts/check-scope.py --self-test
+      - name: Gate job list
+        run: python3 scripts/tests/test_gate_jobs.py
+
+  project:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Project checks
+        # Commands live in project_checks() in scripts/check.sh.
+        run: bash scripts/check.sh --project-only
+
+  gate:
+    name: keel-gate
+    needs: [actionlint, shellcheck, json, md-links, action-pins, fake-gh, project]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Gate
+        env:
+          R_ACTIONLINT: ${{ needs.actionlint.result }}
+          R_SHELLCHECK: ${{ needs.shellcheck.result }}
+          R_JSON: ${{ needs.json.result }}
+          R_MD_LINKS: ${{ needs.md-links.result }}
+          R_ACTION_PINS: ${{ needs.action-pins.result }}
+          R_FAKE_GH: ${{ needs.fake-gh.result }}
+          R_PROJECT: ${{ needs.project.result }}
+        run: bash scripts/check-gate.sh

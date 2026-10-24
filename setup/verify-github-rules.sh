@@ -76,7 +76,7 @@ verify_named_ruleset() {
   local name=$1 anchor=$2
   local file="$SCRIPT_DIR/rulesets/${name}.json"
   local what="Compare live ruleset with ${name}.json"
-  local ids count id enf st
+  local ids count id enf
 
   if [[ $RULESETS_OFF -eq 1 ]]; then
     log_step FAIL "$what" "$RISK_REASON" "$anchor"
@@ -91,14 +91,13 @@ verify_named_ruleset() {
     return 0
   fi
   if [[ $name == require-checks ]]; then
-    st=0
-    branch_file_status ".github/workflows/checks.yml" || st=$?
-    if [[ $st -eq 1 ]]; then
-      log_step "NOT YET" "$what" "$CHECKS_SKIP_REASON" "$anchor"
+    require_checks_files_ready
+    if [[ $REQUIRE_CHECKS_FILES -eq 2 ]]; then
+      log_step FAIL "$what" "cannot read workflows on ${DEFAULT_BRANCH} ($(collapse "$GH_API_ERROR"))" "$anchor"
       return 0
     fi
-    if [[ $st -ne 0 ]]; then
-      log_step FAIL "$what" "cannot read .github/workflows/checks.yml ($(collapse "$GH_API_ERROR"))" "$anchor"
+    if [[ $REQUIRE_CHECKS_FILES -ne 1 ]]; then
+      log_step "NOT YET" "$what" "$CHECKS_SKIP_REASON" "$anchor"
       return 0
     fi
   fi
@@ -113,7 +112,12 @@ verify_named_ruleset() {
   ids=$(ruleset_ids "$name")
   count=$(jq -r 'length' <<<"$ids")
   if [[ $count -eq 0 ]]; then
-    log_step FAIL "$what" "no repository ruleset named ${name}" "$anchor"
+    if [[ $name == require-checks ]]; then
+      log_step FAIL "$what" "$OWNER_APPLY_REASON" "$anchor"
+      warn_if_checks_red
+    else
+      log_step FAIL "$what" "no repository ruleset named ${name}" "$anchor"
+    fi
     return 0
   fi
   if [[ $count -gt 1 ]]; then
@@ -127,12 +131,25 @@ verify_named_ruleset() {
   fi
   enf=$(jq -r '.enforcement // empty' <<<"$GH_API_BODY")
   if [[ $enf != active ]]; then
-    log_step FAIL "$what" "${name} enforcement is ${enf:-unknown}, expected active" "$anchor"
+    if [[ $name == require-checks ]]; then
+      log_step FAIL "$what" "$OWNER_APPLY_REASON" "$anchor"
+      warn_if_checks_red
+    else
+      log_step FAIL "$what" "${name} enforcement is ${enf:-unknown}, expected active" "$anchor"
+    fi
     return 0
   fi
   capture_ruleset_diff "$file" "$GH_API_BODY"
   if [[ $DIFF_RC -eq 0 ]]; then
     log_step ALREADY "$what" "${name} matches" "$anchor"
+    if [[ $name == require-checks ]]; then
+      warn_if_checks_red
+    fi
+    return 0
+  fi
+  if [[ $name == require-checks && $DIFF_RC -eq 1 ]]; then
+    log_step FAIL "$what" "$OWNER_APPLY_REASON" "$anchor"
+    warn_if_checks_red
     return 0
   fi
   log_step FAIL "$what" "$(shorten "$DIFF_TEXT")" "$anchor"

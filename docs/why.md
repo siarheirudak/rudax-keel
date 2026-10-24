@@ -82,13 +82,29 @@ Each log line from the setup scripts links to a section below.
 
 ## Require checks
 
-**Rule.** The default branch cannot be updated unless the status check `checks / gate` has passed on the latest commit. The check is strict. This ruleset has no bypass list.
+**Rule.** The default branch cannot be updated unless `keel-gate` and `keel-process-files-separate` have passed on the latest commit. Those strings are the check-run names. The Actions page shows `checks / keel-gate`; that is only a display label. The rule is strict: the branch must be up to date before merge. There is no bypass list. Each check is restricted to GitHub Actions (`integration_id` 15368, the id from `GET /apps/github-actions`).
 
-**Why.** Review is not a test run. The check has to pass even for an admin. A bypass on `protect-main` does not skip this ruleset.
+**Why.** A status check is a pass or fail name GitHub stores on a commit. `keel-gate` fails if any job in `.github/workflows/checks.yml` failed, was cancelled, or was skipped. `checks` includes `edited`, so a base change runs the gate again and a green result from another base does not stay. Limiting the name to GitHub Actions means a success status posted with a user token does not count. It does not stop a deliberately malicious agent. An agent with write can push a workflow on another branch that requests `checks: write` and posts a successful check run of the required name. That run belongs to app 15368 and the workflow is not in the pull request diff. The checks catch mistakes and honest failures, and they block a merge while they are red. Against a deliberately malicious agent, the owner review is the control. A later layer may move the gate to an owner-owned GitHub App whose key only the default branch can use. Strict means a new commit has to run the checks again. Apply creates the ruleset only when both workflow files are on the default branch and a check run with each exact name, from app 15368, has been seen. It stops looking once both names have been seen, and it reads at most two pages of runs per workflow. `keel-process-files-separate` runs only on pull requests, so that run can be on any branch. Until then the step is NOT YET, and the reason lists reported names and missing names. Verify fails with `owner: run setup/apply-github-rules.sh` when those files are on the default branch and the ruleset is missing or different, including `integration_id`. A red `checks` push to the default branch is WARN, not FAIL. A red pull request run is not that warning.
 
-**If disabled.** A pull request can be merged while tests are red or missing. The agent GitHub account, or a tired owner, can land a broken tree.
+Merge queue is not supported: these workflows have no `merge_group` trigger, so a queued merge does not run them.
 
-**How to disable explicitly.** Delete the `require-checks` ruleset, and delete `setup/rulesets/require-checks.json`. Apply creates it only when `.github/workflows/checks.yml` is already on the default branch. Until that file exists, the step is NOT YET: `CI not added yet; re-run after layer 2 merge`. Required checks are not on in this layer.
+A pull request opened by `GITHUB_TOKEN` does not run GitHub Actions checks.
+
+**If disabled.** A pull request can be merged while tests are red or missing. The admin bypass on `protect-main` does not skip this ruleset.
+
+**How to disable explicitly.** Delete the `require-checks` ruleset, and delete `setup/rulesets/require-checks.json`. Apply creates it again once both workflows are on the default branch and every required check-run name has been reported by GitHub Actions app 15368.
+
+<a id="scope"></a>
+
+## Scope
+
+**Rule.** A pull request that changes a process file must contain only process files. Process files are `.github/**`, `setup/**`, `scripts/**` (including `scripts/tests/`), `.cursor/**`, `.claude/**`, and these names anywhere: `CODEOWNERS`, `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `.cursorrules`, `.windsurfrules`, `.clinerules`, `.mcp.json`, `.shellcheckrc`. `scripts/` is included because the checks run those files from the pull request. A file under `docs/` counts only when its name is one of those. `tests/` is not a process path; product tests live there. The template's own check tests live in `scripts/tests/`. Labels are not permission. A rename counts `filename` and `previous_filename`. The pull request base must be the repository default branch. If the API file list does not match `changed_files`, or the pull request changes 3000 or more files, the check fails closed.
+
+**Why.** The check runs from `pull_request_target`, so the workflow file is the one on the pull request's base branch, not the copy in the head. The types include `edited`, so changing the base runs it again. The job does not check out pull request code. Its token can only read contents and pull requests. That is safe. The same trigger is dangerous if the job checks out the pull request head or the token can write: untrusted code would then run with that token. The check fails when the base is not the default branch, so a retarget does not skip it. A retarget test has to branch the other base from the default branch after `scope.yml` exists, because the workflow file comes from that base. Keeping process edits in their own pull request means the checks that judge other changes are the ones already on the default branch. A process-only pull request can still weaken `checks.yml`. Owner review of process-only pull requests is the control, by design.
+
+**If disabled.** One pull request can change a check and the code that check should reject.
+
+**How to disable explicitly.** First set the `require-checks` ruleset enforcement to disabled, or remove the `keel-process-files-separate` context from it. Then delete `.github/workflows/scope.yml`. Do not delete `scope.yml` while that context is still required: merges wait for a check that nothing runs.
 
 <a id="read-only-token"></a>
 
