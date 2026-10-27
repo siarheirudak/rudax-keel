@@ -93,9 +93,36 @@ jobs:
         # Commands live in project_checks() in scripts/check.sh.
         run: bash scripts/check.sh --project-only
 
+  harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build keel-git
+        run: docker build -t keel-git -f setup/docker/keel-git.Dockerfile setup/docker
+      - name: Run the harness
+        # The runner sets GITHUB_* names. keel-doctor treats any GH_* or GITHUB_* name as a token.
+        run: |
+          set -eu
+          clean=(
+            "HOME=$HOME"
+            "PATH=$PATH"
+            "USER=${USER:-runner}"
+            "LOGNAME=${LOGNAME:-${USER:-runner}}"
+            "SHELL=${SHELL:-/bin/bash}"
+            "LANG=${LANG:-C.UTF-8}"
+            "TMPDIR=${TMPDIR:-/tmp}"
+          )
+          if [ -n "${DOCKER_HOST:-}" ]; then
+            clean+=("DOCKER_HOST=$DOCKER_HOST")
+          fi
+          exec env -i "${clean[@]}" bash setup/tests/harness/run-tests.sh
+
   gate:
     name: keel-gate
-    needs: [actionlint, shellcheck, json, md-links, action-pins, fake-gh, project]
+    needs: [actionlint, shellcheck, json, md-links, action-pins, fake-gh, project, harness]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -112,4 +139,5 @@ jobs:
           R_ACTION_PINS: ${{ needs.action-pins.result }}
           R_FAKE_GH: ${{ needs.fake-gh.result }}
           R_PROJECT: ${{ needs.project.result }}
+          R_HARNESS: ${{ needs.harness.result }}
         run: bash scripts/check-gate.sh

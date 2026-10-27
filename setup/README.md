@@ -9,6 +9,8 @@ bash setup/apply-github-rules.sh OWNER/REPO AGENT_LOGIN
 bash setup/verify-github-rules.sh OWNER/REPO AGENT_LOGIN
 ```
 
+Agent harness on this machine: `bash setup/keel-doctor.sh` (suites and the verdict: `bash setup/tests/harness/run-tests.sh`).
+
 `apply-github-rules.sh` also accepts `--accept-risk` and `--rewrite-codeowners`.
 
 Apply is safe to re-run after each layer merge. Settings that already match are left as they are. A missing CODEOWNERS file, or the template's own line, is fixed before `protect-main`. Any other CODEOWNERS content is left in place and that step is FAIL. `protect-main` is still created. Fix the file in a pull request the owner merges. `--rewrite-codeowners` replaces other content only before `protect-main` exists.
