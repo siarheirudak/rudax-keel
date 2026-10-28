@@ -20,6 +20,10 @@ There is no config file. The script reads the logged-in account, and the reposit
 
 A coding agent is any AI coding agent: Cursor cloud or local, Claude Code, and others. Protection holds only if that agent runs in an environment that has only the agent GitHub account's token (a cloud VM, a separate OS user, or a container). It must not run where the owner is logged in, for example a local `gh` login as the owner. Otherwise the agent can act as the owner. [Why](docs/why.md#agent-environment).
 
+## Agent isolation harness
+
+The harness runs each agent role in a hardened container. Work stays in a shadow git directory. Export is a git bundle. A host gate with no token checks that bundle before anything is published. How to run it on your machine: [Getting started](docs/harness-getting-started.md).
+
 ## Layer 2: CI checks
 
 A status check is a pass or fail name GitHub stores on a commit. The names this layer requires are `keel-gate` and `keel-process-files-separate`. Those are the check-run names (the job `name:`). The Actions page shows `checks / keel-gate`. That display text is not the name the ruleset uses.
