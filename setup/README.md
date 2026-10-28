@@ -9,7 +9,7 @@ bash setup/apply-github-rules.sh OWNER/REPO AGENT_LOGIN
 bash setup/verify-github-rules.sh OWNER/REPO AGENT_LOGIN
 ```
 
-Agent harness on this machine: `bash setup/keel-doctor.sh` (suites and the verdict: `bash setup/tests/harness/run-tests.sh`).
+Agent harness on this machine: `bash setup/keel-doctor.sh` (suites and the verdict: `bash setup/tests/harness/run-tests.sh`). The harness is the isolation prototype. The L0–L11 pipeline is specified in [Architecture](../docs/architecture.md) and is not what these commands run. What is built: [Implementation status](../docs/status.md).
 
 `apply-github-rules.sh` also accepts `--accept-risk` and `--rewrite-codeowners`.
 
