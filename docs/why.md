@@ -42,6 +42,8 @@ Each log line from the setup scripts links to a section below.
 
 **How to disable explicitly.** Do not. Run the agent in an environment that has only the agent token. Before a sandbox attack, `gh api user --jq .login` must print the agent GitHub account. Any other login means the test is a false pass.
 
+The harness in this repository is one such container. Why each check it prints exists: [Why each keel-doctor check exists](harness-checks-why.md).
+
 <a id="protect-main"></a>
 
 ## Protect main
