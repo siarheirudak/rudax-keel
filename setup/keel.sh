@@ -17,8 +17,9 @@ UIDGID="$(id -u):$(id -g)"
 MAX_BUNDLE=${MAX_BUNDLE:-1048576}; MAX_LINES=${MAX_LINES:-5000}; MAX_FILES=${MAX_FILES:-500}
 # matched case-insensitively (macOS/Windows checkouts fold case: .GitHub/ == .github/)
 # Pi Agent process set (scripts/check-scope.py), plus .gitmodules.
-# setup/README.md and setup/TESTING.md are ordinary docs (whole path, any case).
-FORBID_PREFIX='^(\.github|setup|scripts|\.pi|\.agents)/'
+# .pi/ and .agents/ match at any depth. setup/README.md and setup/TESTING.md
+# are ordinary docs (whole path, any case).
+FORBID_PREFIX='^(\.github|setup|scripts)/|(^|/)\.pi/|(^|/)\.agents/'
 FORBID_NAME='(^|/)(agents\.md|agents\.override\.md|claude\.md|codeowners|\.shellcheckrc|\.gitmodules)$'
 DOTGIT='(^|/)\.git(/|$)'
 TEST_ENTRY=${KEEL_TEST_ENTRY:-test.sh}   # test entrypoint, always taken from MAIN, never from the bundle

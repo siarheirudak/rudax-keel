@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Fail when a pull request mixes process files with anything else.
 
-Process files are .github/**, scripts/**, setup/**, .pi/**, and .agents/**.
+Process files are .github/**, scripts/**, and setup/** at the root, and
+.pi/** and .agents/** at any depth.
 Two paths are ordinary docs, matched as the whole path and ignoring case:
 setup/README.md and setup/TESTING.md. A different path with the same
 basename, such as setup/a/README.md, is still a process file. These names
@@ -13,9 +14,10 @@ including scripts/tests/. A docs file counts only when it is itself an
 agent-rule file. tests/ is not a process path. Labels are not read and
 are not permission.
 
-Paths are normalised before classification. A leading ./ is stripped,
-backslashes become slashes, duplicate slashes collapse, and the path is
-Unicode NFC. A path that is still ambiguous counts as a process file.
+Paths are normalised before classification. Leading and trailing
+whitespace is removed, a leading ./ is stripped, backslashes become
+slashes, duplicate slashes collapse, and the path is Unicode NFC. A path
+that is still ambiguous counts as a process file.
 
 A rename counts both the new path and previous_filename. One process path
 and one other path is a mix, including when they are the two names of one
@@ -34,7 +36,9 @@ import unicodedata
 import urllib.error
 import urllib.request
 
-PROCESS_PREFIXES = (".github/", "setup/", "scripts/", ".pi/", ".agents/")
+ROOT_PREFIXES = (".github/", "setup/", "scripts/")
+# (^|/)prefix, at any depth. Matched without regard to case.
+NESTED_DIR_PREFIXES = (".pi/", ".agents/")
 AGENT_RULE_NAMES = {
     "AGENTS.md",
     "AGENTS.override.md",
@@ -54,7 +58,7 @@ def canonical_path(path):
     """Return one relative path, or None when the path is still ambiguous."""
     if not isinstance(path, str) or path == "" or "\x00" in path:
         return None
-    text = unicodedata.normalize("NFC", path).replace("\\", "/")
+    text = unicodedata.normalize("NFC", path).strip().replace("\\", "/")
     while "//" in text:
         text = text.replace("//", "/")
     while text.startswith("./"):
@@ -78,8 +82,12 @@ def is_process(path):
     if canonical.casefold() in SETUP_DOC_PATHS:
         return False
     folded = canonical.casefold()
-    for prefix in PROCESS_PREFIXES:
+    for prefix in ROOT_PREFIXES:
         if folded.startswith(prefix.casefold()):
+            return True
+    for prefix in NESTED_DIR_PREFIXES:
+        needle = prefix.casefold()
+        if folded.startswith(needle) or ("/" + needle) in folded:
             return True
     return False
 
@@ -181,6 +189,13 @@ def self_test():
         (".Pi/SYSTEM.md", True),
         (".agents/skills/a/SKILL.md", True),
         (".Agents/skills/a/SKILL.md", True),
+        ("apps/.agents/skills/x/SKILL.md", True),
+        ("apps/.Agents/skills/x/SKILL.md", True),
+        ("pkg/.pi/SYSTEM.md", True),
+        ("pkg/.Pi/SYSTEM.md", True),
+        ("not.pi/SYSTEM.md", False),
+        (" setup/README.md ", False),
+        (" pkg/.pi/SYSTEM.md ", True),
         ("sub/AGENTS.override.md", True),
         ("sub/agents.override.md", True),
         ("sub/claude.md", True),

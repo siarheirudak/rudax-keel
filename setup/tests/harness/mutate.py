@@ -45,7 +45,7 @@ M = {
  # round 6 (Critic B1-B6)
  'M35': (K, 'grep -ivxE \'setup/readme\\.md|setup/testing\\.md\' "$P/.gatehome/paths" | grep -iE "$FORBID_PREFIX|$FORBID_NAME"', 'hgit -C "$G" diff --raw --no-renames main $I | awk \'{print $NF}\' | grep -iE "$FORBID_PREFIX|$FORBID_NAME"', 'B1: NUL-safe path parsing (back to awk $NF on --raw)', ['A17', 'A17b', 'A17c']),
  'M36': (K, "FORBID_NAME='(^|/)(", "FORBID_NAME='^(", 'B2: rule names matched anywhere (anchored to root only)', ['A18', 'A18b']),
- 'M37': (K, "FORBID_PREFIX='^(\\.github|setup|scripts|\\.pi|\\.agents)/'", "FORBID_PREFIX='^(\\.github|\\.pi)/'", 'B2: prefixes setup/ scripts/ .agents/', ['A18b']),
+ 'M37': (K, "FORBID_PREFIX='^(\\.github|setup|scripts)/|(^|/)\\.pi/|(^|/)\\.agents/'", "FORBID_PREFIX='^(\\.github)/|(^|/)\\.pi/'", 'B2: prefixes setup/ scripts/ .agents/ at any depth', ['A18b']),
  'M38': (K, 'for f in config objects/info/alternates', 'for f in objects/info/alternates', 'B3: unlink config before write (+ noclobber removed)', ['A19'], [('( set -C   #', '(   #')]),
  'M39': (K, 'if [ -L "$d" ] ||', 'if false && [ -L "$d" ] ||', 'B3: refuse symlinked shadow dirs', ['A19b']),
  'M40': (K, 'grep -iE "$DOTGIT" "$P/.gatehome/paths" && fail', 'false && fail', 'B4: nested .git path rule', []),
