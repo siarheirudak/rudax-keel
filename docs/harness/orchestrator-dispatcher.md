@@ -10,7 +10,7 @@ Status: **design** for the Step 7 layer. The repository today has role isolation
 
 ## 0. Owner decisions 2026-10-29 (A + B) — short
 
-**A — No hidden-test class.** There is no separate host-only test store, no dedicated gate for that class, no verbatim-body check against such a store, and no “rule text only” failure sanitization for that reason. Tests are visible to every role with a work tree. Tester-written tests mount **RO** to the developer. The tester writes only into test directories (host check: `git diff --name-only` + a test). The developer gets full gate output and stacks. Honesty substitute: mutation (L7T) + L8 review. L8 checklist (English, in the instruction file) includes: `Code hardcoded to specific test values instead of implementing the behavior`. Checking that item is **behavioral only** through a backlog known-bad reviewer eval set; the suite does **not** line-check instruction files. Mutation does **not** catch hardcoding. Developer signal `TEST_CONTRADICTS_BRIEF` (alongside `NEEDS_CONTEXT` / `NEEDS_DEPENDENCY`): do not fit the code; stop and return the signal with the test name and brief clause; the orchestrator decides whether to take edge `L5_test_contradicts_brief_to_L3` (budget).
+**A — Tests are visible.** Every role with a work tree sees ordinary tests. Tester-written tests mount **RO** to the developer. The tester writes only into test directories (host check: `git diff --name-only` + a test). The developer gets full gate output and stacks. Honesty substitute: mutation (L7T) + L8 review. L8 checklist (English, in the instruction file) includes: `Code hardcoded to specific test values instead of implementing the behavior`. Checking that item is **behavioral only** through a backlog known-bad reviewer eval set; the suite does **not** line-check instruction files. Mutation does **not** catch hardcoding. Developer signal `TEST_CONTRADICTS_BRIEF` (alongside `NEEDS_CONTEXT` / `NEEDS_DEPENDENCY`): do not fit the code; stop and return the signal with the test name and brief clause; the orchestrator decides whether to take edge `L5_test_contradicts_brief_to_L3` (budget).
 
 **B1.** Circuit breaker fires **only** on the same **diff-hash** across consecutive attempts. The same gate fail with a **different** diff spends the ordinary edge budget.
 
@@ -154,9 +154,7 @@ The orchestrator does **not** choose “skip the gate”. On mechanical FAIL the
 
 ---
 
-## 4. Visibility: tests for everyone, no hidden-test class
-
-There is **no** separate host-only test store and **no** dedicated gate for such a class.
+## 4. Visibility: tests visible, read-only for the developer
 
 | Who | Product tests |
 |---|---|
@@ -239,7 +237,7 @@ Depth `light` / `trivial` — profiles of the same FSM (some nodes skipped), not
 
 ### 5.2 Forward edges overview (human)
 
-See the YAML. Short: `start→L0→…→L1→L2→L2C→DEPS→L3→L4→L5→L6→L7→L8→L9→L9B→L10→WAITING_MERGE→L11`, plus waits for D2 / brief v2 / split / dep / irreversible. There are **no** edges for a separate hidden-test class.
+See the YAML. Short: `start→L0→…→L1→L2→L2C→DEPS→L3→L4→L5→L6→L7→L8→L9→L9B→L10→WAITING_MERGE→L11`, plus waits for D2 / brief v2 / split / dep / irreversible. Forward edges: see the YAML.
 
 ### 5.3 Back edges and cascade overview
 
@@ -419,7 +417,7 @@ Style: stub model + host fixtures; mutants like `mutate.py` (remove a protection
 | D-T17 | Host product-code gate refuse |
 | D-T18 | Idempotency: replay of `COMMITTED` key → no second execution; audit `idempotent_replay`; crash after commit before session flush still safe (B5 / X3-3). Mid-effect crash / `IN_PROGRESS` reconcile: D-T32 |
 | D-T19 | Budget: every `kind:back` has non-null `budget_ref` (schema + loader); exhaustion → dossier; mutant “null budget on back” goes red (B3) |
-| D-T20 | YAML FSM directly: forbidden/allowed edges; `invalidates`; no edges for a separate hidden-test class |
+| D-T20 | YAML FSM directly: forbidden/allowed edges; `invalidates`; `initiator`; every `kind:back` has non-null `budget_ref` |
 | D-T21 | Hash-stability: fixed input → stable **diff-hash**; normalizer mutant goes red |
 | D-T22 | DEPS ephemeral: network present; no host secrets / control-plane mounts; cache/vendor RO afterward; `--ignore-scripts` by default (B2) |
 | D-T23 | One `keel_request` per turn: second before turn-end → `second_request_same_turn`; mid-turn user message stays queued (B4) |
@@ -454,7 +452,7 @@ Hash-stability (D-T21) and mutants belong in dispatcher attacks / the same `run-
 | Prior Critic **CR-C2** | Open at pipeline level | stale bind D-T15; full envelope — Step 19 |
 | External critique #2 | Partly closed by B1–B7 | research triage (foundation) |
 | External critique #3 | Owner triage applied: X3-1/X3-2/X3-3/X3-9 **v1**; X3-4/X3-5/X3-6 **backlog**; X3-7 already covered; X3-8 **rejected** | §0 X3; D-T30…D-T33 |
-| Separate hidden-test class / verbatim-body checks | **Withdrawn** — removed (H1 / A) | this file + visibility design |
+| Earlier test-visibility ideas | **Superseded by H1–H3** | this file + visibility design |
 
 ---
 
@@ -464,7 +462,7 @@ Hash-stability (D-T21) and mutants belong in dispatcher attacks / the same `run-
 2. Mechanical FAIL → only `dispatcher_only` YAML edges (D-T14).
 3. Sole FSM source = YAML; prose is not a second truth.
 4. Circuit breaker = same consecutive **diff-hash** (B1); hash-stability fixture in CI is done-when.
-5. No separate hidden-test class; tests visible; tester write-scope; developer RO tests + full stacks; L7T+L8 as honesty substitute.
+5. Tests visible; tester write-scope; developer RO tests + full stacks; L7T+L8 as honesty substitute.
 6. Every `kind:back` — non-null `budget_ref` (B3).
 7. ≤1 `keel_request` per turn after turn-end (B4).
 8. Idempotency key deterministic from the extension; two-phase WAL `IN_PROGRESS`/`COMMITTED` with reconcile on restart (B5 / X3-3).

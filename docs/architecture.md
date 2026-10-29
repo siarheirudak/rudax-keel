@@ -114,7 +114,7 @@ flowchart TD
  SPLITQ -->|no| STOPP["Remaining parts stop"]:::stop
  L2C -->|stubs ready| DEPS
 
- DEPS["Dependency script<br/>resolve, audit, install on the host"]:::script
+ DEPS["Dependency script<br/>ephemeral install container<br/>network; no host secrets"]:::script
  DEPD{"Owner: new dependency?"}:::owner
  DEPW["Waits until answered"]:::note
  DEPS -->|new dependency| DEPD
@@ -123,9 +123,8 @@ flowchart TD
  DEPW -.-> DEPD
  DEPS -->|"ready, or no new dependency"| L3
 
- L3["L3 Tester<br/>tests <br/>pre-implementation tree"]:::agent
- L3["Tester writes tests on the host"]:::script
- L3 --> L3 --> L4
+ L3["L3 Tester<br/>product RO; write test dirs only<br/>pre-implementation tree"]:::agent
+ L3 --> L4
 
  L4["L4 Red gate"]:::script
  DOS2["Dossier"]:::stop
@@ -229,17 +228,17 @@ The paragraphs below are the short form. Inputs, outputs, blocks, and retry limi
 
 **L2 Stubs and plan.** The architect proposes signatures, a plan, a depth, a dependency list with names and purposes, and a size estimate. A critic challenges the signatures and the plan. A script checks that the depth matches the diff and that the stubs parse. If the estimate is over the project’s split threshold, the owner decides whether to split before any further work.
 
-**Dependencies.** When the architect named new dependencies, a script resolves versions, checks advisories, and installs on the host. A new dependency waits for the owner. The developer’s container does not install packages and does not have a general network.
+**Dependencies.** When the architect named new dependencies, a script resolves versions and checks advisories, then installs in an **ephemeral** container with network, without host secrets and without control-plane mounts; cache/vendor then mounts read-only into later roles (`--ignore-scripts` by default). A new dependency waits for the owner. The developer’s container does not install packages and does not have a general network.
 
-**L3 Tests.** The tester writes unit and integration tests, plus one or two tests per brief rule. A **** is a test stored on the host that the developer’s container never receives. The tester works on the commit from before the implementation, so the new code is not mounted there.
+**L3 Tests.** The tester writes unit and integration tests on the pre-implementation tree. The product tree is mounted **read-only**; the tester writes only into allowed test directories (host `git diff --name-only` as defense in depth). Those tests are visible to the developer later, mounted read-only.
 
 **L4 Red gate.** A script runs the tests against the stubs (or against the current code, in light depth). A honest red is a failed assertion, or a not-implemented result. An import error or a build error is sent back to the tester. It does not count as a passed red gate.
 
-**L5 Code.** The developer implements the stubs so the tests pass. The developer does not see bodies. Four special exits leave this link early: more context is needed, a signature has to change, a dependency is missing, or the brief conflicts with itself. A missing dependency does not spend one of the three submissions.
+**L5 Code.** The developer implements the stubs so the tests pass. Tests are mounted **read-only**; on gate FAIL the developer gets the full output and stacks. Special exits include needing more context, a signature change, a missing dependency, a brief conflict, or `TEST_CONTRADICTS_BRIEF`. A missing dependency does not spend one of the three submissions.
 
 **L6 Static gate.** A script blocks on lint, types, signatures that drifted from the stubs, forbidden paths, secrets, and a lockfile that does not match what was approved. It warns on a middle band of complexity and on duplicates. It formats the code itself.
 
-**L7 Green gate.** A script runs new tests, old tests, and the host tests, then mutation testing on the changed files. **Mutation testing** changes a small piece of logic and checks that some test fails. An unexplained survivor on changed logic blocks. The script then records the tree hash.
+**L7 Green gate.** A script runs new tests and old tests, then mutation testing (L7T) on the changed files. **Mutation testing** changes a small piece of logic and checks that some test fails. An unexplained survivor on changed logic blocks. Mutation does not catch hardcoding to test values — that is an L8 checklist item. The script then records the tree hash.
 
 **L8 Review.** An auditor and, in full depth, a design reviewer read the diff in parallel. A verifier on another model drops findings that have no rule id, no behavioural effect, or that repeat a finding already rejected. Reviewers do not flag formatting, style, or naming. Blocking findings go back to the developer, and the static and green gates run again.
 
@@ -247,7 +246,7 @@ The paragraphs below are the short form. Inputs, outputs, blocks, and retry limi
 
 **L9b Rollback rehearsal.** A script classifies the diff. Plain code skips the rehearsal. A feature flag, a migration, or an API change is rehearsed. A change that cannot be undone waits for the owner.
 
-**L10 Pull request.** A script pushes the branch and the bot opens the pull request. tests are copied into the normal test suite in a separate commit, by the script. CI runs the script gates again and blocks when the tree hash does not match. The owner merges.
+**L10 Pull request.** A script pushes the branch and the bot opens the pull request with an envelope bound to the tree hash. CI runs the script gates again and blocks when the tree hash does not match. The owner merges.
 
 **L11 After the merge.** A script writes the task log, keeps the discoveries the filter accepted, offers a retrospective every few tasks without running one, and deletes the task journal.
 

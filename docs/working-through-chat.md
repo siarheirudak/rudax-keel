@@ -58,8 +58,8 @@ Those instructions state the primary bridge role, require a per-relay checklist 
 - Will write the brief, split plans, messages to you, dispatcher request files, and the D1 confidence-notes log; may record decisions into ADR / [Human decisions](decisions.md) and discoveries.
 - Will not write product code, tests, or process files.
 - Will not launch other containers by itself (it drops request files; the dispatcher launches roles).
-- May read almost everything (including and the D1 log). Will not see secrets or paths in `.keel/deny.local` (for example user/customer data).
-- Must not paste bodies into developer requests. The dispatcher rejects **verbatim** text in those requests; paraphrase is not caught. The main protection is that are never mounted in the developer container.
+- May read almost everything (including the D1 log). Will not see secrets or paths in `.keel/deny.local` (for example user/customer data).
+- Must not smuggle packaged text (including test fixtures) into developer requests as instructions. Tests are visible to the developer **read-only**. Honesty relies on L7T mutation and the L8 hardcode checklist item, plus full gate output on FAIL.
 - Will not talk directly to other agents (the dispatcher is the only hop).
 
 ## Related

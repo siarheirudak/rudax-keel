@@ -63,12 +63,13 @@ Short definitions for this repository. The first time a longer page needs a word
 
 **Stub.** A signature and a body that is not the real implementation yet. The red gate runs tests against stubs.
 
-
 **Red gate.** The script that checks new tests fail for an honest reason (an assertion, or not implemented) before implementation.
 
 **Static gate.** The script that checks lint, types, signatures, paths, secrets, and complexity.
 
 **Green gate.** The script that runs new tests, old tests, and mutation testing, then records the tree hash.
+
+**L7T.** The mutation step of the green gate (see Mutation testing).
 
 **Mutation testing.** Changing a small piece of logic to see whether a test fails. A survivor that nobody can explain blocks the green gate.
 

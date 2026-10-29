@@ -88,19 +88,19 @@ The developer, the tester, QA, and the architect receive project skills. The cri
 
 **Result names.** `STUBS_READY`, `WAITING_SPLIT_APPROVAL`, `SPLIT_REJECTED`, `SIGNATURE_CHANGE_NEEDED`.
 
-**Visibility.** The architect and the critic do not receive secrets. Packaged content is fenced. Tests are visible (there is no separate hidden-test class).
+**Visibility.** The architect and the critic do not receive secrets. Packaged content is fenced. Tests are visible to roles with a work tree.
 
 ## Dependencies
 
 This step sits after L2 and before L3. It is not a numbered link.
 
-**Purpose.** Install approved dependencies on the host before the tester writes tests, so the developer’s container never has a general network.
+**Purpose.** Install approved dependencies in an ephemeral container (network, no host secrets, no control-plane mounts) before the tester writes tests, so the developer’s container never has a general network.
 
 **Who acts.** A host script. The owner, when a dependency is new.
 
 **Inputs.** The architect’s list of names and purposes. Package registries, reached through the allowlist proxy.
 
-**Outputs.** Resolved versions, a lockfile, checksums, and an install performed on the host through the proxy. A package cache.
+**Outputs.** Resolved versions, a lockfile, checksums, and an install performed in an ephemeral container through the proxy. Cache/vendor then mounts read-only into later roles (`--ignore-scripts` by default).
 
 **What must pass.** The script takes the latest stable release and lets the package manager resolve compatibility. It checks known vulnerabilities (an advisory feed such as OSV). A new version waits out a quarantine before install, unless it is a security fix, which may skip the wait. The default wait is 7 days. That number is a project setting, still to be confirmed against how fresh the advisory feed needs to be. It is not a measured result from this repository. A new dependency raises a D2 card with the package, the version, the license, and the reason. Install uses `--ignore-scripts` where the package manager allows it. Exceptions are approved separately and listed in the envelope.
 

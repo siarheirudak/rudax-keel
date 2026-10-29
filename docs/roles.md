@@ -30,7 +30,7 @@ Packaged text (repo files, ADRs, discoveries, skills, review diffs) is intended 
 | Developer skills | The auditor, until the auditor’s verdict | The auditor judges the diff against the brief and the rules, without the implementer’s private notes |
 | Code and tokens | The researcher | The researcher looks up public sources for a skill and does not need the repository |
 
-There is **no** separate host-only test class. Ordinary tests are visible to every role with a work tree. Tester-written tests mount **read-only** for the developer. On gate FAIL the developer gets the **full** output and stacks. Honesty substitute for fitting code to tests: L7T mutation plus the L8 checklist item `Code hardcoded to specific test values instead of implementing the behavior` (see [Harness design](harness/README.md)).
+Ordinary tests are visible to every role with a work tree. Tester-written tests mount **read-only** for the developer. On gate FAIL the developer gets the **full** output and stacks. Honesty substitute for fitting code to tests: L7T mutation plus the L8 checklist item `Code hardcoded to specific test values instead of implementing the behavior` (see [Harness design](harness/README.md)).
 
 Other roles see the repository minus secrets, minus any extra paths in `.keel/deny.local`. The auditor sees the diff under review.
 

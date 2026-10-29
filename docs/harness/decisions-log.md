@@ -29,7 +29,7 @@ One consolidated log. Plain language. No personal logins or bot account names: s
 
 | Id | Decision | Status |
 |---|---|---|
-| H1 | **No hidden-test class.** There is no separate host-only test store, no dedicated gate for that class, no verbatim-body check against such a store, and no “rule text only” failure sanitization for that reason. Public tests are the honesty surface. | **active** |
+| H1 | **Tests are visible.** Every role with a work tree sees ordinary tests. Tester-written tests mount **read-only** for the developer. The tester writes only into test directories. The developer gets full gate output and stacks. Public tests plus L7T mutation and the L8 hardcode checklist are the honesty surface. | **active** |
 | H2 | Ordinary tests are **visible to every role** with a work tree. Tester-written tests are mounted **read-only** for the developer. The tester writes only into test directories; the host checks with `git diff --name-only` plus a test. **Extended by X3-1:** product tree RO mounts for L3; git diff is defense in depth (D-T30). The developer gets the **full** gate output and stacks. | **active** |
 | H3 | Honesty substitute: **L7T mutation** + **L8**. English checklist item: `Code hardcoded to specific test values instead of implementing the behavior`. Mutation does **not** catch hardcoding. The suite is **behavioral** stubs only; **no** line-checks of instruction files. L8 checklist quality → backlog known-bad eval set. | **active** |
 | H4 | Developer signal **`TEST_CONTRADICTS_BRIEF`** alongside `NEEDS_CONTEXT` / `NEEDS_DEPENDENCY`: do not fit code to a contradicting test; stop; return the signal with the test name and brief clause. The orchestrator decides whether to take edge `L5_test_contradicts_brief_to_L3` (budget). **Extended by X3-2:** verify vs brief; never forward developer prose to L3. Behavioral stubs D-T25 / D-T31. | **active** |
@@ -42,7 +42,7 @@ One consolidated log. Plain language. No personal logins or bot account names: s
 | B7 | Intermediary: D2 answer **verbatim** + interpretation; if unclear or they diverge the orchestrator re-asks; raw text in audit. **No** `/approve`. | **active** |
 | T1 | Dispatcher tests: stub-model, behavioral; wiring into `run-tests.sh` / keel-gate in the **Step 7 process-files PR**. D-T1…D-T28 + D-T30…D-T33 (no D-T29 line-check). Extended by T2. | **active** |
 
-**[superseded same day]** Earlier visibility ideas that hid a separate test class from some roles, then from the orchestrator, plus verbatim-body checks and body sanitization — all removed by **H1**.
+**[superseded same day]** Earlier test-visibility ideas — replaced by **H1–H3**.
 
 ---
 
@@ -90,7 +90,7 @@ Owner approved the critique #3 triage. Design sources: `docs/harness/orchestrato
 | OD8 | Timeouts: DEFAULT wall + short start; values **measure**; D2 wait is not killed by those timeouts. | **active** |
 | OD9 | Critic fixes: soft D-T5/D-T13 → explicit refusal+audit; hash-stability D-T21 done-when; CI mutate wiring in Step 7. | **active** |
 | OD10 | **[superseded B1]** circuit breaker = diff-hash **or** gate-hash. | superseded |
-| OD11 | **[superseded H1]** ideas that hid a separate test class from the orchestrator with enum-only failure bodies. | superseded |
+| OD11 | **[superseded H1]** earlier orchestrator visibility ideas replaced by H1–H3. | superseded |
 
 ---
 
@@ -105,7 +105,7 @@ Owner approved the critique #3 triage. Design sources: `docs/harness/orchestrato
 | V5 | Base **secret patterns** are harness-owned; a project may **extend**, never narrow. | **active** |
 | V6 | No third owner-decision log: ADR / `docs/decisions.md` + discoveries. | **active** |
 | V7 | CR-M5 content fencing → **backlog**. Context-free external-input filter → **backlog**. | **active** (backlog) |
-| V8 | **[superseded H1]** earlier deny-list rows for a separate hidden-test path. | superseded |
+| V8 | **[superseded H1]** earlier test-visibility ideas replaced by H1–H3. | superseded |
 
 ---
 
@@ -158,7 +158,7 @@ Closed into v1: two-phase WAL (X3-3); L3 FS product RO / test RW (X3-1); orchest
 
 | Was | Became |
 |---|---|
-| Separate hidden-test class with restricted mounts | Removed (H1); tests visible; RO for developer |
+| Separate tests class with restricted mounts | Removed (H1); tests visible; RO for developer |
 | CB = diff **or** gate-hash | CB = diff-hash only (B1) |
 | `/approve` as an external-critique idea | Rejected (B7) |
 | D-T29 line-check of L8 checklist | Dropped; known-bad eval backlog (H3) |
