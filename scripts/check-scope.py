@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Fail when a pull request mixes process files with anything else.
 
-Process files are .github/**, setup/**, scripts/**, .cursor/**, .claude/**,
-and these names anywhere in the tree: CODEOWNERS, AGENTS.md, CLAUDE.md,
-CLAUDE.local.md, .cursorrules, .windsurfrules, .clinerules, .mcp.json, and
-.shellcheckrc. scripts/ is included because CI runs those checks from the
-pull request, including scripts/tests/. A docs file counts only when it is
-itself an agent-rule file. tests/ is not a process path. Labels are not read
-and are not permission.
+Process files are .github/**, scripts/**, .cursor/**, .claude/**, and
+setup/**. Two paths are ordinary docs, matched as the whole path and
+ignoring case: setup/README.md and setup/TESTING.md. A different path
+with the same basename, such as setup/a/README.md, is still a process
+file. These names are process files anywhere in the tree, including
+under setup/: CODEOWNERS, AGENTS.md, CLAUDE.md, CLAUDE.local.md,
+.cursorrules, .windsurfrules, .clinerules, .mcp.json, and .shellcheckrc.
+scripts/ is included because CI runs those checks from the pull request,
+including scripts/tests/. A docs file counts only when it is itself an
+agent-rule file. tests/ is not a process path. Labels are not read and
+are not permission.
 
 A rename counts both the new path and previous_filename. One process path
 and one other path is a mix, including when they are the two names of one
@@ -38,12 +42,19 @@ AGENT_RULE_NAMES = {
     ".shellcheckrc",
 }
 FILE_CAP = 3000
+# Whole path, not the basename. Case is folded only for this allowlist.
+SETUP_DOC_PATHS = {
+    "setup/readme.md",
+    "setup/testing.md",
+}
 
 
 def is_process(path):
     name = path.rsplit("/", 1)[-1]
     if name in AGENT_RULE_NAMES:
         return True
+    if path.lower() in SETUP_DOC_PATHS:
+        return False
     return path.startswith(PROCESS_PREFIXES)
 
 
@@ -110,6 +121,55 @@ def self_test():
             item["previous_filename"] = previous
         return item
 
+    classified = [
+        ("setup/README.md", False),
+        ("setup/readme.md", False),
+        ("setup/TESTING.md", False),
+        ("setup/testing.md", False),
+        ("setup/tests/NOTES.md", True),
+        ("setup/apply-github-rules.sh", True),
+        ("setup/common.sh", True),
+        ("setup/rulesets/protect-main.json", True),
+        ("setup/rulesets/require-checks.json", True),
+        ("setup/tests/test-fake-gh.sh", True),
+        ("setup/tests/mock-gh.py", True),
+        ("setup/tests/harness/run-tests.sh", True),
+        ("setup/AGENTS.md", True),
+        ("setup/agents.md", True),
+        ("setup/a/README.md", True),
+        ("setup/notes.md", True),
+        ("setup/x.sh", True),
+        ("setup/a/AGENTS.md", True),
+        ("setup/CLAUDE.md", True),
+        ("setup/CLAUDE.local.md", True),
+        ("setup/CODEOWNERS", True),
+        ("setup/.cursorrules", True),
+        (".github/workflows/scope.yml", True),
+        (".github/README.md", True),
+        ("scripts/check-scope.py", True),
+        ("scripts/NOTES.md", True),
+        ("scripts/tests/test_md_links.py", True),
+        (".cursor/rules.md", True),
+        (".claude/settings.json", True),
+        ("README.md", False),
+        ("docs/why.md", False),
+        ("docs/AGENTS.md", True),
+        ("tests/test_app.py", False),
+    ]
+    for path, expected in classified:
+        if is_process(path) != expected:
+            print(
+                "self-test mismatch path={0} process={1} expected={2}".format(
+                    path, is_process(path), expected
+                ),
+                file=sys.stderr,
+            )
+            print(
+                "how to fix: fix the process-file classifier in scripts/check-scope.py",
+                file=sys.stderr,
+            )
+            return 1
+
     many = [entry("f{}.txt".format(index)) for index in range(FILE_CAP)]
     cases = [
         ([entry("README.md")], 1, "main", "main", False, ""),
@@ -168,12 +228,84 @@ def self_test():
             "README.md",
         ),
         (
-            [entry("docs/was-setup.md", "setup/README.md")],
-            1,
+            [entry("setup/README.md"), entry("README.md")],
+            2,
+            "main",
+            "main",
+            False,
+            "",
+        ),
+        (
+            [entry("setup/TESTING.md"), entry("docs/why.md")],
+            2,
+            "main",
+            "main",
+            False,
+            "",
+        ),
+        (
+            [entry("setup/README.md"), entry("setup/apply-github-rules.sh")],
+            2,
             "main",
             "main",
             True,
             "setup/README.md",
+        ),
+        (
+            [entry("setup/AGENTS.md"), entry("setup/README.md")],
+            2,
+            "main",
+            "main",
+            True,
+            "setup/AGENTS.md",
+        ),
+        (
+            [entry("setup/CLAUDE.md"), entry("docs/why.md")],
+            2,
+            "main",
+            "main",
+            True,
+            "setup/CLAUDE.md",
+        ),
+        (
+            [entry("setup/rulesets/require-checks.json"), entry("README.md")],
+            2,
+            "main",
+            "main",
+            True,
+            "README.md",
+        ),
+        (
+            [entry("setup/tests/test-fake-gh.sh"), entry("tests/test_app.py")],
+            2,
+            "main",
+            "main",
+            True,
+            "tests/test_app.py",
+        ),
+        (
+            [entry("scripts/NOTES.md"), entry("README.md")],
+            2,
+            "main",
+            "main",
+            True,
+            "README.md",
+        ),
+        (
+            [entry("docs/was-setup.md", "setup/README.md")],
+            1,
+            "main",
+            "main",
+            False,
+            "",
+        ),
+        (
+            [entry("docs/was-setup.sh", "setup/apply-github-rules.sh")],
+            1,
+            "main",
+            "main",
+            True,
+            "setup/apply-github-rules.sh",
         ),
         ([entry(".github/b.yml", ".github/a.yml")], 1, "main", "main", False, ""),
         ([entry("docs/b.md", "README.md")], 1, "main", "main", False, ""),
