@@ -1,6 +1,6 @@
 # GitHub setup
 
-This is the foundation. Everything else in the template relies on it.
+This is the GitHub foundation that already exists. The planned production line is in [Architecture](architecture.md). What is built and what is only specified is in [Implementation status](status.md).
 
 ## Two accounts
 
@@ -86,7 +86,7 @@ The script keeps more than one ruleset. GitHub applies every active ruleset that
 
 - The admin bypass on `protect-main` lets you merge a pull request without a second review. It does not let you force-push, and it does not apply to tags.
 - `protect-tags` has its own admin bypass. The pull-request bypass mode is not valid for tags, so this one is "always", and only the admin role is on the list. Only the owner creates a release tag. The agent GitHub account has write, not admin, so it cannot create, move, or delete a tag, and it cannot fake a release.
-- `require-checks` has an empty bypass list. After it is active, an admin cannot skip `keel-gate` or `keel-process-files-separate`, and the `protect-main` bypass does not skip them either. The branch must be up to date. A status posted with a user token does not count, because the check is limited to GitHub Actions. A deliberately malicious agent can still post a check run of that name from a workflow with `checks: write`. Owner review is the control for that. See [why](why.md#require-checks).
+- `require-checks` has an empty bypass list. After it is active, an admin cannot skip `keel-gate` or `keel-process-files-separate`, and the `protect-main` bypass does not skip them either. The branch must be up to date. A status posted with a user token does not count, because the check is limited to GitHub Actions. See [why](why.md#require-checks).
 
 ## Manual setup
 
@@ -102,6 +102,6 @@ JSON for the three rulesets lives in [setup/rulesets](../setup/rulesets).
 
 A status check is a pass or fail name on a commit. The required names are `keel-gate` and `keel-process-files-separate`. `keel-gate` fails if any job in [checks.yml](../.github/workflows/checks.yml) failed, was cancelled, or was skipped. `checks` runs on `opened`, `synchronize`, `reopened`, and `edited`, so a base change runs the gate again. Add this repository's tests only in `project_checks()` in [`scripts/check.sh`](../scripts/check.sh). The workflow `project` job only calls that function. `bash scripts/check.sh` is the local run. The template's own check tests live in `scripts/tests/`. Product tests live in `tests/`.
 
-`require-checks` requires those two check-run names. The pull request branch must be up to date. Both are limited to GitHub Actions (`integration_id` 15368), so a status posted with a user token does not count. That does not stop a workflow with `checks: write` from posting the same name. Owner review is the control against a deliberately malicious agent. Apply waits until both workflow files are on the default branch and each exact name has been reported by app 15368. Scope does not run on a push to the default branch.
+`require-checks` requires those two check-run names. The pull request branch must be up to date. Both are limited to GitHub Actions (`integration_id` 15368), so a status posted with a user token does not count. Apply waits until both workflow files are on the default branch and each exact name has been reported by app 15368. Scope does not run on a push to the default branch.
 
 `scope` is triggered with `pull_request_target` (`opened`, `synchronize`, `reopened`, `edited`) so the workflow definition is the one on the pull request's base branch, and changing the base runs it again. The job does not check out the pull request and the token is read-only. That is the safe use of that trigger. The check fails if the base is not the default branch. A pull request that touches process files must not also touch other files. A process-only pull request can weaken `checks.yml`; owner review of those pull requests is the control, by design. To turn the check off, disable `require-checks` or remove the `keel-process-files-separate` context first, then delete the workflow. Do not delete the workflow alone. [Why](why.md#scope).

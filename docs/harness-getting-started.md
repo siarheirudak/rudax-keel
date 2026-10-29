@@ -15,6 +15,8 @@ Commands below are from the repository root.
 
 `setup/keel.sh` says Linux is the tested host and that macOS with Docker Desktop has not been run. The `keel-git` image is built from `setup/docker/keel-git.Dockerfile` (Alpine and git, no platform pin), so `docker build` produces a native image. Set `DOCKER=podman` to use podman. `setup/keel.sh` adds `--userns=keep-id` in that case.
 
+The v1 design requires a rootless runtime and will refuse to start without one. This doctor does not refuse yet: a rootful Linux daemon is a warning on ENV-05. [Security](security.md#rootless).
+
 ## 2. Run it
 
 ```bash
@@ -80,4 +82,5 @@ When reporting a problem, send the full terminal output of `bash setup/tests/har
 ## 5. Known limits
 
 - `setup/keel.sh` says the harness was tested on Linux, and that macOS with Docker Desktop has not been run. Windows is untested. On any OS other than Linux the doctor prints a warning, `untested OS`, and that is a warning, not a refusal. The scripts target bash 3.2 or newer.
+- Rootless Docker or Podman is a mandatory requirement of the v1 pipeline. The doctor still classifies that boundary as RECOMMENDED (ENV-05). A rootful daemon warns. It does not make the verdict NOT READY. [Security](security.md#rootless).
 - On macOS, file ownership is mapped by Docker Desktop, so the gate's foreign-owner check is only a warning there. See [harness-checks-why.md](harness-checks-why.md#supported-os).
