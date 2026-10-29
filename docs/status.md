@@ -120,10 +120,9 @@ These are project settings. Where the design names a starting number, that numbe
 - **Product mutation tests** beyond wiring mutation into the green gate. The green gate itself is not built.
 - **A hacker role on the pull-request path.** Not in v1. Security rules sit with the auditor.
 - **A readability reviewer.** Not in v1. Reviewers do not flag formatting, style, or naming.
-- **A hard limit on skill length.** Not adopted. The approval card shows the size.
-- **Harness².** Declined. The planning notes do not specify it further, and this repository does not implement it.
-- **Non-Pi pipeline runtime.** The v1 pipeline’s agent runtime is Pi Agent. The GitHub rules still apply to whatever program holds the bot token.
-- **A pre-flight admission step.** Removed from the design. A task starts at L0.
+- **A hard limit on skill length.** The approval card shows the size. There is no maximum length.
+- **A non-Pi pipeline runtime.** The v1 pipeline’s agent runtime is Pi Agent. The GitHub rules still apply to whatever program holds the bot token.
+- **A pre-flight admission step.** A task starts at L0.
 
 ## Related
 

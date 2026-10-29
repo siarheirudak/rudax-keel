@@ -6,7 +6,7 @@ The bot account opens pull requests. It does not approve them, it does not merge
 
 **Status.** The decisions below are the v1 design. The GitHub half (who may merge, who may tag, who may change rules) is implemented. The brief, the D2 cards, the skill card, and the envelope are not built.
 
-Owner decisions travel through chat (external intermediary or direct Pi Agent terminal) into the same orchestrator input. There is no extra confirmation layer on top of D2. Answers are logged verbatim with a timestamp and appear in the PR envelope. [Working through a chat agent](working-through-chat.md). Owner decisions that belong in product memory go into ADR / this decisions file and discoveries — not a third decision log.
+The owner's answers travel through chat (an external intermediary or a direct Pi Agent terminal) into the same orchestrator input. There is no extra confirmation layer on top of D2. Answers are logged verbatim with a timestamp and appear in the pull-request envelope. [Working through a chat agent](working-through-chat.md). Answers that belong in product memory go into an ADR, into this file, or into a discovery.
 
 ## The brief
 
@@ -66,7 +66,7 @@ The owner merges. The design’s merge is a squash: the link-by-link commits bec
 The owner is meant to merge from the envelope, without reading the code. The envelope is ready only when it can show all of the following.
 
 1. The change is what the brief asked for.
-2. It works, including tests the developer never saw.
+2. It works. The developer can read the tests and cannot change them.
 3. The red gate saw an honest failure on the stubs, not an import or build error.
 4. Existing tests still pass.
 5. The auditor’s rules, including security, passed.

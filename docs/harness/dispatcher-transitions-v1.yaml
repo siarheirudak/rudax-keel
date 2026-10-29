@@ -2,8 +2,10 @@
 # Intended repo path after Step 7 process-files PR: setup/dispatcher/transitions.v1.yaml
 # Dispatcher and tests MUST load the same file. Prose tables are derived, not a second truth.
 # Budgets reuse named refs; numeric caps are starting values to measure (not invented constants here).
-# 2026-10-29 owner: tests visible; every kind:back has non-null budget_ref.
-# 2026-10-29 owner critique #3: X3-1 L3 product RO mounts; X3-2 no developer prose to L3; X3-9 L6 static_debug_leftover; X3-8 developer keeps previous-attempt RO.
+# Tests are visible. Every kind: back edge has a non-null budget_ref.
+# L3 mounts the product tree read-only and writes only in test directories.
+# Developer prose is not forwarded to L3. L6 checks leftover debug and temp files.
+# The developer may read the previous-attempt archive.
 schema_version: 1
 format: keel_dispatcher_transitions
 doc_ref: docs/harness/orchestrator-dispatcher.md
@@ -263,7 +265,7 @@ edges:
     when: { result_name: TESTS_READY }
     invalidates: []
     budget_ref: null
-    note: "L3 mounts: product tree RO, RW only test dirs (X3-1/D-T30); host git diff --name-only defense in depth (test folders only)"
+    note: "L3 mounts: product tree RO, RW only test dirs (D-T30); host git diff --name-only defense in depth (test folders only)"
 
   - id: L4_to_L5
     from: L4
@@ -360,7 +362,7 @@ edges:
     invalidates: [L3, L4, L5, L6, L7, L8, L9, L9B, L10]
     budget_ref: L5_test_contradict_returns
     deep_reset: true
-    note: "developer result_name TEST_CONTRADICTS_BRIEF (alongside NEEDS_CONTEXT/NEEDS_DEPENDENCY); instruction do not fit code to contradicting test — stop, name test + brief clause; orchestrator verifies claim vs brief and decides L3 return; developer prose never forwarded to L3 — only orchestrator reformulated finding (X3-2); spends L5_test_contradict_returns; behavioral stubs D-T25/D-T31"
+    note: "developer result_name TEST_CONTRADICTS_BRIEF (alongside NEEDS_CONTEXT/NEEDS_DEPENDENCY); instruction do not fit code to contradicting test — stop, name test + brief clause; orchestrator verifies claim vs brief and decides L3 return; developer prose never forwarded to L3 — only orchestrator reformulated finding; spends L5_test_contradict_returns; behavioral stubs D-T25/D-T31"
 
   - id: L5_brief_conflict_dossier
     from: L5
@@ -379,7 +381,7 @@ edges:
     when: { result_name: STATIC_PASS }
     invalidates: []
     budget_ref: null
-    note: "STATIC_PASS includes configurable leftover debug/temp artifact check (X3-9/D-T33)"
+    note: "STATIC_PASS includes configurable leftover debug/temp artifact check (D-T33)"
 
   - id: L6_fail_to_L5
     from: L6
@@ -390,7 +392,7 @@ edges:
     invalidates: [L6, L7, L8, L9, L9B, L10]
     budget_ref: L5_submissions
     shallow_keep_worktree: true
-    note: "mechanical FAIL; keep code and edit; includes leftover debug/breakpoint and temp/scratch/backup artifacts in diff (X3-9/D-T33; patterns configurable)"
+    note: "mechanical FAIL; keep code and edit; includes leftover debug/breakpoint and temp/scratch/backup artifacts in diff (D-T33; patterns configurable)"
 
   - id: L7_to_L8
     from: L7

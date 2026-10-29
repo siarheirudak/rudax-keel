@@ -55,7 +55,7 @@ The design puts an allowlist proxy in front of outbound traffic. A destination n
 | Researcher | Internet, for published sources. No code and no tokens in that container |
 | Critic | No network |
 | QA | The local app only |
-| Other roles | The planning notes do not give them a separate destination list. They go through the same allowlist proxy |
+| Other roles | The same allowlist proxy. The design does not give them a separate destination list |
 
 The harness today passes `--network none` to every container, including setup, export, and the test re-run. There is no proxy, so there is also no path to a model API. That is stricter than the developer row above, and it is why the current harness cannot host Pi Agent. The proxy is specified in [Status](status.md) and is not built.
 
