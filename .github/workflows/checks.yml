@@ -79,6 +79,8 @@ jobs:
         run: bash setup/tests/test-fake-gh.sh
       - name: Scope rule
         run: python3 scripts/check-scope.py --self-test
+      - name: Require-checks reminder
+        run: python3 scripts/warn-require-checks.py --self-test
       - name: Gate job list
         run: python3 scripts/tests/test_gate_jobs.py
 
@@ -141,3 +143,23 @@ jobs:
           R_PROJECT: ${{ needs.project.result }}
           R_HARNESS: ${{ needs.harness.result }}
         run: bash scripts/check-gate.sh
+
+  # Not an input to keel-gate. A permissions failure is a notice, and the
+  # step cannot fail this job or the gate.
+  require-checks-reminder:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Remind the owner when require-checks is missing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: python3 scripts/warn-require-checks.py || true

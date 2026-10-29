@@ -58,6 +58,9 @@ CHECKS_CONCLUSION=""
 CHECKS_REPORT_REASON=""
 REPORTED_NAMES=""
 REQUIRED_CONTEXTS=""
+LOG_PREFIX=""
+NOT_YET_COUNT=0
+NOT_YET_NOTES=""
 # shellcheck disable=SC2034
 FORK_MANUAL_REASON="API unavailable. Do this by hand: Settings → Actions → General → Fork pull request workflows → Require approval for all outside collaborators."
 # gh api --jq arrived in 1.7.0. --paginate, --input, --method, and -f are older.
@@ -194,11 +197,20 @@ log_step() {
   if [[ $status == FAIL ]]; then
     FAIL_COUNT=$((FAIL_COUNT + 1))
   fi
+  if [[ $status == "NOT YET" ]]; then
+    NOT_YET_COUNT=$((NOT_YET_COUNT + 1))
+    if [[ -n $reason ]]; then
+      NOT_YET_NOTES="${NOT_YET_NOTES}- ${what}: ${reason}"$'\n'
+    else
+      NOT_YET_NOTES="${NOT_YET_NOTES}- ${what}"$'\n'
+    fi
+  fi
 }
 
 init_log() {
   local prefix=$1
   local dir stamp
+  LOG_PREFIX=$prefix
   dir=${SETUP_LOG_DIR:-$SCRIPT_DIR/logs}
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   mkdir -p "$dir"
@@ -213,6 +225,19 @@ init_log() {
   say "Log: ${LOG_FILE}"
 }
 
+print_not_yet_block() {
+  [[ ${LOG_PREFIX:-} == apply ]] || return 0
+  [[ ${NOT_YET_COUNT:-0} -gt 0 ]] || return 0
+  say "-------- not ready yet --------"
+  say "What is not ready yet, and why:"
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ -n $line ]] || continue
+    say "$line"
+  done <<<"$NOT_YET_NOTES"
+  say "run setup/apply-github-rules.sh again after the first pull request has run the checks"
+  say "--------"
+}
+
 finish() {
   say "Summary"
   if [[ -n $SUMMARY ]]; then
@@ -220,6 +245,7 @@ finish() {
   fi
   say "Result: ${STEP} steps, ${FAIL_COUNT} FAIL"
   say "Log: ${LOG_FILE}"
+  print_not_yet_block
   if [[ "$FAIL_COUNT" -gt 0 ]]; then
     exit 1
   fi

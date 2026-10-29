@@ -97,6 +97,15 @@ assert_rc() {
   fi
 }
 
+NOT_YET_RERUN="run setup/apply-github-rules.sh again after the first pull request has run the checks"
+
+need_not_yet_block() {
+  need "-------- not ready yet --------"
+  need "What is not ready yet"
+  need "$NOT_YET_RERUN"
+  need "--------"
+}
+
 count_method() {
   awk -v method="$1" -v needle="$2" '$1 == method && index($2, needle) { n++ } END { print n + 0 }' "$GH_MOCK_LOG"
 }
@@ -199,6 +208,7 @@ need "created protect-tags"
 need "waiting for checks.yml and scope.yml on the default branch, and for every require-checks context to be reported by GitHub Actions app 15368"
 need "invitation sent with write"
 forbid "created require-checks"
+need_not_yet_block
 assert_links
 python3 - <<'PY'
 import json, os, sys
@@ -583,6 +593,7 @@ run "$APPLY" owner/repo agent
 assert_rc 1
 need "admin bypass"
 need "pull request"
+need_not_yet_block
 python3 - <<'PY'
 import json, os, sys
 state = json.load(open(os.environ["GH_MOCK_STATE"], encoding="utf-8"))
@@ -602,6 +613,7 @@ run "$APPLY" owner/repo agent
 assert_rc 0
 need "waiting for checks.yml and scope.yml on the default branch, and for every require-checks context to be reported by GitHub Actions app 15368"
 forbid "created require-checks"
+need_not_yet_block
 ok "require-checks waits for both workflows"
 
 reset
@@ -612,6 +624,7 @@ need "missing ["
 need "keel-gate"
 need "keel-process-files-separate"
 forbid "created require-checks"
+need_not_yet_block
 ok "require-checks waits until both check runs have reported"
 
 reset
@@ -621,6 +634,7 @@ assert_rc 0
 need "missing ["
 need "keel-gate"
 forbid "created require-checks"
+need_not_yet_block
 ok "require-checks ignores a check run whose name is not the context"
 
 reset
@@ -630,6 +644,7 @@ assert_rc 0
 need "missing ["
 need "keel-gate"
 forbid "created require-checks"
+need_not_yet_block
 ok "require-checks ignores a check run from another app"
 
 reset
@@ -637,6 +652,7 @@ ready_checks
 run "$APPLY" owner/repo agent
 assert_rc 0
 need "created require-checks"
+forbid "$NOT_YET_RERUN"
 python3 - <<'PY'
 import json, os, sys
 state = json.load(open(os.environ["GH_MOCK_STATE"], encoding="utf-8"))
@@ -657,6 +673,7 @@ clear_calls
 run "$APPLY" owner/repo agent
 assert_rc 0
 need "already matches setup/rulesets/require-checks.json"
+forbid "$NOT_YET_RERUN"
 if [[ $(count_exact POST repos/owner/repo/rulesets) -ne 0 ]]; then
   fail "require-checks was created twice"
 fi
@@ -667,6 +684,7 @@ mutate 'state["files"][".github/workflows/checks.yml"]="name: checks\n"; state["
 run "$APPLY" owner/repo agent
 assert_rc 0
 need "created require-checks"
+forbid "$NOT_YET_RERUN"
 if [[ $(grep -c 'check-runs' "$GH_MOCK_LOG") -ne 2 ]]; then
   fail "check-run lookups: $(grep -c 'check-runs' "$GH_MOCK_LOG")"
 fi

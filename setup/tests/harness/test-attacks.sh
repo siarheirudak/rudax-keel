@@ -160,11 +160,14 @@ echo "### A17c forbidden path with a tab and a double quote (B1)"; fresh
 $K role evil rw 'mkdir -p .github && echo x > ".github/$(printf "a\tb\"c").yml" && git add -A && git commit -qm a17c'; $K export >/dev/null; gate_expect_fail A17c 'forbidden path'
 echo "### A18 nested docs/AGENTS.md (B2)"; fresh
 $K role evil rw 'mkdir -p docs && echo r > docs/AGENTS.md && git add -A && git commit -qm a18'; $K export >/dev/null; gate_expect_fail A18 'forbidden path'
-echo "### A18b PR #5 process set, one path per run (B2)"; miss=
-for f in CLAUDE.md sub/CLAUDE.local.md CODEOWNERS .cursorrules x/.windsurfrules .clinerules .mcp.json .shellcheckrc lib/.gitmodules setup/keel.sh scripts/check.sh .cursor/rules/a.mdc .claude/settings.json; do fresh
+echo "### A18b Pi process paths, one path per run (B2)"; miss=
+for f in .pi/SYSTEM.md .pi/extensions/x.ts .pi/mcp.json .agents/skills/a/SKILL.md sub/AGENTS.override.md sub/claude.md CLAUDE.md CODEOWNERS .shellcheckrc lib/.gitmodules setup/keel.sh scripts/check.sh; do fresh
   $K role evil rw "mkdir -p \"\$(dirname '$f')\" && echo x > '$f' && git add -A && git commit -qm a18b" >/dev/null; $K export >/dev/null
   $K gate 2>&1 | grep -q 'GATE FAIL: forbidden path' || miss="$miss $f"; done
-if [ -z "$miss" ]; then res A18b "BLOCKED (13/13 process paths: rule names anywhere, setup/ scripts/ .cursor/ .claude/)"; else res A18b "NOT BLOCKED:$miss"; fi
+fresh
+$K role evil rw 'mkdir -p setup && echo x > setup/README.md && echo y > setup/TESTING.md && git add -A && git commit -qm a18b-docs' >/dev/null; $K export >/dev/null
+$K gate 2>&1 | grep -q 'GATE PASS' || miss="$miss setup-docs"
+if [ -z "$miss" ]; then res A18b "BLOCKED (12/12 process paths: rule names anywhere, .pi/ .agents/ setup/ scripts/; setup/README.md and setup/TESTING.md are not forbidden)"; else res A18b "NOT BLOCKED:$miss"; fi
 echo "### A19 shadow config replaced by a symlink to a host file (B3)"; fresh
 echo victim > "$P/victim"
 $K role evil rw "rm /shadow/task-1.git/config && ln -s '$P/victim' /shadow/task-1.git/config && echo planted" ; $K reset-shadow 2>&1 | tail -1
