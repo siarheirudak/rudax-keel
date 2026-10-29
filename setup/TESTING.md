@@ -4,7 +4,7 @@ Live test for layer 1 and layer 2. Use a disposable repository. The owner's priv
 
 Do not point the scripts at the template repository.
 
-The harness is built for Pi Agent. The attacks below are what that agent must not be able to do.
+A coding agent is any AI coding agent (Cursor cloud or local, Claude Code, and others). The attacks below are what that agent must not be able to do.
 
 The owner GitHub account does three things: the setup run, the approvals in the stale-review attacks, and the merges the owner chooses to make. Everything else, including the results comment, is done in the agent shell.
 
@@ -26,7 +26,7 @@ Expected, with no FAIL:
 
 - CODEOWNERS is ALREADY (`* @siarheirudak`, no commit) when the file already names the owner. It is OK only when the file was missing and apply created it.
 - `protect-main` and `protect-tags` are OK, or ALREADY if you run apply again.
-- `require-checks` is **⏳ NOT YET** on a terminal, and `NOT YET` in the log, reason `waiting for checks.yml and scope.yml on the default branch, and for every require-checks context to be reported by GitHub Actions app 15368`. The status word stays `NOT YET`. After the summary, a separate block names that step, the reason, and `run setup/apply-github-rules.sh again after the first pull request has run the checks`. The exit code is still zero when nothing is FAIL.
+- `require-checks` is **NOT YET**, reason `waiting for checks.yml and scope.yml on the default branch, and for every require-checks context to be reported by GitHub Actions app 15368`.
 - The agent is invited with write (OK), or the invite is ALREADY pending. Admin is FAIL. Change the role to write before continuing.
 - Fork approval is OK, reason `not applicable (private repo)`.
 - Token permissions and allowed actions are OK or ALREADY.
@@ -392,7 +392,7 @@ gh api user --jq .login
 bash setup/apply-github-rules.sh siarheirudak/rudax-keel-sandbix isiarheiridak-agent
 ```
 
-Expected: `require-checks` is NOT YET. On a terminal the line shows ⏳ in front of `NOT YET`. The log file does not. The reason contains `reported [keel-gate]; missing [keel-process-files-separate]`. The ending block says to run `setup/apply-github-rules.sh` again after the first pull request has run the checks. The ruleset is not created. Do not continue until that is the reason. A red `checks` push to the default branch is WARN, not FAIL. A red pull request run is not that warning.
+Expected: `require-checks` is NOT YET. The reason contains `reported [keel-gate]; missing [keel-process-files-separate]`. The ruleset is not created. Do not continue until that is the reason. A red `checks` push to the default branch is WARN, not FAIL. A red pull request run is not that warning.
 
 **Agent shell**
 
