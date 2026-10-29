@@ -2,7 +2,7 @@
 # Apply GitHub rules for one repository. Idempotent.
 # Re-run as the owner GitHub account after each layer merge.
 # Settings that already match are left untouched.
-# Usage: apply-github-rules.sh OWNER/REPO AGENT_LOGIN [--accept-risk] [--rewrite-codeowners]
+# Usage: apply-github-rules.sh OWNER/REPO AGENT_LOGIN [--accept-risk] [--rewrite-codeowners] [--no-emoji]
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -14,6 +14,7 @@ for arg in "$@"; do
   case $arg in
     --accept-risk) ACCEPT_RISK=1 ;;
     --rewrite-codeowners) REWRITE_CODEOWNERS=1 ;;
+    --no-emoji) NO_EMOJI_FLAG=1 ;;
     --)
       printf 'Unknown option: %s\n' "$arg" >&2
       usage "apply-github-rules.sh" " [--rewrite-codeowners]"

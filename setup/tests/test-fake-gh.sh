@@ -78,6 +78,63 @@ run_pipe() {
   out=$(printf '%s\n' "$input" | "$BASH_BIN" "$@" 2>&1) || rc=$?
 }
 
+run_pty() {
+  rc=0
+  out=$(python3 - "$@" <<'PY'
+import os, select, subprocess, sys, time, pty
+args = sys.argv[1:]
+master, slave = pty.openpty()
+proc = subprocess.Popen(
+    [os.environ.get("BASH_BIN", "bash")] + args,
+    stdin=slave,
+    stdout=slave,
+    stderr=slave,
+    env=os.environ.copy(),
+)
+os.close(slave)
+buf = b""
+deadline = time.time() + 20
+while True:
+    if proc.poll() is not None:
+        while select.select([master], [], [], 0)[0]:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            buf += chunk
+        break
+    remaining = deadline - time.time()
+    if remaining <= 0:
+        proc.kill()
+        break
+    ready, _, _ = select.select([master], [], [], min(0.2, remaining))
+    if not ready:
+        continue
+    try:
+        chunk = os.read(master, 4096)
+    except OSError:
+        break
+    if not chunk:
+        break
+    buf += chunk
+rc = proc.wait()
+sys.stdout.buffer.write(buf)
+sys.exit(rc)
+PY
+) || rc=$?
+}
+
+assert_plain_logs() {
+  local hit
+  hit=$(grep -F -l -e "✅" -e "☑️" -e "⏳" -e "❌" -e "⚠️" "$SETUP_LOG_DIR"/* 2>/dev/null || true)
+  if [[ -n $hit ]]; then
+    out=$hit
+    fail "emoji in log file"
+  fi
+}
+
 need() {
   case $out in
     *"$1"*) ;;
@@ -124,7 +181,7 @@ accept_agent() {
 
 assert_links() {
   local bad
-  bad=$(printf '%s\n' "$out" | grep -E ' - (OK|ALREADY|NOT YET|FAIL|WARN)' | grep -v 'docs/why.md#' || true)
+  bad=$(printf '%s\n' "$out" | grep -E ' - ((✅|☑️|⏳|❌|⚠️) )?(OK|ALREADY|NOT YET|FAIL|WARN)' | grep -v 'docs/why.md#' || true)
   if [[ -n $bad ]]; then
     out=$bad
     fail "step without why.md link"
@@ -208,8 +265,14 @@ need "created protect-tags"
 need "waiting for checks.yml and scope.yml on the default branch, and for every require-checks context to be reported by GitHub Actions app 15368"
 need "invitation sent with write"
 forbid "created require-checks"
+forbid "✅"
+forbid "☑️"
+forbid "⏳"
+forbid "❌"
+forbid "⚠️"
 need_not_yet_block
 assert_links
+assert_plain_logs
 python3 - <<'PY'
 import json, os, sys
 state = json.load(open(os.environ["GH_MOCK_STATE"], encoding="utf-8"))
@@ -1036,6 +1099,72 @@ if [[ -n $bad ]]; then
   fail "hardcoded owner login"
 fi
 ok "no hardcoded owner login"
+
+# --- status emoji on a terminal; plain text otherwise ---
+reset
+run "$APPLY" owner/repo agent --no-emoji
+assert_rc 0
+forbid "Unknown option"
+forbid "✅"
+ok "no-emoji flag is accepted off a terminal"
+
+reset
+run_pty "$APPLY" owner/repo agent
+assert_rc 0
+need "✅ OK"
+need "⏳ NOT YET"
+need "OK"
+need "NOT YET"
+assert_plain_logs
+ok "terminal shows emoji in front of the status word"
+
+reset
+run_pty "$APPLY" owner/repo agent
+run_pty "$APPLY" owner/repo agent
+assert_rc 0
+need "☑️ ALREADY"
+need "ALREADY"
+assert_plain_logs
+ok "terminal shows already emoji"
+
+reset
+mutate 'state["admin"]=False'
+run_pty "$APPLY" owner/repo agent
+assert_rc 1
+need "❌ FAIL"
+need "FAIL"
+assert_plain_logs
+ok "terminal shows fail emoji"
+
+reset
+ready_checks
+run "$APPLY" owner/repo agent
+assert_rc 0
+mutate 'state["workflow_runs"]["checks.yml"]=[{"id":1,"conclusion":"failure","head_branch":"main","head_sha":"sha-checks","event":"push","jobs":[{"name":"keel-gate"}]}]'
+accept_agent
+run_pty "$VERIFY" owner/repo agent
+assert_rc 0
+need "⚠️ WARN"
+need "WARN"
+assert_plain_logs
+ok "terminal shows warn emoji"
+
+reset
+run_pty "$APPLY" --no-emoji owner/repo agent
+assert_rc 0
+forbid "✅"
+forbid "⏳"
+need "NOT YET"
+ok "no-emoji flag forces plain text on a terminal"
+
+reset
+NO_EMOJI=1 run_pty "$APPLY" owner/repo agent
+assert_rc 0
+forbid "✅"
+forbid "⏳"
+need "OK"
+unset NO_EMOJI
+ok "NO_EMOJI=1 forces plain text on a terminal"
 
 if grep -n 'SKIPPED' "$ROOT/setup/apply-github-rules.sh" "$ROOT/setup/verify-github-rules.sh" "$ROOT/setup/common.sh"; then
   fail "SKIPPED is still a status"

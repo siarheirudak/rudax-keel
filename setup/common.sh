@@ -12,6 +12,8 @@ LOG_FILE=${LOG_FILE:-}
 STEP=0
 FAIL_COUNT=0
 SUMMARY=""
+SUMMARY_LOG=""
+NO_EMOJI_FLAG=0
 GH_API_BODY=""
 GH_API_ERROR=""
 # shellcheck disable=SC2034
@@ -140,7 +142,7 @@ def norm:
 '
 
 usage() {
-  printf 'Usage: %s OWNER/REPO AGENT_LOGIN [--accept-risk]%s\n' "$1" "${2-}" >&2
+  printf 'Usage: %s OWNER/REPO AGENT_LOGIN [--accept-risk] [--no-emoji]%s\n' "$1" "${2-}" >&2
   exit 2
 }
 
@@ -173,27 +175,68 @@ say() {
   printf '%s\n' "$1" | tee -a "$LOG_FILE"
 }
 
+emoji_enabled() {
+  [[ ${NO_EMOJI:-} == 1 ]] && return 1
+  [[ ${NO_EMOJI_FLAG:-0} == 1 ]] && return 1
+  [[ -t 1 ]] || return 1
+  return 0
+}
+
+emoji_for() {
+  case $1 in
+    OK) printf '%s' "✅" ;;
+    ALREADY) printf '%s' "☑️" ;;
+    "NOT YET") printf '%s' "⏳" ;;
+    FAIL) printf '%s' "❌" ;;
+    WARN) printf '%s' "⚠️" ;;
+    *) printf '%s' "" ;;
+  esac
+}
+
+# Emoji in front of the status word. Do not test the terminal here: this runs
+# inside $(...), where stdout is a pipe. The caller tests the real stdout.
+status_label() {
+  local status=$1
+  local mark
+  mark=$(emoji_for "$status")
+  if [[ -n $mark ]]; then
+    printf '%s %s' "$mark" "$status"
+  else
+    printf '%s' "$status"
+  fi
+}
+
 log_step() {
   local status=$1
   local what=$2
   local reason=${3-}
   local anchor=${4-}
-  local line now short docs
+  local now docs shown line_console line_log short_console short_log
   docs=""
   if [[ -n $anchor ]]; then
     docs=" (docs/why.md#${anchor})"
   fi
   STEP=$((STEP + 1))
   now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  if [[ -n $reason ]]; then
-    line="${STEP} [${now}] ${what} - ${status}: ${reason}${docs}"
-    short="${STEP} ${status} - ${what}: ${reason}${docs}"
-  else
-    line="${STEP} [${now}] ${what} - ${status}${docs}"
-    short="${STEP} ${status} - ${what}${docs}"
+  shown=$status
+  if emoji_enabled; then
+    shown=$(status_label "$status")
   fi
-  say "$line"
-  SUMMARY="${SUMMARY}${short}"$'\n'
+  if [[ -n $reason ]]; then
+    line_console="${STEP} [${now}] ${what} - ${shown}: ${reason}${docs}"
+    line_log="${STEP} [${now}] ${what} - ${status}: ${reason}${docs}"
+    short_console="${STEP} ${shown} - ${what}: ${reason}${docs}"
+    short_log="${STEP} ${status} - ${what}: ${reason}${docs}"
+  else
+    line_console="${STEP} [${now}] ${what} - ${shown}${docs}"
+    line_log="${STEP} [${now}] ${what} - ${status}${docs}"
+    short_console="${STEP} ${shown} - ${what}${docs}"
+    short_log="${STEP} ${status} - ${what}${docs}"
+  fi
+  printf '%s\n' "$line_console"
+  printf '%s\n' "$line_log" >>"$LOG_FILE"
+  SUMMARY="${SUMMARY}${short_console}"$'\n'
+  SUMMARY_LOG="${SUMMARY_LOG}${short_log}"$'\n'
   if [[ $status == FAIL ]]; then
     FAIL_COUNT=$((FAIL_COUNT + 1))
   fi
@@ -241,7 +284,8 @@ print_not_yet_block() {
 finish() {
   say "Summary"
   if [[ -n $SUMMARY ]]; then
-    printf '%s' "$SUMMARY" | tee -a "$LOG_FILE"
+    printf '%s' "$SUMMARY"
+    printf '%s' "$SUMMARY_LOG" >>"$LOG_FILE"
   fi
   say "Result: ${STEP} steps, ${FAIL_COUNT} FAIL"
   say "Log: ${LOG_FILE}"
