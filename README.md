@@ -76,6 +76,8 @@ On a private repository on GitHub Free, rulesets are not available. Apply prints
 
 The bot must run where the only GitHub token is the bot’s token: a cloud VM, a separate OS user, or a container. It must not run in a login where the owner is already authenticated. [Why](docs/why.md#agent-environment).
 
+A pull request that edits a process file must contain only process files. Process files are `.github/`, `scripts/`, `.cursor/`, `.claude/`, and `setup/`, plus the names `CODEOWNERS`, `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `.cursorrules`, `.windsurfrules`, `.clinerules`, `.mcp.json`, and `.shellcheckrc` anywhere, including under `setup/`. `setup/README.md` and `setup/TESTING.md` are the only ordinary docs under `setup/`. The match is the whole path and ignores case. `setup/a/README.md` and every other file under `setup/` are process files. [Why](docs/why.md#scope).
+
 ### Isolation harness
 
 The harness runs a command inside a hardened container, keeps the work in a shadow git directory, exports a git bundle, and checks that bundle on the host. The host check holds no GitHub token. The push step is a stub: it prints the command it would run and does not push.
