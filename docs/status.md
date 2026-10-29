@@ -67,13 +67,13 @@ The order is the dependency order from the v1 plan. Steps later in the list need
 | 9 | Research, critic, owner approval, and the process-files pull request for a skill | Steps 2 and 8, and a real push (step 18) or an explicitly narrower push path |
 | 10 | L2 architect, critic, syntax-tree checks, and the split decision | Steps 4, 6, and 7 |
 | 11 | Dependency resolve and host install, before tests | Steps 2 and 10 |
-| 12 | L3 tester and the holdout store | Steps 1, 10, and 11 |
+| 12 | L3 tester write-scope (product RO; test dirs RW) | Steps 1, 10, and 11 |
 | 13 | L4 red gate, including honest-versus-import failure classes | Step 12 |
 | 14 | L5 developer loop and the attempt accounting | Steps 5, 11, and 13 |
 | 15 | L6 static gate, warnings on the envelope, and the shared path library | Step 14 |
 | 16 | L7 green gate, mutation testing, and the recorded tree hash | Steps 13 and 15 |
 | 17 | L8 review, the verifier, and diff slicing | Steps 6, 15, and 16 |
-| 18 | A real push, the L10 envelope, holdouts copied into normal tests in a separate commit, and CI that blocks a tree-hash mismatch | Steps 16 and 17 |
+| 18 | A real push, the L10 envelope, and CI that blocks a tree-hash mismatch | Steps 16 and 17 |
 | 19 | L9 QA and L9b rollback rehearsal | Steps 3, 12, and 18 |
 | 20 | The task journal, appended after each link and deleted on merge | Step 7, plus the hooks in steps 14 through 19 |
 | 21 | The self-describing JSONL log, with a glossary header and a scrub check | Step 20 |

@@ -1,8 +1,8 @@
 # Roles and visibility
 
-A **role** is one job in the pipeline: orchestrator, architect, critic, tester, developer, auditor, design reviewer, verifier, QA, or researcher. The owner and the bot are not agent roles. The owner decides. The bot opens pull requests.
+A **role** is one job in the pipeline: orchestrator, architect, critic, tester, developer, auditor, design reviewer, verifier, QA, or researcher. The owner and the bot are not agent roles. The owner decides. The bot account opens pull requests.
 
-**Status.** The deny-list on this page is the v1 design. The harness that exists today starts every role with the same mounts. It does not hide holdouts, it does not hide a new implementation from the tester, and it does not fence file contents as data. `setup/keel.sh role` accepts any role name and runs a shell command. The happy-path test uses the names `coder` and `tester`. Those names are not the v1 role set, and in that test the tester can read the file the coder just wrote.
+**Status.** The deny-list on this page is the v1 design. The harness that exists today starts every role with the same mounts. It does not yet enforce per-role deny mounts, it does not hide a new implementation from the tester, and it does not fence file contents as data. `setup/keel.sh role` accepts any role name and runs a shell command. The happy-path test uses the names `coder` and `tester`. Those names are not the v1 role set, and in that test the tester can read the file the coder just wrote.
 
 ## The deny-list
 
@@ -11,27 +11,39 @@ Visibility is a deny-list. A role may read the repository except the paths the l
 Two sources fill the list:
 
 - Paths the harness always denies. A project cannot remove these.
-- A per-project file, `.keel/deny.local`, which may add more denies. It cannot grant a path the harness denied.
+- A per-project file, `.keel/deny.local`, which may add more denies. It cannot grant a path the harness denied. In Step 1 of the implementation plan this file is a **flat** list of paths (no per-role prefixes yet).
 
 Secrets are denied to every role. A **secret** is a credential, a token, or any value that would let a role act as the owner or reach a system the task did not approve.
 
 Everything else on the list is denied to specific roles, below.
 
-The same rule covers packaged text. Repo files, ADRs, discoveries, and skills are wrapped so the model has to treat them as data. That wrapping is called a **fence**. A sentence inside a fenced file is not an instruction to the agent. Review diffs are fenced the same way. An instruction planted in a diff is a blocking review finding. Fencing is specified and not implemented. The current containers receive ordinary files.
+Packaged text (repo files, ADRs, discoveries, skills, review diffs) is intended to be wrapped so the model treats it as data. That wrapping is called a **fence**. A sentence inside a fenced file is not an instruction to the agent. An instruction planted in a diff is a blocking review finding. **Content fencing (M5) is specified but deferred to the backlog**; it is not part of the first visibility step. The current containers receive ordinary files.
 
 ## Who is denied what
 
 | Withheld | Denied to | Why |
 |---|---|---|
-| Secrets | Every role | A role must not be able to act as the owner or call an unapproved system |
-| `.keel/holdout/` | The developer. The architect and the critic are also specified as not receiving holdouts | The developer must not tune the implementation to tests that exist to catch a dishonest one. Holdouts are stored on the host |
-| The new implementation | The tester | The tester writes tests against stubs, on the commit from before the implementation. That tree is what gets mounted |
-| Developer skills, and the D1 log | The auditor, until the auditor’s verdict | The auditor judges the diff against the brief and the rules, without the implementer’s private notes or the confidence log |
+| Secrets | Every role, including the orchestrator | A role must not be able to act as the owner or call an unapproved system |
+| Paths in `.keel/deny.local` | Every role, including the orchestrator | Project extras such as user or customer data. Flat list; may only add denies |
+| D1 confidence-notes log | The auditor until the auditor’s verdict | The brief carries the D1 confidence level. The detailed notes live in a log the **orchestrator writes and may read**. Hidden from the auditor until verdict. Not an owner-decision store. Exact path still open |
+| The new implementation | The tester | The tester writes tests against stubs, on the commit from before the implementation. That tree is what gets mounted. Product tree mounts are **read-only**; writes only into allowed test directories (host `git diff --name-only` as defense in depth) |
+| Developer skills | The auditor, until the auditor’s verdict | The auditor judges the diff against the brief and the rules, without the implementer’s private notes |
 | Code and tokens | The researcher | The researcher looks up public sources for a skill and does not need the repository |
 
-Other roles see the repository minus secrets, minus any extra paths in `.keel/deny.local`. The auditor sees the diff under review. The developer sees tests and sees a compressed failure when a holdout fails: the rule text, not the holdout source.
+There is **no** separate host-only test class. Ordinary tests are visible to every role with a work tree. Tester-written tests mount **read-only** for the developer. On gate FAIL the developer gets the **full** output and stacks. Honesty substitute for fitting code to tests: L7T mutation plus the L8 checklist item `Code hardcoded to specific test values instead of implementing the behavior` (see [Harness design](harness/README.md)).
 
-Product tests that are not holdouts live in `tests/` today. Nothing in the current CI hides that directory by role. [tests/README.md](../tests/README.md).
+Other roles see the repository minus secrets, minus any extra paths in `.keel/deny.local`. The auditor sees the diff under review.
+
+### Orchestrator read and write
+
+The orchestrator is the main Pi Agent role in its own container.
+
+- **Read:** everything except secrets and paths in `.keel/deny.local`. The D1 confidence-notes log is readable.
+- **Write zone only:** the brief; the split plan; dispatcher **request files**; the D1 confidence-notes log; owner decisions into ADR / `docs/decisions.md` and discoveries (via allowed paths); messages to the owner.
+- **Must not write:** product code, tests, process files, or gates.
+- **Must not** launch containers or talk to other agents directly. It drops request files; the host **dispatcher** owns transitions and launches roles via `setup/keel.sh role`.
+
+Product tests live in `tests/` today. Nothing in the current CI hides that directory by role. [tests/README.md](../tests/README.md).
 
 ## Network
 
@@ -59,10 +71,10 @@ A suspicious skill is one that contains install commands, network use, secret ac
 
 ## The owner and the bot
 
-The owner is not a container role. The owner reads the envelope, answers D2 questions, and merges.
+The owner is not a container role. The owner reads the envelope, answers D2 questions, and merges. The owner may work through an external chat **intermediary** or a direct Pi Agent terminal; both hit the same orchestrator input. [Working through a chat agent](working-through-chat.md).
 
-The bot is not a container role either. It is the GitHub account that opens the pull request at L10. In the design, a GitHub token exists only in that push step. The prototype’s push command is `setup/keel.sh push-stub`. It prints the command and does not push. The doctor fails if `GH_*`, `GITHUB_*`, or `BOT_GH_TOKEN` is set in the environment it runs from. [Security](security.md#tokens).
+The bot is not a container role either. It is the GitHub **bot account** that opens the pull request at L10. In the design, a GitHub token exists only in that push step. The prototype’s push command is `setup/keel.sh push-stub`. It prints the command and does not push. The doctor fails if `GH_*`, `GITHUB_*`, or `BOT_GH_TOKEN` is set in the environment it runs from. [Security](security.md#tokens).
 
 ## Related
 
-[Security](security.md) · [Pipeline](pipeline.md) · [Quality standard](quality.md)
+[Security](security.md) · [Pipeline](pipeline.md) · [Quality standard](quality.md) · [Architecture](architecture.md) · [Working through a chat agent](working-through-chat.md)

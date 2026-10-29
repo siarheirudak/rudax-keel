@@ -70,7 +70,7 @@ The developer, the tester, QA, and the architect receive project skills. The cri
 
 **Result names.** `CONTEXT_READY`, `NEEDS_SPLIT`, `STALE_PATHS`.
 
-**Visibility.** The deny-list applies to what can be packaged. Holdouts and secrets are never packaged for the developer.
+**Visibility.** The deny-list applies to what can be packaged. Secrets are never packaged. Ordinary tests may be packaged; tester-written tests mount read-only for the developer.
 
 ## L2. Stubs and plan
 
@@ -88,7 +88,7 @@ The developer, the tester, QA, and the architect receive project skills. The cri
 
 **Result names.** `STUBS_READY`, `WAITING_SPLIT_APPROVAL`, `SPLIT_REJECTED`, `SIGNATURE_CHANGE_NEEDED`.
 
-**Visibility.** The architect and the critic do not receive holdouts or secrets. Packaged content is fenced.
+**Visibility.** The architect and the critic do not receive secrets. Packaged content is fenced. Tests are visible (there is no separate hidden-test class).
 
 ## Dependencies
 
@@ -112,21 +112,21 @@ When the architect listed no new dependency, L3 may use the lockfile that alread
 
 ## L3. Tests
 
-**Purpose.** Write the tests that define the behaviour, including tests the implementer will not see.
+**Purpose.** Write the tests that define the behaviour. Product tree mounts are read-only; the tester writes only into allowed test directories.
 
-**Who acts.** The tester agent. A host script that stores holdouts.
+**Who acts.** The tester agent. A host script that checks write-scope (`git diff --name-only` as defense in depth).
 
 **Inputs.** The brief’s rules. The stubs and signatures. The tester’s view of the quality standard (TST, COR-02, COR-04). The tree from before the implementation. Dependencies, already installed when the task needed new ones.
 
-**Outputs.** Unit tests and integration tests. One or two holdouts per brief rule, aimed at edge cases, guided by the tester’s checklist skill. A note for the envelope: how many old tests changed, and the brief rule that justifies each change.
+**Outputs.** Unit tests and integration tests, including edge cases guided by the tester’s checklist skill. A note for the envelope: how many old tests changed, and the brief rule that justifies each change.
 
-**What must pass.** There is no test critic. The tester may change an existing test, and each change must name the brief rule that requires it. For a bugfix, the reproducing test must run alone on a clean default branch and must fail on an assertion. Holdouts are written by the tester and stored by the script under `.keel/holdout/` on the host. Content the tester sees is fenced as data.
+**What must pass.** There is no test critic. The tester may change an existing test, and each change must name the brief rule that requires it. For a bugfix, the reproducing test must run alone on a clean default branch and must fail on an assertion. Writes outside allowed test directories are refused. Content the tester sees is fenced as data.
 
 **Stops and retries.** Returns from the red gate are capped at two, then a dossier. Those returns are counted on L4.
 
 **Result names.** `TESTS_READY`, `REPRO_FAILED` when a bugfix test does not fail on the default branch.
 
-**Visibility.** The new implementation is not mounted. The tester works on the pre-implementation commit. Holdouts, once stored, are not visible to the developer.
+**Visibility.** The new implementation is not mounted. The tester works on the pre-implementation commit. Tests are visible to later roles; the developer mounts them read-only.
 
 ## L4. Red gate
 
@@ -152,11 +152,11 @@ The path checks inside this gate are specified to share one library with L6, L7,
 
 **Who acts.** The developer agent.
 
-**Inputs.** The brief, the stubs, the tests (not the holdouts), the fenced context package, the developer style guide (every quality rule, including REA-01, REA-02, and REA-04, which appear only there), the developer’s skills, and the same lint and type tools the static gate will run.
+**Inputs.** The brief, the stubs, the tests (read-only), the fenced context package, the developer style guide (every quality rule, including REA-01, REA-02, and REA-04, which appear only there), the developer’s skills, and the same lint and type tools the static gate will run.
 
-**Outputs.** Local implementation commits. Discovery candidates. A script, not the developer, accepts or discards those candidates. [Discoveries](discoveries.md).
+**Outputs.** Local implementation commits. Discovery candidates. A script, not the developer, accepts or discards those candidates. [Discoveries](discoveries.md). Signals include `NEEDS_CONTEXT`, `NEEDS_DEPENDENCY`, `SIGNATURE_CHANGE_NEEDED`, `BRIEF_CONFLICT`, and `TEST_CONTRADICTS_BRIEF` (do not fit code to a contradicting test; stop and name the test and brief clause).
 
-**What must pass.** Nothing the developer reports is trusted until L6 and L7 have run. A failure report is compressed. When the failure came from a holdout, the report contains the rule text and does not contain the holdout’s source.
+**What must pass.** Nothing the developer reports is trusted until L6 and L7 have run. On gate FAIL the developer receives the **full** output and stacks.
 
 **Stops and retries.** Three submissions, plus the task budget. Until spend has been measured on the first several tasks, the budget only warns. [Logging](logging.md#budget). The same failure twice stops early, into a dossier. `NEEDS_DEPENDENCY` pauses and does not spend a submission. A rollback rehearsal that fails returns here and does spend a submission.
 
@@ -168,10 +168,11 @@ The link has exactly four special exits:
 | `SIGNATURE_CHANGE_NEEDED` | L2, once | A second request is a dossier |
 | `NEEDS_DEPENDENCY` | The dependency step | No |
 | `BRIEF_CONFLICT` | Dossier | The cycle stops |
+| `TEST_CONTRADICTS_BRIEF` | Orchestrator decides; may return to L3 | Does not fit code; spends budget per FSM |
 
 Any other exhaustion of the three submissions is a dossier. A normal submission goes to L6.
 
-**Visibility.** No `.keel/holdout/`, no secrets, and no network except the model API through the proxy.
+**Visibility.** Tests are mounted read-only. No secrets. No network except the model API through the proxy.
 
 ## L6. Static gate
 
@@ -183,7 +184,7 @@ Any other exhaustion of the three submissions is a dossier. A normal submission 
 
 **Outputs.** Pass or fail. The script applies formatting itself. Warnings are listed for the envelope rather than dropped.
 
-**What blocks.** Lint. Types, on the changed files and as a project-wide type check. Signatures that no longer match the stubs, compared as syntax trees. Path boundaries: tests, holdouts, and process files untouched, using the shared path library named under L4. Secrets, scanned in the spirit of rule SEC-03. A lockfile that does not match the approved set. Complexity at or above the block line. Basic pattern scan (semgrep); a suppression needs a reason, and reviewers look at that reason later.
+**What blocks.** Lint. Types, on the changed files and as a project-wide type check. Signatures that no longer match the stubs, compared as syntax trees. Path boundaries: tests and process files untouched by the developer submission, using the shared path library named under L4. Leftover debug prints/breakpoints and temp/scratch/backup files in the diff (patterns configurable). Secrets, scanned in the spirit of rule SEC-03. A lockfile that does not match the approved set. Complexity at or above the block line. Basic pattern scan (semgrep); a suppression needs a reason, and reviewers look at that reason later.
 
 **What warns, and is listed in the envelope.** Complexity in the warn band. Duplicates.
 
@@ -197,15 +198,15 @@ The static gate owns the mechanical rule families STY, TYP-01, DUP, CX, REA-03, 
 
 ## L7. Green gate
 
-**Purpose.** Run the tests the developer saw, the tests the developer did not see, and a mutation check, then freeze the tree hash of the passing files.
+**Purpose.** Run new and old tests plus a mutation check (L7T), then freeze the tree hash of the passing files. Mutation is an honesty backstop; it does not catch hardcoding to test values (that is an L8 checklist item).
 
 **Who acts.** A host script. The tester, for at most one return, when a mutation gap has to be closed.
 
-**Inputs.** The submission that passed L6. New tests, old tests, and the host holdouts.
+**Inputs.** The submission that passed L6. New tests and old tests.
 
 **Outputs.** Pass or fail. Coverage is shown and does not block. A mutation trend, as a percentage, is shown. A list of quarantined flaky tests. The tree hash, `gated_tree_sha`, written for the envelope.
 
-**What must pass.** The script runs new tests, old tests, and host holdouts, then mutation testing on the changed files. JavaScript and TypeScript use Stryker. Python uses mutmut. Other languages are skipped, and the envelope says so. The gate blocks only on an unexplained mutant that survived on changed logic. A test that kills a mutant must cite a brief rule id. A survivor with no rule id still blocks. An equivalent mutant is allowed when the reason is recorded. An **equivalent mutant** is a change that leaves the program’s behaviour the same, so no test should fail.
+**What must pass.** The script runs new tests and old tests, then mutation testing on the changed files. JavaScript and TypeScript use Stryker. Python uses mutmut. Other languages are skipped, and the envelope says so. The gate blocks only on an unexplained mutant that survived on changed logic. A test that kills a mutant must cite a brief rule id. A survivor with no rule id still blocks. An equivalent mutant is allowed when the reason is recorded. An **equivalent mutant** is a change that leaves the program’s behaviour the same, so no test should fail.
 
 Coverage is shown and is not a blocking number.
 
@@ -217,7 +218,7 @@ The full mutation run stops after a configurable time limit and then samples. Th
 
 **Result names.** `GREEN_PASS`, `GREEN_FAIL`, `MUTATION_GAP`.
 
-**Visibility.** Holdouts run on the host. The developer sees the rule text in the failure report, not the holdout body.
+**Visibility.** Tests run in the hardened gate container. On FAIL the developer sees the full gate output and stacks.
 
 ## L8. Review
 
@@ -291,9 +292,9 @@ The target size of a slice is a configurable band of about 50 to 150 lines. That
 
 **Who acts.** A host script. The bot account opens the pull request. The owner merges and, later, releases. The developer is involved again only when a rebase conflicts.
 
-**Inputs.** The gates that passed, including the rollback rehearsal. The holdouts. The envelope inputs: the brief, the gate results, the metrics, the tree hash, and the rollback mode.
+**Inputs.** The gates that passed, including the rollback rehearsal. The envelope inputs: the brief, the gate results, the metrics, the tree hash, and the rollback mode.
 
-**Outputs.** A branch push and a pull request opened by `isiarheiridak-agent`. An envelope bound to the tree hash. Holdouts converted into ordinary tests by a script, in a separate commit from the implementation. Process-file changes go out as their own pull request, labelled `process-files`.
+**Outputs.** A branch push and a pull request opened by the bot account. An envelope bound to the tree hash. Process-file changes go out as their own pull request, labelled `process-files`.
 
 **What must pass.** CI runs the script gates again. Mutation on CI reports the trend and does not repeat the full blocking run. CI blocks when the tree of `HEAD` is not the recorded tree hash. The envelope contains the brief and fails closed when D0, D1, D2, or the out-of-scope line is missing. It also contains gate results, the count of old tests changed, the mutation trend, every warning, suppressions, QA media when QA ran, the rollback mode and the rehearsal evidence, tokens, time, budget remaining, and model ids.
 

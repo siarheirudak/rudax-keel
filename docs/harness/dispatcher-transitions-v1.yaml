@@ -1,0 +1,573 @@
+# Machine-readable FSM for rudax-keel dispatcher (design source).
+# Intended repo path after Step 7 process-files PR: setup/dispatcher/transitions.v1.yaml
+# Dispatcher and tests MUST load the same file. Prose tables are derived, not a second truth.
+# Budgets reuse named refs; numeric caps are starting values to measure (not invented constants here).
+# 2026-10-29 owner: tests visible; every kind:back has non-null budget_ref.
+# 2026-10-29 owner critique #3: X3-1 L3 product RO mounts; X3-2 no developer prose to L3; X3-9 L6 static_debug_leftover; X3-8 developer keeps previous-attempt RO.
+schema_version: 1
+format: keel_dispatcher_transitions
+doc_ref: foundation/harness/full-picture-orchestrator-dispatcher-2026-10-29.md
+
+# Closed enums for control-plane failure reports (no free-text categories).
+# Developer receives full gate output + stacks separately; this enum is for routing/audit.
+failure_categories:
+  - import_error
+  - build_error
+  - assertion_honest_red
+  - assertion_unexpected
+  - empty_pass_rejected
+  - static_lint
+  - static_types
+  - static_signature
+  - static_path
+  - static_secret
+  - static_lockfile
+  - static_complexity_block
+  - static_debug_leftover
+  - green_new_tests
+  - green_old_tests
+  - green_mutation
+  - review_blocking
+  - qa_bug
+  - rollback_fail
+  - timeout
+  - circuit_breaker
+  - budget_exhausted
+  - malformed_request
+  - forbidden_transition
+  - idempotent_replay
+  - host_gate_refuse
+  - second_request_same_turn
+  - test_write_scope_violate
+  - test_contradicts_brief
+  - dossier
+
+initiators:
+  - dispatcher_only
+  - orchestrator
+  - owner
+  - script
+
+# Named budget refs — values are starting values to measure (documented in full-picture / pipeline).
+budget_refs:
+  - L1_split_returns
+  - L2_critic_returns
+  - L4_tester_returns
+  - L5_submissions
+  - L5_context_returns
+  - L5_deps_returns
+  - L5_test_contradict_returns
+  - L7_mutation_gap
+  - L8_review_rounds
+  - L9_qa_bug_returns
+  - signature_change_once
+
+# Schema rule (enforced by loader + D-T19): every edge with kind: back MUST have non-null budget_ref.
+
+stages:
+  - start
+  - L0
+  - WAITING_D2
+  - WAITING_BRIEF_V2
+  - L1
+  - L2
+  - L2C
+  - WAITING_SPLIT
+  - DEPS
+  - WAITING_DEP_D2
+  - L3
+  - L4
+  - L5
+  - L6
+  - L7
+  - L7T
+  - L8
+  - L9
+  - L9B
+  - WAITING_IRREVERSIBLE
+  - L10
+  - WAITING_MERGE
+  - L11
+  - dossier
+
+edges:
+  - id: start_to_L0
+    from: start
+    to: L0
+    kind: forward
+    initiator: dispatcher_only
+    when: { event: task_created_or_resumed }
+    invalidates: []
+    budget_ref: null
+
+  - id: L0_to_WAITING_D2
+    from: L0
+    to: WAITING_D2
+    kind: forward
+    initiator: orchestrator
+    when: { result_name: WAITING_D2 }
+    invalidates: []
+    budget_ref: null
+
+  - id: WAITING_D2_to_L0
+    from: WAITING_D2
+    to: L0
+    kind: forward
+    initiator: owner
+    when: { event: d2_answered_logged }
+    invalidates: []
+    budget_ref: null
+
+  - id: L0_to_WAITING_BRIEF_V2
+    from: L0
+    to: WAITING_BRIEF_V2
+    kind: forward
+    initiator: orchestrator
+    when: { result_name: BRIEF_REJECTED }
+    invalidates: []
+    budget_ref: null
+
+  - id: WAITING_BRIEF_V2_to_L0
+    from: WAITING_BRIEF_V2
+    to: L0
+    kind: forward
+    initiator: owner
+    when: { event: brief_v2_approved }
+    invalidates: []
+    budget_ref: null
+
+  - id: L0_to_L1
+    from: L0
+    to: L1
+    kind: forward
+    initiator: orchestrator
+    when: { result_name: BRIEF_READY }
+    invalidates: []
+    budget_ref: null
+
+  - id: L1_to_L0_split
+    from: L1
+    to: L0
+    kind: back
+    initiator: orchestrator
+    when: { result_name: NEEDS_SPLIT }
+    invalidates: [L1]
+    budget_ref: L1_split_returns
+
+  - id: L1_to_L2
+    from: L1
+    to: L2
+    kind: forward
+    initiator: script
+    when: { result_name: CONTEXT_READY }
+    invalidates: []
+    budget_ref: null
+
+  - id: L2_to_L2C
+    from: L2
+    to: L2C
+    kind: forward
+    initiator: script
+    when: { event: stubs_proposed_depth_checked }
+    invalidates: []
+    budget_ref: null
+
+  - id: L2C_to_WAITING_SPLIT
+    from: L2C
+    to: WAITING_SPLIT
+    kind: forward
+    initiator: script
+    when: { event: estimate_over_split_threshold }
+    invalidates: []
+    budget_ref: null
+
+  - id: WAITING_SPLIT_to_L0_parts
+    from: WAITING_SPLIT
+    to: L0
+    kind: forward
+    initiator: owner
+    when: { event: split_accepted }
+    invalidates: [L2, L2C, DEPS, L3, L4, L5, L6, L7, L8, L9, L9B, L10]
+    budget_ref: null
+
+  - id: WAITING_SPLIT_reject_stop
+    from: WAITING_SPLIT
+    to: dossier
+    kind: terminal
+    initiator: owner
+    when: { event: split_rejected }
+    invalidates: []
+    budget_ref: null
+
+  - id: L2C_to_DEPS
+    from: L2C
+    to: DEPS
+    kind: forward
+    initiator: script
+    when: { result_name: STUBS_READY }
+    invalidates: []
+    budget_ref: null
+
+  - id: L2C_return_L2
+    from: L2C
+    to: L2
+    kind: back
+    initiator: orchestrator
+    when: { event: critic_return }
+    invalidates: [L2C, DEPS, L3, L4, L5, L6, L7, L8, L9, L9B, L10]
+    budget_ref: L2_critic_returns
+    deep_reset: true
+
+  - id: L2C_budget_dossier
+    from: L2C
+    to: dossier
+    kind: terminal
+    initiator: dispatcher_only
+    when: { failure_category: budget_exhausted, budget_ref: L2_critic_returns }
+    invalidates: []
+    budget_ref: L2_critic_returns
+
+  - id: DEPS_to_WAITING_DEP_D2
+    from: DEPS
+    to: WAITING_DEP_D2
+    kind: forward
+    initiator: script
+    when: { result_name: WAITING_DEP_D2 }
+    invalidates: []
+    budget_ref: null
+
+  - id: WAITING_DEP_D2_to_DEPS
+    from: WAITING_DEP_D2
+    to: DEPS
+    kind: forward
+    initiator: owner
+    when: { event: dep_approved }
+    invalidates: []
+    budget_ref: null
+
+  - id: DEPS_to_L3
+    from: DEPS
+    to: L3
+    kind: forward
+    initiator: script
+    when: { result_name: DEPS_READY }
+    invalidates: []
+    budget_ref: null
+    note: DEPS install runs in ephemeral container (network, no host secrets/control-plane); cache/vendor RO later
+
+  - id: L3_to_L4
+    from: L3
+    to: L4
+    kind: forward
+    initiator: script
+    when: { result_name: TESTS_READY }
+    invalidates: []
+    budget_ref: null
+    note: "L3 mounts: product tree RO, RW only test dirs (X3-1/D-T30); host git diff --name-only defense in depth (test folders only)"
+
+  - id: L4_to_L5
+    from: L4
+    to: L5
+    kind: forward
+    initiator: script
+    when: { result_name: RED_PASS }
+    invalidates: []
+    budget_ref: null
+
+  - id: L4_skip_to_L5
+    from: L4
+    to: L5
+    kind: forward
+    initiator: script
+    when: { event: red_gate_skipped_by_depth }
+    invalidates: []
+    budget_ref: null
+
+  - id: L4_fail_to_L3
+    from: L4
+    to: L3
+    kind: back
+    initiator: dispatcher_only
+    when: { failure_category_in: [import_error, build_error, empty_pass_rejected] }
+    invalidates: [L4, L5, L6, L7, L8, L9, L9B, L10]
+    budget_ref: L4_tester_returns
+    deep_reset: true
+    note: mechanical FAIL — orchestrator does not vote
+
+  - id: L4_budget_dossier
+    from: L4
+    to: dossier
+    kind: terminal
+    initiator: dispatcher_only
+    when: { failure_category: budget_exhausted, budget_ref: L4_tester_returns }
+    invalidates: []
+    budget_ref: L4_tester_returns
+
+  - id: L5_to_L6
+    from: L5
+    to: L6
+    kind: forward
+    initiator: script
+    when: { event: developer_submission }
+    invalidates: []
+    budget_ref: L5_submissions
+
+  - id: L5_to_L1_context
+    from: L5
+    to: L1
+    kind: back
+    initiator: orchestrator
+    when: { result_name: NEEDS_CONTEXT }
+    invalidates: [L1]
+    budget_ref: L5_context_returns
+    spends_submission: false
+
+  - id: L5_to_L2_signature
+    from: L5
+    to: L2
+    kind: back
+    initiator: orchestrator
+    when: { result_name: SIGNATURE_CHANGE_NEEDED }
+    invalidates: [L2, L2C, DEPS, L3, L4, L5, L6, L7, L8, L9, L9B, L10]
+    budget_ref: signature_change_once
+    deep_reset: true
+
+  - id: L5_signature_second_dossier
+    from: L5
+    to: dossier
+    kind: terminal
+    initiator: dispatcher_only
+    when: { failure_category: budget_exhausted, budget_ref: signature_change_once }
+    invalidates: []
+    budget_ref: signature_change_once
+
+  - id: L5_to_DEPS
+    from: L5
+    to: DEPS
+    kind: back
+    initiator: orchestrator
+    when: { result_name: NEEDS_DEPENDENCY }
+    invalidates: []
+    budget_ref: L5_deps_returns
+    spends_submission: false
+
+  - id: L5_test_contradicts_brief_to_L3
+    from: L5
+    to: L3
+    kind: back
+    initiator: orchestrator
+    when: { result_name: TEST_CONTRADICTS_BRIEF, failure_category: test_contradicts_brief }
+    invalidates: [L3, L4, L5, L6, L7, L8, L9, L9B, L10]
+    budget_ref: L5_test_contradict_returns
+    deep_reset: true
+    note: "developer result_name TEST_CONTRADICTS_BRIEF (alongside NEEDS_CONTEXT/NEEDS_DEPENDENCY); instruction do not fit code to contradicting test — stop, name test + brief clause; orchestrator verifies claim vs brief and decides L3 return; developer prose never forwarded to L3 — only orchestrator reformulated finding (X3-2); spends L5_test_contradict_returns; behavioral stubs D-T25/D-T31"
+
+  - id: L5_brief_conflict_dossier
+    from: L5
+    to: dossier
+    kind: terminal
+    initiator: orchestrator
+    when: { result_name: BRIEF_CONFLICT }
+    invalidates: []
+    budget_ref: null
+
+  - id: L6_to_L7
+    from: L6
+    to: L7
+    kind: forward
+    initiator: script
+    when: { result_name: STATIC_PASS }
+    invalidates: []
+    budget_ref: null
+    note: "STATIC_PASS includes configurable leftover debug/temp artifact check (X3-9/D-T33)"
+
+  - id: L6_fail_to_L5
+    from: L6
+    to: L5
+    kind: back
+    initiator: dispatcher_only
+    when: { failure_category_in: [static_lint, static_types, static_signature, static_path, static_secret, static_lockfile, static_complexity_block, static_debug_leftover] }
+    invalidates: [L6, L7, L8, L9, L9B, L10]
+    budget_ref: L5_submissions
+    shallow_keep_worktree: true
+    note: "mechanical FAIL; keep code and edit; includes leftover debug/breakpoint and temp/scratch/backup artifacts in diff (X3-9/D-T33; patterns configurable)"
+
+  - id: L7_to_L8
+    from: L7
+    to: L8
+    kind: forward
+    initiator: script
+    when: { result_name: GREEN_PASS, requires: gated_tree_sha_recorded }
+    invalidates: []
+    budget_ref: null
+
+  - id: L7_fail_to_L5
+    from: L7
+    to: L5
+    kind: back
+    initiator: dispatcher_only
+    when: { failure_category_in: [green_new_tests, green_old_tests, green_mutation] }
+    invalidates: [L6, L7, L8, L9, L9B, L10]
+    budget_ref: L5_submissions
+    shallow_keep_worktree: true
+    note: mechanical FAIL; gated_tree_sha stale; full gate re-run after; developer gets full gate output+stacks
+
+  - id: L7_to_L7T
+    from: L7
+    to: L7T
+    kind: back
+    initiator: dispatcher_only
+    when: { event: mutation_gap }
+    invalidates: [L7]
+    budget_ref: L7_mutation_gap
+    note: mutation is an honesty backstop alongside L8 hardcode review; does not catch hardcoding to test values
+
+  - id: L7T_to_L7
+    from: L7T
+    to: L7
+    kind: forward
+    initiator: script
+    when: { event: mutation_gap_closed }
+    invalidates: []
+    budget_ref: null
+
+  - id: L8_to_L9
+    from: L8
+    to: L9
+    kind: forward
+    initiator: script
+    when: { result_name: REVIEW_PASS }
+    invalidates: []
+    budget_ref: null
+
+  - id: L8_to_L9B_light
+    from: L8
+    to: L9B
+    kind: forward
+    initiator: script
+    when: { event: review_pass_light_skip_qa }
+    invalidates: []
+    budget_ref: null
+
+  - id: L8_blocking_to_L5
+    from: L8
+    to: L5
+    kind: back
+    initiator: orchestrator
+    when: { failure_category: review_blocking }
+    invalidates: [L6, L7, L8, L9, L9B, L10]
+    budget_ref: L8_review_rounds
+    shallow_keep_worktree: true
+    note: 'L8 English checklist item Code hardcoded to specific test values instead of implementing the behavior; verified only via backlog known-bad eval (no instruction-file line checks); mutation alone does not catch that'
+
+  - id: L9_to_L9B
+    from: L9
+    to: L9B
+    kind: forward
+    initiator: script
+    when: { result_name_in: [QA_PASS, QA_SKIP] }
+    invalidates: []
+    budget_ref: null
+
+  - id: L9_bug_path
+    from: L9
+    to: L3
+    kind: back
+    initiator: orchestrator
+    when: { failure_category: qa_bug }
+    invalidates: [L4, L5, L6, L7, L8, L9, L9B, L10]
+    budget_ref: L9_qa_bug_returns
+    deep_reset: true
+
+  - id: L9B_to_WAITING_IRREVERSIBLE
+    from: L9B
+    to: WAITING_IRREVERSIBLE
+    kind: forward
+    initiator: script
+    when: { event: irreversible_change }
+    invalidates: []
+    budget_ref: null
+
+  - id: WAITING_IRREVERSIBLE_to_L9B
+    from: WAITING_IRREVERSIBLE
+    to: L9B
+    kind: forward
+    initiator: owner
+    when: { event: irreversible_acked }
+    invalidates: []
+    budget_ref: null
+
+  - id: L9B_to_L10
+    from: L9B
+    to: L10
+    kind: forward
+    initiator: script
+    when: { result_name_in: [ROLLBACK_PASS, ROLLBACK_SKIP_PLAIN] }
+    invalidates: []
+    budget_ref: null
+
+  - id: L9B_fail_to_L5
+    from: L9B
+    to: L5
+    kind: back
+    initiator: dispatcher_only
+    when: { failure_category: rollback_fail }
+    invalidates: [L6, L7, L8, L9, L9B, L10]
+    budget_ref: L5_submissions
+    shallow_keep_worktree: true
+
+  - id: L10_to_WAITING_MERGE
+    from: L10
+    to: WAITING_MERGE
+    kind: forward
+    initiator: script
+    when: { event: pr_opened, requires: gated_tree_sha_fresh }
+    invalidates: []
+    budget_ref: null
+
+  - id: L10_refuse_stale_tree
+    from: L10
+    to: L10
+    kind: reject
+    initiator: dispatcher_only
+    when: { event: envelope_or_pr_with_stale_gated_tree_sha }
+    invalidates: []
+    budget_ref: null
+
+  - id: WAITING_MERGE_to_L11
+    from: WAITING_MERGE
+    to: L11
+    kind: forward
+    initiator: owner
+    when: { event: merged }
+    invalidates: []
+    budget_ref: null
+
+  - id: any_timeout
+    from: "*"
+    to: "*"
+    kind: side_effect
+    initiator: dispatcher_only
+    when: { failure_category: timeout }
+    invalidates: []
+    budget_ref: null
+    note: stop container; status=timeout
+
+  - id: any_circuit_breaker
+    from: "*"
+    to: dossier
+    kind: terminal
+    initiator: dispatcher_only
+    when: { failure_category: circuit_breaker }
+    invalidates: []
+    budget_ref: null
+    note: trips only on identical diff-hash across consecutive attempts; same gate failure with different diffs uses edge budget
+
+  - id: dossier_to_L11_cleanup
+    from: dossier
+    to: L11
+    kind: forward
+    initiator: dispatcher_only
+    when: { event: dossier_recorded }
+    invalidates: []
+    budget_ref: null
