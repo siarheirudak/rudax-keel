@@ -4,7 +4,7 @@ Short definitions for this repository. The first time a longer page needs a word
 
 ## People and accounts
 
-**Owner.** The human who approves decisions, merges pull requests, and creates releases. In this repository, Sergei, GitHub login `siarheirudak`.
+**Owner.** The repository owner: the human who approves decisions, merges pull requests, and creates releases.
 
 **Bot.** The GitHub account `isiarheiridak-agent`. It opens pull requests. It has write access, not admin.
 

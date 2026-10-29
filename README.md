@@ -6,7 +6,7 @@ _The keel is laid first; everything else is built on it._
 
 An **agent** is a program that uses a language model to propose a design, tests, or code. A **host script** is an ordinary program on the machine that runs the pipeline. A host script does not ask a model what to believe. It checks files, tests, and git history, and it accepts or rejects the result.
 
-The **owner** is the human who decides. In this repository that person is Sergei, GitHub login `siarheirudak`. The **bot** is the GitHub account `isiarheiridak-agent`. The bot has write access. It opens pull requests. It is not an admin, so it cannot change the rules that constrain it.
+The **owner** is the repository owner, the human who decides. The **bot** is the GitHub account `isiarheiridak-agent`. The bot has write access. It opens pull requests. It is not an admin, so it cannot change the rules that constrain it.
 
 ## The idea
 

@@ -1,6 +1,6 @@
 # Human decisions
 
-The pipeline pauses for a person in a fixed set of places. Everywhere else, a script or an agent continues, or a dossier stops the cycle. The person is the **owner**. In this repository that is Sergei (`siarheirudak`).
+The pipeline pauses for a person in a fixed set of places. Everywhere else, a script or an agent continues, or a dossier stops the cycle. The person is the **owner**: the repository owner.
 
 The bot `isiarheiridak-agent` opens pull requests. It does not approve them, it does not merge them, and it does not create release tags. Tag protection is enforced by GitHub today. [Protect tags](why.md#protect-tags). On a personal repository GitHub cannot restrict the merge button to one account. The project rule is still that the owner merges. An approval goes stale if new commits are pushed. [Who merges](why.md#who-merges).
 
