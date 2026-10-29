@@ -583,14 +583,14 @@ Expected: `keel-process-files-separate` fails. The log has a how-to-fix line. `w
 ```bash
 git fetch origin
 git switch -c attack-process origin/main
-printf '\n# process only\n' >> setup/README.md
-git add setup/README.md
+printf '\n# process only\n' >> setup/apply-github-rules.sh
+git add setup/apply-github-rules.sh
 git commit -m "attack: process only"
 git push -u origin attack-process
 gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-process --title "attack: process only" --body "sandbox test"
 ```
 
-Expected: `keel-process-files-separate` passes. This pull request can still weaken the checks. Owner review of a process-only pull request is the control, by design. Do not merge it unless that review is what you mean to test.
+Expected: `keel-process-files-separate` passes. `setup/README.md` and `setup/TESTING.md` are ordinary docs, so this step edits a setup script. A non-Markdown file under `setup/` is still a process file, including scripts, ruleset JSON, and `setup/tests/`. An agent-rule name such as `AGENTS.md` is still a process file under `setup/`. This pull request can still weaken the checks. Owner review of a process-only pull request is the control, by design. Do not merge it unless that review is what you mean to test.
 
 **(f) Docs only**
 
