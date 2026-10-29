@@ -71,7 +71,7 @@ Owner approved the critique #3 triage. Design sources: `docs/harness/orchestrato
 
 | Id | Decision | Status |
 |---|---|---|
-| PLAN1 | Implementation plan synced to full-picture / this log / transitions YAML: Step 7 rewritten (warm `pi --mode rpc`, `keel_request`, B1–B7, X3-1/X3-2/X3-3/X3-9, D-T suite + `run-tests.sh`/keel-gate wiring, timeouts, recovery, pre-impl Pi smoke); Steps 1/12/13/15–19 updated for visible tests + RO developer mounts + L7T/L8 hardcode checklist. | **active** |
+| PLAN1 | Implementation plan synced to [orchestrator-dispatcher.md](orchestrator-dispatcher.md), this log, and [dispatcher-transitions-v1.yaml](dispatcher-transitions-v1.yaml): Step 7 rewritten (warm `pi --mode rpc`, `keel_request`, B1–B7, X3-1/X3-2/X3-3/X3-9, D-T suite + `run-tests.sh`/keel-gate wiring, timeouts, recovery, pre-impl Pi smoke); Steps 1/12/13/15–19 updated for visible tests + RO developer mounts + L7T/L8 hardcode checklist. | **active** |
 | LABEL1 | Label collision fix: critique #3 unprefixed C-series → **X3-1…X3-9**; older Critic C-/M-/m-series → **CR-C*/CR-M*/CR-m***. See **Label legend**. | **active** |
 
 ---

@@ -34,9 +34,9 @@ Ordinary tests are visible to every role with a work tree. Tester-written tests 
 
 Other roles see the repository minus secrets, minus any extra paths in `.keel/deny.local`. The auditor sees the diff under review.
 
-### Orchestrator read and write
+### Orchestrator read and write (planned, Step 7)
 
-The orchestrator is the main Pi Agent role in its own container.
+The orchestrator and the host dispatcher are planned for Step 7. They are not built yet. In that design, the orchestrator is the main Pi Agent role in its own container.
 
 - **Read:** everything except secrets and paths in `.keel/deny.local`. The D1 confidence-notes log is readable.
 - **Write zone only:** the brief; the split plan; dispatcher **request files**; the D1 confidence-notes log; owner decisions into ADR / `docs/decisions.md` and discoveries (via allowed paths); messages to the owner.

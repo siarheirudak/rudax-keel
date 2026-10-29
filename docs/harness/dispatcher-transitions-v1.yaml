@@ -6,7 +6,7 @@
 # 2026-10-29 owner critique #3: X3-1 L3 product RO mounts; X3-2 no developer prose to L3; X3-9 L6 static_debug_leftover; X3-8 developer keeps previous-attempt RO.
 schema_version: 1
 format: keel_dispatcher_transitions
-doc_ref: foundation/harness/full-picture-orchestrator-dispatcher-2026-10-29.md
+doc_ref: docs/harness/orchestrator-dispatcher.md
 
 # Closed enums for control-plane failure reports (no free-text categories).
 # Developer receives full gate output + stacks separately; this enum is for routing/audit.
@@ -48,7 +48,7 @@ initiators:
   - owner
   - script
 
-# Named budget refs — values are starting values to measure (documented in full-picture / pipeline).
+# Named budget refs — values are starting values to measure (documented in docs/harness/orchestrator-dispatcher.md and docs/pipeline.md).
 budget_refs:
   - L1_split_returns
   - L2_critic_returns

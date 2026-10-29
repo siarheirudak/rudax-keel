@@ -16,12 +16,14 @@ Short definitions for this repository. The first time a longer page needs a word
 
 **Host script.** An ordinary program on the machine that runs the pipeline. It checks files and commands. It does not accept an agent’s summary as proof.
 
-**Dispatcher.** A host script (control plane) that owns task state, a fixed transition table for links L0 through L11, gate runs, allowlisted request files (`keel_request`), logging, and launches of role containers via `setup/keel.sh role`. Agents do not message each other; they drop request files for the dispatcher. Design: [Harness design](harness/README.md).
+**Orchestrator (planned, Step 7).** The main Pi Agent role in the design. Not built yet. It writes the brief, split proposals, messages to the owner, request files, and the D1 confidence-notes log. It does not write product code or tests. Design: [Harness design](harness/README.md).
+
+**Dispatcher (planned, Step 7).** A host script (control plane), not built yet, that owns task state, a fixed transition table for links L0 through L11, gate runs, allowlisted request files (`keel_request`), logging, and launches of role containers via `setup/keel.sh role`. Agents do not message each other; they drop request files for the dispatcher. Design: [Harness design](harness/README.md).
 
 
 **Intermediary.** An external chat agent that bridges the owner and the orchestrator in both directions. Its primary job is high-quality two-way transfer of meaning. It is not part of the harness trust boundary. Recommended instructions: [Intermediary agent instructions](intermediary-agent-instructions.md).
 
-**Request file.** An allowlisted file the orchestrator (or another role) drops for the dispatcher. The dispatcher rejects kinds that are not on the allowlist.
+**Request file (planned, Step 7).** An allowlisted file the orchestrator (or another role) drops for the dispatcher. The dispatcher rejects kinds that are not on the allowlist.
 
 **D1 confidence-notes log.** The detailed notes behind the brief’s D1 confidence rating. Written and readable by the orchestrator. Denied to the auditor until the auditor’s verdict. Not an owner-decision store. Exact path still open.
 

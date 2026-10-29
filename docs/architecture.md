@@ -12,7 +12,7 @@ The **reasoning plane** proposes. The **control plane** disposes.
 
 Agents sit in the reasoning plane. Each agent has one job: grill a brief, sketch stubs, write tests, write code, review a diff, or exercise a user interface. They run as Pi Agent inside a container. Pi Agent is the runtime the design names for those roles. It is not vendored here.
 
-Host scripts sit in the control plane. They mount files, install dependencies, run tests, measure the diff, open the pull request, and write the log. The planned **dispatcher** is the host script that owns task state and the L0–L11 transition table. An agent cannot skip a script by saying the step passed. When a script and an agent disagree, the script wins.
+Host scripts sit in the control plane. They mount files, install dependencies, run tests, measure the diff, open the pull request, and write the log. The **dispatcher**, planned for Step 7 and not built yet, is the host script that owns task state and the L0–L11 transition table. An agent cannot skip a script by saying the step passed. When a script and an agent disagree, the script wins.
 
 The same split is already visible in the harness that exists today. `setup/keel.sh role` runs a command in a container. `setup/keel.sh gate` runs on the host, with no token, and accepts or rejects the exported bundle. The role does not get to declare the gate passed. See [Getting started](harness-getting-started.md).
 
@@ -27,16 +27,16 @@ If the brief is missing its required sections, the script does not open the enve
 
 ## How chat reaches the chain
 
-Usage is natural-language chat. Two front ends share one orchestrator input:
+Usage is natural-language chat. Two front ends share one orchestrator input. That input is planned for Step 7 and is not built yet.
 
 1. An **external chat intermediary** (typical): a chat agent that bridges the owner and the orchestrator in both directions. Primary job: high-quality transfer of meaning. Recommended paste-block: [Intermediary agent instructions](intermediary-agent-instructions.md). Newcomer page: [Working through a chat agent](working-through-chat.md).
 2. A **direct Pi Agent terminal** session wired to the same input.
 
 There is no extra confirmation layer on top of D2. The owner merges on GitHub; the intermediary cannot merge or change GitHub rules.
 
-### Orchestrator and host dispatcher
+### Orchestrator and host dispatcher (planned, Step 7)
 
-The **orchestrator** is the main Pi Agent role. It writes the brief, split proposals, messages to the owner, **request files**, and the D1 confidence-notes log. It does not write product code or tests. It may read everything except secrets and paths in `.keel/deny.local` (including the D1 log). The **dispatcher** is a host script. It owns task state, a fixed transition table for L0 through L11, gate runs, allowlist checks on request files, and launches of roles via `setup/keel.sh role`. Agents do not talk to each other; they go through the dispatcher. Design detail: [Harness design](harness/README.md).
+Neither is built yet. In the Step 7 design, the **orchestrator** is the main Pi Agent role. It writes the brief, split proposals, messages to the owner, **request files**, and the D1 confidence-notes log. It does not write product code or tests. It may read everything except secrets and paths in `.keel/deny.local` (including the D1 log). The **dispatcher** is a host script. It owns task state, a fixed transition table for L0 through L11, gate runs, allowlist checks on request files, and launches of roles via `setup/keel.sh role`. Agents do not talk to each other; they go through the dispatcher. Design detail: [Harness design](harness/README.md).
 
 ## The chain
 
@@ -47,7 +47,7 @@ The owner’s pauses do not time out. An unanswered question waits until the own
 Colour in the diagram:
 
 - Blue — an agent (Pi Agent, in a rootless container, in the design)
-- Green — a host script
+- Green — a host script. **DISP** is the planned host dispatcher (Step 7): task state, transitions, and the request-file allowlist. It is not built yet
 - Orange — a decision the owner makes
 - Red — a dossier, the cycle stops
 - Purple — the skills side path, which is not one of the numbered links
@@ -66,7 +66,7 @@ flowchart TD
 
  CHAT["Owner via chat intermediary<br/>or direct Pi terminal"]:::owner
  L0["L0 Grilling<br/>Orchestrator writes the brief<br/>shows size and estimated cost"]:::agent
- DISP["Host dispatcher<br/>task state, transitions,<br/>request-file allowlist"]:::script
+ DISP["Host dispatcher (planned, Step 7)<br/>task state, transitions,<br/>request-file allowlist"]:::script
  D2{"Owner answers D2<br/>options and a default"}:::owner
  WAIT["Waiting for an answer<br/>no timeout"]:::note
  BRIEF["Brief version 2<br/>shown as a diff"]:::owner
@@ -222,7 +222,7 @@ The paragraphs below are the short form. Inputs, outputs, blocks, and retry limi
 
 **Skills** are not a numbered link. A skill is a file of instructions for one role, kept in the project under `.agents/skills/`. The side path runs when a project starts, when the stack changes, when the same pitfall shows up twice, or when the owner asks. Nothing lands in the repo until the owner approves it. A suspicious skill (install commands, network access, secrets, or a way around a gate) needs its own explicit yes, with the offending lines highlighted.
 
-**L0 Grilling.** The orchestrator turns the owner’s message into a brief: what the task is, a D0 paragraph, a D1 confidence level (not an owner decision), any D2 questions, and a line that says what is out of scope. It also shows size and estimated cost. The owner may raise how deep the rest of the pipeline goes. The orchestrator drops request files; the dispatcher advances the task.
+**L0 Grilling.** Planned, not built. The orchestrator (Step 7) turns the owner’s message into a brief: what the task is, a D0 paragraph, a D1 confidence level (not an owner decision), any D2 questions, and a line that says what is out of scope. It also shows size and estimated cost. The owner may raise how deep the rest of the pipeline goes. The orchestrator drops request files; the dispatcher (Step 7) advances the task. The grilling behaviour itself is Step 8.
 
 **L1 Context packaging.** A script builds the packet of files and notes the next agents will see. Matching and critical notes are included in full. Everything else is an index line. Content fencing (M5) — wrapping packaged text as data so repository sentences are not treated as instructions — is specified and **deferred to the backlog**. Until fences land, packaging still selects what is mounted; agents must treat packaged text as data by role instruction.
 
@@ -232,7 +232,7 @@ The paragraphs below are the short form. Inputs, outputs, blocks, and retry limi
 
 **L3 Tests.** The tester writes unit and integration tests on the pre-implementation tree. The product tree is mounted **read-only**; the tester writes only into allowed test directories (host `git diff --name-only` as defense in depth). Those tests are visible to the developer later, mounted read-only.
 
-**L4 Red gate.** A script runs the tests against the stubs (or against the current code, in light depth). A honest red is a failed assertion, or a not-implemented result. An import error or a build error is sent back to the tester. It does not count as a passed red gate.
+**L4 Red gate.** A script runs the tests against the stubs (or against the current code, in light depth). An honest red is a failed assertion, or a not-implemented result. An import error or a build error is sent back to the tester. It does not count as a passed red gate.
 
 **L5 Code.** The developer implements the stubs so the tests pass. Tests are mounted **read-only**; on gate FAIL the developer gets the full output and stacks. Special exits include needing more context, a signature change, a missing dependency, a brief conflict, or `TEST_CONTRADICTS_BRIEF`. A missing dependency does not spend one of the three submissions.
 

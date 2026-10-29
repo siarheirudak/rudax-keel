@@ -3,7 +3,7 @@
 ## Changes in this revision (2026-10-29)
 
 - Naming: harness plan uses **the owner** / **the user** and **the bot**; no personal login or other-AI product names (Pi Agent only; `CLAUDE.md` only as Pi fallback filename).
-- **Orchestrator + host dispatcher:** design section and **Step 7** match `full-picture-orchestrator-dispatcher-2026-10-29.md`, `DECISIONS-LOG-rudax-keel-harness.md`, and `dispatcher-transitions-v1.yaml`. Warm per-task Pi orchestrator (`pi --mode rpc` + session in the task folder); single `keel_request` tool (no bash/write/edit); host dispatcher owns the FSM, gates, mounts, journals. Owner decisions **B1–B7** and **X3-1/X3-2/X3-3/X3-9** are in scope for Step 7. Agents do not talk to each other directly.
+- **Orchestrator + host dispatcher:** design section and **Step 7** match [Orchestrator and dispatcher](orchestrator-dispatcher.md), [Decisions log](decisions-log.md), and [dispatcher transitions](dispatcher-transitions-v1.yaml). Warm per-task Pi orchestrator (`pi --mode rpc` + session in the task folder); single `keel_request` tool (no bash/write/edit); host dispatcher owns the FSM, gates, mounts, journals. Owner decisions **B1–B7** and **X3-1/X3-2/X3-3/X3-9** are in scope for Step 7. Agents do not talk to each other directly.
 - **Test visibility:** ordinary product tests are **visible** to roles that mount the work tree; the developer mounts tests **read-only**. Honesty backstop = **L7T mutation** + **L8** review with explicit English checklist item `Code hardcoded to specific test values instead of implementing the behavior`. L3 tester: product tree RO, writes only in test dirs (X3-1); host `git diff --name-only` defense in depth.
 - **Orchestrator visibility:** may **read** everything except **secrets** and paths in **`.keel/deny.local`**. May read/write the D1 confidence-notes log (auditor-only hide until verdict). Write zone: brief, split plan, dispatcher requests via `keel_request`, D1 log, ADR/`docs/decisions.md`, discoveries.
 - **Chat-first usage:** intermediary and/or direct Pi share one dispatcher inbox → warm orchestrator rpc stdin (dispatcher is the only writer). Intermediary: raw D2 text + interpretation (B7); mandatory per-relay checklist; never drop owner-critical items.
@@ -22,13 +22,13 @@ Depends on existing green base: agent isolation, host gate (prototype); move int
 
 ## Orchestrator and host dispatcher (design)
 
-This is the control-plane wiring for chat-driven work. It is built as **Step 7**; grilling behaviour is **Step 8**. Authoritative detail: `full-picture-orchestrator-dispatcher-2026-10-29.md`, `DECISIONS-LOG-rudax-keel-harness.md`, `dispatcher-transitions-v1.yaml`.
+This is the control-plane wiring for chat-driven work. It is built as **Step 7**; grilling behaviour is **Step 8**. Authoritative detail: [Orchestrator and dispatcher](orchestrator-dispatcher.md), [Decisions log](decisions-log.md), and [dispatcher transitions](dispatcher-transitions-v1.yaml).
 
 ### Two front ends, one input
 
 Usage is entirely through chat in natural language.
 
-1. **Typical:** the user talks to an **external chat agent** (an intermediary). That agent relays into the **dispatcher inbox**. Recommended intermediary instructions live in `drafts/intermediary-agent-instructions.md` and `drafts/docs-working-through-chat.md`.
+1. **Typical:** the user talks to an **external chat agent** (an intermediary). That agent relays into the **dispatcher inbox**. Recommended intermediary instructions live in [Intermediary agent instructions](../intermediary-agent-instructions.md) and [Working through a chat agent](../working-through-chat.md).
 2. **Alternative:** a **direct Pi** path that still enters through the same dispatcher inbox (the dispatcher alone writes orchestrator rpc stdin).
 
 Both front ends hit the same warm orchestrator. There is no second confirmation layer on top of D2. No `/approve` command (B7).
@@ -57,7 +57,7 @@ Both front ends hit the same warm orchestrator. There is no second confirmation 
 
 A host script (not an agent) that:
 
-- Owns **task state** and the machine FSM from `dispatcher-transitions-v1.yaml` (repo path after Step 7: `setup/dispatcher/transitions.v1.yaml`). Prose is not a second truth.
+- Owns **task state** and the machine FSM from [dispatcher-transitions-v1.yaml](dispatcher-transitions-v1.yaml) (repo path after Step 7: `setup/dispatcher/transitions.v1.yaml`). Prose is not a second truth.
 - Runs **gates**, journals, status line (no LLM), and role launches via `setup/keel.sh role` (**ephemeral** `--rm` role containers).
 - Accepts at most **one** `keel_request` per orchestrator turn, only after rpc **turn-end** (B4); second request → refuse + audit.
 - Idempotency WAL: write **`IN_PROGRESS`** before the side effect, then **`COMMITTED`** after; on restart reconcile `IN_PROGRESS` (never silent skip, never blind re-run) (B5 / X3-3).
@@ -77,7 +77,7 @@ Owner decisions (D2 answers, skill yes/no, split yes/no, irreversible ack, merge
 ## Build order
 
 ### Step 1 — Visibility deny-list + mount policy
-- **Does:** Enforce deny-list by not mounting: **secrets** (all roles); **D1 confidence-notes log** (**auditor** until verdict only — orchestrator writes and may read it); new implementation (tester → pre-implementation commit); developer skills (auditor until verdict). Ordinary product **tests are visible** to roles that mount the work tree; **developer** mounts tests **read-only**. Harness-fixed paths + **`.keel/deny.local`** as a **flat list** of extra paths denied to **all** agents (including the orchestrator; e.g. user/customer data), enforced at **container mount** level, documented; project file may only **add** denies. Harness **base secret-pattern list**; projects may only **extend** it (cannot narrow). Tester write-scope and L3 product-RO / test-RW mounts are finalized in **Step 7** (X3-1) on top of this matrix. **CR-M5 content fencing is not in this step** (backlog). See `step1-visibility-2026-10-29.md`.
+- **Does:** Enforce deny-list by not mounting: **secrets** (all roles); **D1 confidence-notes log** (**auditor** until verdict only — orchestrator writes and may read it); new implementation (tester → pre-implementation commit); developer skills (auditor until verdict). Ordinary product **tests are visible** to roles that mount the work tree; **developer** mounts tests **read-only**. Harness-fixed paths + **`.keel/deny.local`** as a **flat list** of extra paths denied to **all** agents (including the orchestrator; e.g. user/customer data), enforced at **container mount** level, documented; project file may only **add** denies. Harness **base secret-pattern list**; projects may only **extend** it (cannot narrow). Tester write-scope and L3 product-RO / test-RW mounts are finalized in **Step 7** (X3-1) on top of this matrix. **CR-M5 content fencing is not in this step** (backlog). See [Decisions log](decisions-log.md) (V1–V8) and [Roles and visibility](../roles.md).
 - **Depends on:** isolation (green), gate (green)
 - **Effort:** M
 - **Done when:** Developer can read tests but cannot write them (RO mount); orchestrator can read the D1 log and cannot see secrets/`deny.local` paths; auditor cannot see developer skills or D1 log before verdict; `deny.local` is flat and extend-only; secret-pattern base cannot be narrowed; docs state the matrix (no CR-M5 fence fixtures required here).
@@ -121,7 +121,7 @@ Owner decisions (D2 answers, skill yes/no, split yes/no, irreversible ack, merge
   - **Owner decisions in this step:** **B1** circuit breaker = identical diff-hash only; **B2** DEPS install path = ephemeral networked container without host secrets/control-plane mounts (wire; detailed install policy lands with Step 12); **B3** every `kind:back` has non-null `budget_ref`; **B4** ≤1 `keel_request` per turn after rpc turn-end; mid-turn user messages queued; **B5/X3-3** two-phase WAL (`IN_PROGRESS` → execute → `COMMITTED`) with restart reconcile; **B6** deep previous-attempt archive outside git (developer keeps RO read); **B7** intermediary raw D2 + interpretation, re-ask on mismatch, no `/approve`; **X3-1** L3 product RO + RW test dirs + `git diff --name-only` defense in depth; **X3-2** orchestrator verifies `TEST_CONTRADICTS_BRIEF` vs brief and never forwards developer prose to L3; **X3-9** L6 mechanical leftover debug/temp/scratch/backup check (patterns configurable; no invented thresholds).
   - **Timeouts:** per-stage DEFAULT wall timeout + short **container-start** timeout; values are **starting values, measure later**. Owner D2 wait is not killed by these timeouts.
   - **Recovery & monitoring:** rehydrate store → last clean SHA → orphan cleanup by `task_id`; resume orchestrator from session; do not resurrect mid-flight roles; WAL reconcile on `IN_PROGRESS`; journals for transitions / reject / timeout / circuit-breaker / `second_request_same_turn`; status-line fields without secrets.
-  - **Tests:** implement behavioral stub-model suite **D-T1…D-T28** and **D-T30…D-T33** (D-T29 unused — no instruction-file line-checks). Happy / attacks / mutate style as in full-picture §16. **Wire D-T tests and mutants into `run-tests.sh` / keel-gate in this same process-files PR** (done-when for Step 7).
+  - **Tests:** implement behavioral stub-model suite **D-T1…D-T28** and **D-T30…D-T33** (D-T29 unused — no instruction-file line-checks). Happy / attacks / mutate style as in [Orchestrator and dispatcher](orchestrator-dispatcher.md) §16. **Wire D-T tests and mutants into `run-tests.sh` / keel-gate in this same process-files PR** (done-when for Step 7).
   - Front ends: chat intermediary and direct Pi both enter the **dispatcher inbox**; only the dispatcher writes rpc stdin.
 - **Depends on:** Step 1, isolation green; Step 2 when model API egress is required for the orchestrator container
 - **Effort:** L
@@ -293,7 +293,7 @@ Track D needs A+B+C(dispatcher); C needs B for packaging/grilling context and A 
 13. **macOS:** still untested for isolation — Step 3/docs wording beyond "untested"?
 14. **Red Team trigger UX:** envelope recommend only vs owner checklist item when auth/payments/user data touched.
 15. ~~Pi programmatic message input~~ — **closed for planning:** Step 7 uses **`pi --mode rpc`** with a required pre-impl rpc + tool-lock smoke (no separate “to verify” programmatic-input track).
-16. **Dispatcher request-file / `keel_request` schema:** on-disk layout under the task service dir for requests and WAL; kinds already enum'd in full-picture — confirm final paths in the process-files PR.
+16. **Dispatcher request-file / `keel_request` schema:** on-disk layout under the task service dir for requests and WAL; kinds already enum'd in [Orchestrator and dispatcher](orchestrator-dispatcher.md) — confirm final paths in the process-files PR.
 17. **D1 confidence-notes log path:** exact on-disk path (orchestrator writes/reads; denied to the auditor until verdict only — not an owner-decision log).
 18. **X3-4 cancel semantics:** how cancel interrupts an in-flight role/gate without losing audit — design after queue+turn-end stubs are stable.
 19. **L6 leftover pattern list location:** harness base path + project extend-only wiring in Step 16 (no numeric thresholds).
@@ -302,9 +302,9 @@ Track D needs A+B+C(dispatcher); C needs B for packaging/grilling context and A 
 
 ## Changelog
 
-- 2026-10-29 (label sync): Renamed critique #3 tags to **X3-1…X3-9** and older Critic tags to **CR-C*/CR-M*/CR-m*** to remove collisions with bare C/M numbers (see DECISIONS-LOG label legend / LABEL1).
-- 2026-10-29 (plan sync): Rewrote design section + **Step 7** to match full-picture / DECISIONS-LOG / YAML (warm rpc orchestrator, `keel_request`, B1–B7, X3-1/X3-2/X3-3/X3-9, D-T suite + `run-tests.sh`/keel-gate wiring, timeouts, recovery, pre-impl Pi smoke). Updated Steps 1, 12, 13, 15, 16, 17, 18, 19 and open questions for visible tests + RO developer mounts + L7T/L8.
-- 2026-10-29 (afternoon, corrected): Orchestrator reads all except secrets + `.keel/deny.local`; D1 log readable (auditor-only hide until verdict). Intermediary checklist. Repo-docs drafts under `drafts/repo-docs/`. **Superseded same day** by the plan-sync entry above for test-visibility and dispatcher checks.
-- 2026-10-29: Owner decisions applied: orchestrator + host dispatcher (design + Step 7); chat intermediary / direct Pi front ends; Step 1 visibility answers (flat `deny.local`, no third decision log, secret patterns extend-only); CR-M5 fencing and external-input filter to backlog; D1 = confidence, D2 = owner; naming scrub (owner/user/bot; Pi only). Renumbered former Steps 7–22 → 8–23. Draft docs: intermediary instructions + working-through-chat.
+- 2026-10-29 (label sync): Renamed critique #3 tags to **X3-1…X3-9** and older Critic tags to **CR-C*/CR-M*/CR-m*** to remove collisions with bare C/M numbers (see [Decisions log](decisions-log.md) label legend / LABEL1).
+- 2026-10-29 (plan sync): Rewrote design section + **Step 7** to match [Orchestrator and dispatcher](orchestrator-dispatcher.md), [Decisions log](decisions-log.md), and [dispatcher transitions](dispatcher-transitions-v1.yaml) (warm rpc orchestrator, `keel_request`, B1–B7, X3-1/X3-2/X3-3/X3-9, D-T suite + `run-tests.sh`/keel-gate wiring, timeouts, recovery, pre-impl Pi smoke). Updated Steps 1, 12, 13, 15, 16, 17, 18, 19 and open questions for visible tests + RO developer mounts + L7T/L8.
+- 2026-10-29 (afternoon, corrected): Orchestrator reads all except secrets + `.keel/deny.local`; D1 log readable (auditor-only hide until verdict). Intermediary checklist. **Superseded same day** by the plan-sync entry above for test-visibility and dispatcher checks.
+- 2026-10-29: Owner decisions applied: orchestrator + host dispatcher (design + Step 7); chat intermediary / direct Pi front ends; Step 1 visibility answers (flat `deny.local`, no third decision log, secret patterns extend-only); CR-M5 fencing and external-input filter to backlog; D1 = confidence, D2 = owner; naming scrub (owner/user/bot; Pi only). Renumbered former Steps 7–22 → 8–23. Public pages: [Intermediary agent instructions](../intermediary-agent-instructions.md) and [Working through a chat agent](../working-through-chat.md).
 - 2026-10-28: First implementation plan from pipeline-chain v1 decisions. Nineteen owner-yes steps; deferred list; open questions. No unverified research numbers recorded as facts.
 - 2026-10-28 (evening): Removed Step 19 (move into repo — done via PR #6/#7). Added Steps for rootless hardening+verify, standards generator, rollback rehearsal (with L9), task journal, self-describing logging, diff chunking (inside L8). Applied CR-C1–CR-C4, CR-M1–CR-M15, CR-m1–CR-m8, L8 final, thresholds, discoveries filter, CR-M12 suspicious skills. Renumbered to Steps 1–22.
