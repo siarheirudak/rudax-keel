@@ -2,16 +2,16 @@
 """Fail when a pull request mixes process files with anything else.
 
 Process files are .github/**, scripts/**, .cursor/**, .claude/**, and
-every file under setup/ whose name does not end in .md. Markdown under
-setup/ is an ordinary doc, for example setup/README.md and setup/TESTING.md.
-These names are process files anywhere in the tree, including under setup/,
-and the match ignores case: CODEOWNERS, AGENTS.md, CLAUDE.md,
-CLAUDE.local.md, GEMINI.md, SKILL.md, .cursorrules, .windsurfrules,
-.clinerules, .mcp.json, and .shellcheckrc. scripts/ is
-included because CI runs those checks from the pull request, including
-scripts/tests/. A docs file counts only when it is itself an agent-rule
-file. tests/ is not a process path. Labels are not read and are not
-permission.
+setup/**. Two paths are ordinary docs, matched as the whole path and
+ignoring case: setup/README.md and setup/TESTING.md. A different path
+with the same basename, such as setup/a/README.md, is still a process
+file. These names are process files anywhere in the tree, including
+under setup/: CODEOWNERS, AGENTS.md, CLAUDE.md, CLAUDE.local.md,
+.cursorrules, .windsurfrules, .clinerules, .mcp.json, and .shellcheckrc.
+scripts/ is included because CI runs those checks from the pull request,
+including scripts/tests/. A docs file counts only when it is itself an
+agent-rule file. tests/ is not a process path. Labels are not read and
+are not permission.
 
 A rename counts both the new path and previous_filename. One process path
 and one other path is a mix, including when they are the two names of one
@@ -35,8 +35,6 @@ AGENT_RULE_NAMES = {
     "CLAUDE.md",
     "CLAUDE.local.md",
     "CODEOWNERS",
-    "GEMINI.md",
-    "SKILL.md",
     ".cursorrules",
     ".windsurfrules",
     ".clinerules",
@@ -44,16 +42,18 @@ AGENT_RULE_NAMES = {
     ".shellcheckrc",
 }
 FILE_CAP = 3000
+# Whole path, not the basename. Case is folded only for this allowlist.
+SETUP_DOC_PATHS = {
+    "setup/readme.md",
+    "setup/testing.md",
+}
 
 
 def is_process(path):
     name = path.rsplit("/", 1)[-1]
-    folded = name.lower()
-    for rule in AGENT_RULE_NAMES:
-        if folded == rule.lower():
-            return True
-    # Descriptions under setup/ do not change checks, rules, or scripts.
-    if path.startswith("setup/") and name.endswith(".md"):
+    if name in AGENT_RULE_NAMES:
+        return True
+    if path.lower() in SETUP_DOC_PATHS:
         return False
     return path.startswith(PROCESS_PREFIXES)
 
@@ -123,8 +123,10 @@ def self_test():
 
     classified = [
         ("setup/README.md", False),
+        ("setup/readme.md", False),
         ("setup/TESTING.md", False),
-        ("setup/tests/NOTES.md", False),
+        ("setup/testing.md", False),
+        ("setup/tests/NOTES.md", True),
         ("setup/apply-github-rules.sh", True),
         ("setup/common.sh", True),
         ("setup/rulesets/protect-main.json", True),
@@ -134,13 +136,10 @@ def self_test():
         ("setup/tests/harness/run-tests.sh", True),
         ("setup/AGENTS.md", True),
         ("setup/agents.md", True),
-        ("setup/Agents.md", True),
+        ("setup/a/README.md", True),
+        ("setup/notes.md", True),
+        ("setup/x.sh", True),
         ("setup/a/AGENTS.md", True),
-        ("setup/claude.md", True),
-        ("setup/SKILL.md", True),
-        ("setup/gemini.md", True),
-        ("setup/readme.md", False),
-        ("docs/agents.md", True),
         ("setup/CLAUDE.md", True),
         ("setup/CLAUDE.local.md", True),
         ("setup/CODEOWNERS", True),

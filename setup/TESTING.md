@@ -590,7 +590,7 @@ git push -u origin attack-process
 gh pr create --repo siarheirudak/rudax-keel-sandbix --base main --head attack-process --title "attack: process only" --body "sandbox test"
 ```
 
-Expected: `keel-process-files-separate` passes. `setup/README.md` and `setup/TESTING.md` are ordinary docs, so this step edits a setup script. A non-Markdown file under `setup/` is still a process file, including scripts, ruleset JSON, and `setup/tests/`. An agent-rule name such as `AGENTS.md` is still a process file under `setup/`. This pull request can still weaken the checks. Owner review of a process-only pull request is the control, by design. Do not merge it unless that review is what you mean to test.
+Expected: `keel-process-files-separate` passes. `setup/README.md` and `setup/TESTING.md` are the only ordinary docs under `setup/`, matched as the whole path, so this step edits a setup script. Every other path under `setup/` is a process file, including other Markdown. An agent-rule name such as `AGENTS.md` is still a process file anywhere. This pull request can still weaken the checks. Owner review of a process-only pull request is the control, by design. Do not merge it unless that review is what you mean to test.
 
 **(f) Docs only**
 
