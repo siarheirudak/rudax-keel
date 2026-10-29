@@ -87,7 +87,7 @@ Docker Desktop differences the harness handles:
 
 **Check.** Where does a container escape land? Rootless Docker or rootless podman: pass. Docker Desktop on macOS or Windows (`OperatingSystem` contains "Docker Desktop"): pass, reported as `Docker Desktop VM`. An escape lands in Docker's Linux VM, not on the host. A rootful daemon on a Linux host: warning.
 
-**Why.** With a rootful daemon, a container escape gives root on the host. This is the most serious residual risk.
+**Why.** With a rootful daemon, a container escape gives root on the host. This is the most serious residual risk. The v1 design makes rootless Docker or rootless Podman mandatory: a startup check will refuse to run when it is missing. That check is not in this doctor. Today this line stays RECOMMENDED, so a rootful Linux daemon warns and the harness still starts. See [Security](security.md#rootless).
 
 **If it fails.** Warning. The harness still works, but a kernel or runtime bug becomes a host-root bug.
 
