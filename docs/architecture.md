@@ -47,7 +47,8 @@ The owner’s pauses do not time out. An unanswered question waits until the own
 Colour in the diagram:
 
 - Blue — an agent (Pi Agent, in a rootless container, in the design)
-- Green — a host script. **DISP** is the planned host dispatcher (Step 7): task state, transitions, and the request-file allowlist. It is not built yet
+- Green — a host script
+- **DISP** — the planned host dispatcher (Step 7), drawn in green: task state, transitions, and the request-file allowlist. Not built yet
 - Orange — a decision the owner makes
 - Red — a dossier, the cycle stops
 - Purple — the skills side path, which is not one of the numbered links
