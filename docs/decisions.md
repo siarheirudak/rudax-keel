@@ -2,9 +2,11 @@
 
 The pipeline pauses for a person in a fixed set of places. Everywhere else, a script or an agent continues, or a dossier stops the cycle. The person is the **owner**: the repository owner.
 
-The bot `isiarheiridak-agent` opens pull requests. It does not approve them, it does not merge them, and it does not create release tags. Tag protection is enforced by GitHub today. [Protect tags](why.md#protect-tags). On a personal repository GitHub cannot restrict the merge button to one account. The project rule is still that the owner merges. An approval goes stale if new commits are pushed. [Who merges](why.md#who-merges).
+The bot account opens pull requests. It does not approve them, it does not merge them, and it does not create release tags. Tag protection is enforced by GitHub today. [Protect tags](why.md#protect-tags). On a personal repository GitHub cannot restrict the merge button to one account. The project rule is still that the owner merges. An approval goes stale if new commits are pushed. [Who merges](why.md#who-merges).
 
 **Status.** The decisions below are the v1 design. The GitHub half (who may merge, who may tag, who may change rules) is implemented. The brief, the D2 cards, the skill card, and the envelope are not built.
+
+The owner's answers travel through chat (an external intermediary or a direct Pi Agent terminal) into the same orchestrator input. There is no extra confirmation layer on top of D2. Answers are logged verbatim with a timestamp and appear in the pull-request envelope. [Working through a chat agent](working-through-chat.md). Answers that belong in product memory go into an ADR, into this file, or into a discovery.
 
 ## The brief
 
@@ -14,7 +16,7 @@ L0 produces a **brief** the owner accepts. It has five parts.
 |---|---|
 | Task understanding | What the orchestrator thinks the owner asked for |
 | D0 | A paragraph in the brief. The design requires the section and does not set a longer template, so this page does not add fields to it. The owner accepts the paragraph by approving the brief |
-| D1 | The orchestrator’s confidence: high, medium, or low. Low confidence always raises a D2 question. The log behind that rating stays hidden from the auditor until the auditor has given a verdict |
+| D1 | The orchestrator’s confidence: high, medium, or low. **Not an owner decision.** Low confidence always raises a D2 question. The orchestrator writes the D1 confidence-notes log. That log stays hidden from the auditor until the auditor has given a verdict |
 | D2 | Questions for the owner. Each one has options and a default |
 | Out of scope | One line naming what this task will not do |
 
@@ -64,7 +66,7 @@ The owner merges. The design’s merge is a squash: the link-by-link commits bec
 The owner is meant to merge from the envelope, without reading the code. The envelope is ready only when it can show all of the following.
 
 1. The change is what the brief asked for.
-2. It works, including tests the developer never saw.
+2. It works. The developer can read the tests and cannot change them.
 3. The red gate saw an honest failure on the stubs, not an import or build error.
 4. Existing tests still pass.
 5. The auditor’s rules, including security, passed.

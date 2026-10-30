@@ -6,13 +6,13 @@ _The keel is laid first; everything else is built on it._
 
 An **agent** is a program that uses a language model to propose a design, tests, or code. A **host script** is an ordinary program on the machine that runs the pipeline. A host script does not ask a model what to believe. It checks files, tests, and git history, and it accepts or rejects the result.
 
-The **owner** is the repository owner, the human who decides. The **bot** is the GitHub account `isiarheiridak-agent`. The bot has write access. It opens pull requests. It is not an admin, so it cannot change the rules that constrain it.
+The **owner** is the repository owner, the human who decides. The **bot** is the GitHub bot account for this project. The bot has write access. It opens pull requests. It is not an admin, so it cannot change the rules that constrain it. Docs do not print account logins.
 
 ## The idea
 
 The pipeline does not trust an agent’s own report. Every claim an agent makes is checked by a host script before the next step starts. Agents propose. Scripts verify. The owner decides what is merged and what is released.
 
-That split is what **zero-trust** means here. “Zero” is about the agent’s word, not about ignoring evidence. A passing script, a test the implementer never saw, and the owner’s approval are evidence. A sentence from the agent that says “done” is not.
+That split is what **zero-trust** means here. “Zero” is about the agent’s word, not about ignoring evidence. A passing script, host-run tests and gates, and the owner’s approval are evidence. A sentence from the agent that says “done” is not.
 
 Two planes do the work:
 
@@ -36,9 +36,9 @@ The full chain, including who acts at each link and what stops it, is in [Archit
 | Who | Kind | What they do |
 |---|---|---|
 | Owner | Human | Answers questions, approves skills and splits, merges, releases |
-| Bot `isiarheiridak-agent` | GitHub account | Opens pull requests. Does not merge and does not release |
+| Bot account | GitHub account | Opens pull requests. Does not merge and does not release |
 | Orchestrator, architect, critic, tester, developer, auditor, design reviewer, verifier, QA, researcher | Agents (planned) | Reason about one part of the task, inside a container |
-| Host scripts | Programs | Package context, run gates, install dependencies, open the pull request, write the log |
+| Host scripts (including the planned **dispatcher**) | Programs | Own task state and transitions, package context, run gates, install dependencies, open the pull request, write the log |
 
 What each role is allowed to see is a **deny-list**: a role can read the repository except for paths the list withholds, and the withheld paths are simply not mounted into that role’s container. The list can only grow. Details: [Roles and visibility](docs/roles.md).
 
@@ -47,6 +47,9 @@ What each role is allowed to see is a **deny-list**: a role can read the reposit
 | Question | Page |
 |---|---|
 | How does a task move from a chat message to a release? | [Architecture](docs/architecture.md) |
+| What is the Step 7 orchestrator/dispatcher design? | [Harness design](docs/harness/README.md) |
+| How do I drive the harness through an external chat agent? | [Working through a chat agent](docs/working-through-chat.md) |
+| What instructions should that chat agent use? | [Intermediary agent instructions](docs/intermediary-agent-instructions.md) |
 | What does each link take in, produce, and refuse? | [Pipeline](docs/pipeline.md) |
 | Who can see which files? | [Roles and visibility](docs/roles.md) |
 | Which checks are mandatory, and which only warn? | [Security](docs/security.md) |
