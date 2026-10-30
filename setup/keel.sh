@@ -16,9 +16,11 @@ DOCKER=${DOCKER:-docker}; IMG=${IMG:-keel-git}
 UIDGID="$(id -u):$(id -g)"
 MAX_BUNDLE=${MAX_BUNDLE:-1048576}; MAX_LINES=${MAX_LINES:-5000}; MAX_FILES=${MAX_FILES:-500}
 # matched case-insensitively (macOS/Windows checkouts fold case: .GitHub/ == .github/)
-# = rudax-keel PR #5 process set (scripts/check-scope.py: PROCESS_PREFIXES + AGENT_RULE_NAMES), plus .pi/ and .gitmodules
-FORBID_PREFIX='^(\.github|setup|scripts|\.cursor|\.claude|\.pi)/'
-FORBID_NAME='(^|/)(agents\.md|claude\.md|claude\.local\.md|codeowners|\.cursorrules|\.windsurfrules|\.clinerules|\.mcp\.json|\.shellcheckrc|\.gitmodules)$'
+# Pi Agent process set (scripts/check-scope.py), plus .gitmodules.
+# .pi/ and .agents/ match at any depth. setup/README.md and setup/TESTING.md
+# are ordinary docs (whole path, any case).
+FORBID_PREFIX='^(\.github|setup|scripts)/|(^|/)\.pi/|(^|/)\.agents/'
+FORBID_NAME='(^|/)(agents\.md|agents\.override\.md|claude\.md|codeowners|\.shellcheckrc|\.gitmodules)$'
 DOTGIT='(^|/)\.git(/|$)'
 TEST_ENTRY=${KEEL_TEST_ENTRY:-test.sh}   # test entrypoint, always taken from MAIN, never from the bundle
 AGENT_IDENT=${KEEL_AGENT_IDENT:-agent <a@x>}
@@ -106,7 +108,7 @@ gate) F=$B/$T.bundle; M=$(git -C "$R" rev-parse main); I=refs/keel/incoming/$T
     [ "$nm" = 120000 ] && sym="$sym $path"; [ "$nm" = 160000 ] && gl="$gl $path"
   done < <(hgit -C "$G" diff --raw -z --no-renames main "$I")
   grep -iE "$DOTGIT" "$P/.gatehome/paths" && fail "nested .git path in change"
-  grep -iE "$FORBID_PREFIX|$FORBID_NAME" "$P/.gatehome/paths" && fail "forbidden path touched"
+  grep -ivxE 'setup/readme\.md|setup/testing\.md' "$P/.gatehome/paths" | grep -iE "$FORBID_PREFIX|$FORBID_NAME" && fail "forbidden path touched"
   [ -z "$sym" ] || fail "symlink in change:$sym"
   [ -z "$gl" ] || fail "submodule/gitlink in change:$gl"
   [ "$nf" -le "$MAX_FILES" ] || fail "$nf files changed > $MAX_FILES"

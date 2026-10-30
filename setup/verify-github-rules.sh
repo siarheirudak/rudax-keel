@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Read-only check of the GitHub rules. Does not change the repository.
-# Usage: verify-github-rules.sh OWNER/REPO AGENT_LOGIN [--accept-risk]
+# Usage: verify-github-rules.sh OWNER/REPO AGENT_LOGIN [--accept-risk] [--no-emoji]
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -11,6 +11,7 @@ positional=()
 for arg in "$@"; do
   case $arg in
     --accept-risk) ACCEPT_RISK=1 ;;
+    --no-emoji) NO_EMOJI_FLAG=1 ;;
     -*)
       printf 'Unknown option: %s\n' "$arg" >&2
       usage "verify-github-rules.sh"

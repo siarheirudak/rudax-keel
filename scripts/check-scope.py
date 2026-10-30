@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """Fail when a pull request mixes process files with anything else.
 
-Process files are .github/**, scripts/**, .cursor/**, .claude/**, and
-setup/**. Two paths are ordinary docs, matched as the whole path and
-ignoring case: setup/README.md and setup/TESTING.md. A different path
-with the same basename, such as setup/a/README.md, is still a process
-file. These names are process files anywhere in the tree, including
-under setup/: CODEOWNERS, AGENTS.md, CLAUDE.md, CLAUDE.local.md,
-.cursorrules, .windsurfrules, .clinerules, .mcp.json, and .shellcheckrc.
+Process files are .github/**, scripts/**, and setup/** at the root, and
+.pi/** and .agents/** at any depth.
+Two paths are ordinary docs, matched as the whole path and ignoring case:
+setup/README.md and setup/TESTING.md. A different path with the same
+basename, such as setup/a/README.md, is still a process file. These names
+are process files anywhere in the tree, including under setup/, and the
+match ignores case: CODEOWNERS, AGENTS.md, AGENTS.override.md, CLAUDE.md,
+and .shellcheckrc. CLAUDE.md is the fallback context file Pi Agent loads.
 scripts/ is included because CI runs those checks from the pull request,
 including scripts/tests/. A docs file counts only when it is itself an
 agent-rule file. tests/ is not a process path. Labels are not read and
 are not permission.
+
+Paths are normalised before classification. Leading and trailing
+whitespace is removed, a leading ./ is stripped, backslashes become
+slashes, duplicate slashes collapse, and the path is Unicode NFC. A path
+that is still ambiguous counts as a process file.
 
 A rename counts both the new path and previous_filename. One process path
 and one other path is a mix, including when they are the two names of one
@@ -26,19 +32,18 @@ check out the pull request. --self-test checks the classifier with no network.
 import json
 import os
 import sys
+import unicodedata
 import urllib.error
 import urllib.request
 
-PROCESS_PREFIXES = (".github/", "setup/", "scripts/", ".cursor/", ".claude/")
+ROOT_PREFIXES = (".github/", "setup/", "scripts/")
+# (^|/)prefix, at any depth. Matched without regard to case.
+NESTED_DIR_PREFIXES = (".pi/", ".agents/")
 AGENT_RULE_NAMES = {
     "AGENTS.md",
+    "AGENTS.override.md",
     "CLAUDE.md",
-    "CLAUDE.local.md",
     "CODEOWNERS",
-    ".cursorrules",
-    ".windsurfrules",
-    ".clinerules",
-    ".mcp.json",
     ".shellcheckrc",
 }
 FILE_CAP = 3000
@@ -49,13 +54,42 @@ SETUP_DOC_PATHS = {
 }
 
 
+def canonical_path(path):
+    """Return one relative path, or None when the path is still ambiguous."""
+    if not isinstance(path, str) or path == "" or "\x00" in path:
+        return None
+    text = unicodedata.normalize("NFC", path).strip().replace("\\", "/")
+    while "//" in text:
+        text = text.replace("//", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    if text == "" or text == "." or text.startswith("/"):
+        return None
+    parts = text.split("/")
+    if any(part in ("", ".", "..") or ":" in part for part in parts):
+        return None
+    return text
+
+
 def is_process(path):
-    name = path.rsplit("/", 1)[-1]
-    if name in AGENT_RULE_NAMES:
+    canonical = canonical_path(path)
+    if canonical is None:
         return True
-    if path.lower() in SETUP_DOC_PATHS:
+    name = canonical.rsplit("/", 1)[-1].casefold()
+    for rule in AGENT_RULE_NAMES:
+        if name == rule.casefold():
+            return True
+    if canonical.casefold() in SETUP_DOC_PATHS:
         return False
-    return path.startswith(PROCESS_PREFIXES)
+    folded = canonical.casefold()
+    for prefix in ROOT_PREFIXES:
+        if folded.startswith(prefix.casefold()):
+            return True
+    for prefix in NESTED_DIR_PREFIXES:
+        needle = prefix.casefold()
+        if folded.startswith(needle) or ("/" + needle) in folded:
+            return True
+    return False
 
 
 def classify(paths):
@@ -141,20 +175,51 @@ def self_test():
         ("setup/x.sh", True),
         ("setup/a/AGENTS.md", True),
         ("setup/CLAUDE.md", True),
-        ("setup/CLAUDE.local.md", True),
         ("setup/CODEOWNERS", True),
-        ("setup/.cursorrules", True),
+        ("setup/AGENTS.override.md", True),
         (".github/workflows/scope.yml", True),
         (".github/README.md", True),
+        (".GitHub/workflows/checks.yml", True),
         ("scripts/check-scope.py", True),
         ("scripts/NOTES.md", True),
         ("scripts/tests/test_md_links.py", True),
-        (".cursor/rules.md", True),
-        (".claude/settings.json", True),
+        (".pi/SYSTEM.md", True),
+        (".pi/extensions/x.ts", True),
+        (".pi/mcp.json", True),
+        (".Pi/SYSTEM.md", True),
+        (".agents/skills/a/SKILL.md", True),
+        (".Agents/skills/a/SKILL.md", True),
+        ("apps/.agents/skills/x/SKILL.md", True),
+        ("apps/.Agents/skills/x/SKILL.md", True),
+        ("pkg/.pi/SYSTEM.md", True),
+        ("pkg/.Pi/SYSTEM.md", True),
+        ("not.pi/SYSTEM.md", False),
+        (" setup/README.md ", False),
+        (" pkg/.pi/SYSTEM.md ", True),
+        ("sub/AGENTS.override.md", True),
+        ("sub/agents.override.md", True),
+        ("sub/claude.md", True),
+        ("sub/CLAUDE.md", True),
         ("README.md", False),
         ("docs/why.md", False),
         ("docs/AGENTS.md", True),
+        ("docs/agents.md", True),
         ("tests/test_app.py", False),
+        ("./setup/README.md", False),
+        ("setup\\README.md", False),
+        ("setup//README.md", False),
+        (".//setup/README.md", False),
+        ("./setup/keel.sh", True),
+        ("setup\\keel.sh", True),
+        ("Setup/keel.sh", True),
+        ("Setup/README.md", False),
+        ("Setup/TESTING.md", False),
+        (".mcp.json", False),
+        ("src/app.py", False),
+        ("", True),
+        ("setup/../README.md", True),
+        ("/etc/passwd", True),
+        (".github/workflows/caf\u0065\u0301.yml", True),
     ]
     for path, expected in classified:
         if is_process(path) != expected:
@@ -169,6 +234,21 @@ def self_test():
                 file=sys.stderr,
             )
             return 1
+    angstrom = "docs/\u212b.md"
+    if canonical_path(angstrom) != unicodedata.normalize("NFC", angstrom):
+        print("self-test mismatch: path was not Unicode NFC", file=sys.stderr)
+        print(
+            "how to fix: fix the process-file classifier in scripts/check-scope.py",
+            file=sys.stderr,
+        )
+        return 1
+    if is_process(angstrom):
+        print("self-test mismatch: NFC path was classified as a process file", file=sys.stderr)
+        print(
+            "how to fix: fix the process-file classifier in scripts/check-scope.py",
+            file=sys.stderr,
+        )
+        return 1
 
     many = [entry("f{}.txt".format(index)) for index in range(FILE_CAP)]
     cases = [
@@ -203,13 +283,75 @@ def self_test():
         ([entry("scripts/check.sh")], 1, "main", "main", False, ""),
         ([entry("scripts/check.sh"), entry("README.md")], 2, "main", "main", True, "README.md"),
         ([entry("CODEOWNERS")], 1, "main", "main", False, ""),
-        ([entry(".cursor/rules.md"), entry("src/main.go")], 2, "main", "main", True, "src/main.go"),
-        ([entry(".cursorrules")], 1, "main", "main", False, ""),
-        ([entry(".windsurfrules"), entry("src/app.py")], 2, "main", "main", True, ".windsurfrules"),
-        ([entry("docs/.clinerules")], 1, "main", "main", False, ""),
-        ([entry(".mcp.json")], 1, "main", "main", False, ""),
-        ([entry("CLAUDE.local.md"), entry("README.md")], 2, "main", "main", True, "CLAUDE.local.md"),
+        ([entry(".pi/SYSTEM.md"), entry("src/main.go")], 2, "main", "main", True, "src/main.go"),
+        ([entry(".pi/extensions/x.ts")], 1, "main", "main", False, ""),
+        (
+            [entry(".agents/skills/a/SKILL.md"), entry("README.md")],
+            2,
+            "main",
+            "main",
+            True,
+            "README.md",
+        ),
+        ([entry("sub/AGENTS.override.md")], 1, "main", "main", False, ""),
+        (
+            [entry("sub/claude.md"), entry("docs/why.md")],
+            2,
+            "main",
+            "main",
+            True,
+            "sub/claude.md",
+        ),
+        ([entry(".mcp.json"), entry("README.md")], 2, "main", "main", False, ""),
+        (
+            [entry(".pi/mcp.json"), entry("README.md")],
+            2,
+            "main",
+            "main",
+            True,
+            "README.md",
+        ),
         ([entry(".shellcheckrc")], 1, "main", "main", False, ""),
+        (
+            [entry("./setup/README.md"), entry("README.md")],
+            2,
+            "main",
+            "main",
+            False,
+            "",
+        ),
+        (
+            [entry("setup\\README.md"), entry("docs/why.md")],
+            2,
+            "main",
+            "main",
+            False,
+            "",
+        ),
+        (
+            [entry("setup//README.md"), entry("README.md")],
+            2,
+            "main",
+            "main",
+            False,
+            "",
+        ),
+        (
+            [entry("./setup/keel.sh"), entry("README.md")],
+            2,
+            "main",
+            "main",
+            True,
+            "./setup/keel.sh",
+        ),
+        (
+            [entry("setup/../README.md"), entry("README.md")],
+            2,
+            "main",
+            "main",
+            True,
+            "setup/../README.md",
+        ),
         ([entry("scripts/tests/test_md_links.py")], 1, "main", "main", False, ""),
         (
             [entry("scripts/tests/test_md_links.py"), entry("README.md")],
