@@ -6,7 +6,7 @@ Short definitions for this repository. The first time a longer page needs a word
 
 **Owner.** The repository owner: the human who approves decisions, merges pull requests, and creates releases.
 
-**Bot.** The GitHub account `isiarheiridak-agent`. It opens pull requests. It has write access, not admin.
+**Bot.** The GitHub **bot account** used by this project to open pull requests. It has write access, not admin. Docs do not print the login.
 
 **Agent.** A program that uses a language model to propose part of a task. Its own report is not evidence.
 
@@ -16,13 +16,24 @@ Short definitions for this repository. The first time a longer page needs a word
 
 **Host script.** An ordinary program on the machine that runs the pipeline. It checks files and commands. It does not accept an agent’s summary as proof.
 
+**Orchestrator (planned, Step 7).** The main Pi Agent role in the design. Not built yet. It writes the brief, split proposals, messages to the owner, request files, and the D1 confidence-notes log. It does not write product code or tests. Design: [Harness design](harness/README.md).
+
+**Dispatcher (planned, Step 7).** A host script (control plane), not built yet, that owns task state, a fixed transition table for links L0 through L11, gate runs, allowlisted request files (`keel_request`), logging, and launches of role containers via `setup/keel.sh role`. Agents do not message each other; they drop request files for the dispatcher. Design: [Harness design](harness/README.md).
+
+
+**Intermediary.** An external chat agent that bridges the owner and the orchestrator in both directions. Its primary job is high-quality two-way transfer of meaning. It is not part of the harness trust boundary. Recommended instructions: [Intermediary agent instructions](intermediary-agent-instructions.md).
+
+**Request file (planned, Step 7).** An allowlisted file the orchestrator (or another role) drops for the dispatcher. The dispatcher rejects kinds that are not on the allowlist.
+
+**D1 confidence-notes log.** The detailed notes behind the brief’s D1 confidence rating. Written and readable by the orchestrator. Denied to the auditor until the auditor’s verdict. Not an owner-decision store. Exact path still open.
+
 ## Planes and steps
 
 **Reasoning plane.** The agents. They propose.
 
 **Control plane.** The host scripts. They accept or reject.
 
-**Zero-trust.** In this project: do not trust an agent’s report. Trust a script, a test the implementer did not see, and the owner’s decision.
+**Zero-trust.** In this project: do not trust an agent’s report. Trust a script, tests and gates the host runs, and the owner’s decision.
 
 **Task.** One piece of work, from the owner’s message to a merge or a dossier.
 
@@ -38,7 +49,7 @@ Short definitions for this repository. The first time a longer page needs a word
 
 **D0.** A required paragraph in the brief. The design does not set a longer template than that.
 
-**D1.** Confidence in the brief: high, medium, or low. Low confidence raises a D2 question.
+**D1.** The orchestrator’s confidence in the brief: high, medium, or low. Not an owner decision. Low confidence raises a D2 question. Detailed notes live in the D1 confidence-notes log (orchestrator writes; auditor hidden until verdict).
 
 **D2.** A question for the owner, with options and a default. It waits until the owner answers.
 
@@ -54,13 +65,13 @@ Short definitions for this repository. The first time a longer page needs a word
 
 **Stub.** A signature and a body that is not the real implementation yet. The red gate runs tests against stubs.
 
-**Holdout.** A test the tester writes and a script stores on the host, under `.keel/holdout/`. The developer’s container does not receive it.
-
 **Red gate.** The script that checks new tests fail for an honest reason (an assertion, or not implemented) before implementation.
 
 **Static gate.** The script that checks lint, types, signatures, paths, secrets, and complexity.
 
-**Green gate.** The script that runs new tests, old tests, holdouts, and mutation testing, then records the tree hash.
+**Green gate.** The script that runs new tests, old tests, and mutation testing, then records the tree hash.
+
+**L7T.** The mutation step of the green gate (see Mutation testing).
 
 **Mutation testing.** Changing a small piece of logic to see whether a test fails. A survivor that nobody can explain blocks the green gate.
 
@@ -70,7 +81,7 @@ Short definitions for this repository. The first time a longer page needs a word
 
 **Blocking finding.** A review note that returns the task to the developer. It needs a file and line, a rule id, and a behavioural effect.
 
-**Fence.** A wrapping that marks repository text as data, so the model does not treat it as instructions.
+**Fence.** A wrapping that marks repository text as data, so the model does not treat it as instructions. Content fencing (M5) is specified and deferred to the backlog; containers today receive ordinary files.
 
 **Deny-list.** The paths a role must not see. The path is not mounted. Extra denies may be added. Harness denies may not be removed.
 
@@ -116,4 +127,4 @@ Short definitions for this repository. The first time a longer page needs a word
 
 ## Related
 
-[Architecture](architecture.md) · [Implementation status](status.md)
+[Architecture](architecture.md) · [Working through a chat agent](working-through-chat.md) · [Implementation status](status.md)
