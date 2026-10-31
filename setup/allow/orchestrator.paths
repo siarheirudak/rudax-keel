@@ -1,0 +1,5 @@
+# Brief and draft zone, docs, tests, and this task's decisions directory.
+briefs
+docs
+tests
+.keel/decisions

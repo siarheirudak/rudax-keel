@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # keel-doctor: is this machine ready to run the rudax-keel agent harness (variant 2)? bash 3.2+.
-# Usage: keel-doctor.sh [--attacks]
+# Usage: keel-doctor.sh [--attacks | --score-log FILE]
 # env: KEEL_ROOT (default ~/keel-proto), KEEL_REPO (default $KEEL_ROOT/repo), DOCKER (docker | "sudo docker" | podman)
 # Exit: 0 = READY or READY WITH WARNINGS, 1 = NOT READY (a CRITICAL check failed), 2 = usage.
 # Docs: docs/harness-checks-why.md#<id>
@@ -10,7 +10,20 @@ HERE=$(cd "$(dirname "$0")" && pwd -P)
 . "$HERE/lib/portable.sh"
 KEEL_ROOT=${KEEL_ROOT:-$HOME/keel-proto}; KEEL_REPO=${KEEL_REPO:-$KEEL_ROOT/repo}; DOCKER=${DOCKER:-docker}
 ATTACKS=0
-for a in "$@"; do case $a in --attacks) ATTACKS=1;; -h|--help) sed -n 2,6p "$0"; exit 0;; *) echo "unknown option: $a" >&2; exit 2;; esac; done
+SCORE_LOG=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --attacks) ATTACKS=1;;
+    --score-log)
+      shift
+      [ $# -ge 1 ] || { echo "missing log path" >&2; exit 2; }
+      SCORE_LOG=$1
+      ATTACKS=1;;
+    -h|--help) sed -n 2,6p "$0"; exit 0;;
+    *) echo "unknown option: $1" >&2; exit 2;;
+  esac
+  shift
+done
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then G=$'\033[32m' Y=$'\033[33m' R=$'\033[31m' B=$'\033[1m' D=$'\033[2m' N=$'\033[0m'; else G='' Y='' R='' B='' D='' N=''; fi
 PASS=0 WARN=0 FAIL=0 CRIT_FAIL=0
@@ -86,6 +99,17 @@ if git -C "$KEEL_REPO" rev-parse --git-dir >/dev/null 2>&1; then
   if br=$(git -C "$KEEL_REPO" symbolic-ref --short HEAD 2>/dev/null); [ "$br" = main ]; then check REPO-04 RECOMMENDED pass "on main"; else check REPO-04 RECOMMENDED warn "branch" "HEAD is '${br:-detached}', expected main"; fi
 else check REPO-01 CRITICAL fail "repository" "no git repo at $KEEL_REPO (set KEEL_REPO, or run: keel.sh init-repo for a throwaway one)"; fi
 
+section "Visibility"
+if ! command -v python3 >/dev/null 2>&1; then
+  check VIS-01 CRITICAL fail "allow and deny loader" "python3 is missing"
+else
+  if verr=$(python3 "$HERE/lib/visibility.py" doctor --harness "$HERE" 2>&1); then
+    check VIS-01 CRITICAL pass "allow and deny loader" "folder allowlists and the deny base parse"
+  else
+    check VIS-01 CRITICAL fail "allow and deny loader" "$(printf '%s' "$verr" | head -1 | cut -c1-140)"
+  fi
+fi
+
 section "Disk"
 dir=$KEEL_ROOT; while [ ! -d "$dir" ]; do dir=$(dirname "$dir"); done
 free=$(free_gib "$dir")
@@ -94,7 +118,7 @@ elif [ "$free" -ge 2 ]; then check DISK-01 RECOMMENDED warn "free disk" "${free}
 else check DISK-01 RECOMMENDED fail "free disk" "${free} GiB at $dir (< 2 GiB)"; fi
 
 # attack id -> human name (bash 3.2: no associative arrays)
-ATK_IDS="N1 N2 A1 A2 A3 A12 A12b A4 A4b A4c A5 A6 A6b A6c A7 A7b A8 A8b A9 A10 A10b A11 A11-detect A13 A14 A15 A16 A17 A17b A17c A18 A18b A19 A19b A20 A21 A22 A22b H1 H2 H3 H4 H5"
+ATK_IDS="N1 N2 A1 A2 A3 A12 A12b A4 A4b A4c A5 A6 A6b A6c A7 A7b A8 A8b A9 A10 A10b A11 A11-detect A13 A14 A15 A16 A17 A17b A17c A18 A18b A19 A19b A20 A21 A22 A22b H1 H2 H3 H4 H5 V-H9 V-H1 V-A2 V-A10-hardlink V-A20 V-H3 V-A1 V-A15 V-A25 V-A24b V-A16 V-H2 V-H5 V-A5 V-H6 V-H7 V-A27 V-H4 V-A6 V-A23 V-A28 V-A25b V-A11 V-A25c V-A17 V-A18 V-H6b V-A12 V-A7 V-A8 V-A24 V-A29 V-A30 V-A31 V-H8 V-LOG V-A13 V-A14 V-A4 V-A21 V-A22 V-A19 V-A3 V-A3b V-A26 V-A32 V-PARSE V-RO V-RUNS"
 atk_name(){ case $1 in
   N1) echo "no network in agent container";; N2) echo "host token not passed to container";; A1) echo "/base/objects is read-only";;
   A2) echo "pointer file can't be rewritten";; A3) echo "shadow hooks/fsmonitor never run on host";; A12) echo "role A's hook doesn't run in role B/export";;
@@ -102,7 +126,7 @@ atk_name(){ case $1 in
   A6b) echo "gate: diff line limit";; A7) echo "gate: extra branch/tag rejected";; A7b) echo "gate: wrong branch name rejected";; A8) echo "gate: stale base rejected";;
   A8b) echo "gate: bundle without base rejected";; A12b) echo "forced git safety config in roles";; A4c) echo "gate: case/rename/mode forbidden-path variants";;
   A6c) echo "gate: changed-file count limit";; A13) echo "gate: fsck rejects corrupt objects";; A14) echo "gate: submodule/gitlink rejected";;
-  A15) echo "gate: spoofed commit identity rejected";; A16) echo "push stub: one gated sha, one branch";; A17|A17b|A17c) echo "gate: NUL-safe path parsing (space, UTF-8, tab/quote)";; A18|A18b) echo "gate: Pi process paths";; A19|A19b) echo "reset_shadow refuses symlinks";; A20) echo "gate: nested .git path";; A21) echo "gate: tests from main's entrypoint";; A22|A22b) echo "gate: no merge/orphan commits";; H5) echo "cpu limit";; A9) echo "reviewer can't commit";; A10) echo "gc guard";; A10b) echo "main can't move backwards";;
+  A15) echo "gate: commit identity rejected";; A16) echo "push stub: one gated sha, one branch";; A17|A17b|A17c) echo "gate: NUL-safe path parsing (space, UTF-8, tab/quote)";; A18|A18b) echo "gate: Pi process paths";; A19|A19b) echo "reset_shadow refuses symlinks";; A20) echo "gate: nested .git path";; A21) echo "gate: tests from main's entrypoint";; A22|A22b) echo "gate: no merge/orphan commits";; H5) echo "cpu limit";; A9) echo "reviewer can't commit";; A10) echo "gc guard";; A10b) echo "main can't move backwards";;
   A11) echo "no root-owned files";; A11-detect) echo "gate rejects foreign-owned files";; H1) echo "no mount/chown/caps";; H2) echo "fork bomb contained";;
   H3) echo "memory limit";; H4) echo "no writes outside mounts";; *) echo "$1";; esac; }
 
@@ -110,19 +134,26 @@ if [ $ATTACKS = 1 ]; then
   section "Attacks (test-attacks.sh in a throwaway dir; real containers on this machine)"
   if [ $CRIT_FAIL -gt 0 ]; then check ATK-00 CRITICAL fail "attack suite" "skipped: fix critical environment failures first"
   else
-    AROOT=$(mktemp -d "$HOME/.keel-doctor.XXXXXX"); ALOG=${KEEL_DOCTOR_LOG:-$HERE/tests/harness/logs/doctor-attacks-$(date +%Y%m%d-%H%M%S).log}; mkdir -p "$(dirname "$ALOG")"
-    KEEL_ROOT=$AROOT/keel DOCKER=$DOCKER "$HERE/tests/harness/test-attacks.sh" >"$ALOG" 2>&1; rm -rf "$AROOT"
-    printf '%s  raw log: %s%s\n' "$D" "$ALOG" "$N"
-    SEEN=" "
-    while IFS= read -r line; do
-      id=${line#RESULT }; id=${id%%:*}; txt=${line#*: }; SEEN="$SEEN$id "
-      lvl=CRITICAL; [ "$id" = A10 ] && lvl=RECOMMENDED
-      case $txt in BLOCKED*|CONTAINED*) st=pass;; PARTIAL*|RISK*|N/A*) st=warn;; *) st=fail;; esac
-      check "ATK-$id" "$lvl" "$st" "$(atk_name "$id")" "$(echo "$txt" | cut -c1-110)"
-    done <<EOT
+    if [ -n "$SCORE_LOG" ]; then
+      ALOG=$SCORE_LOG
+      if [ ! -f "$ALOG" ]; then check ATK-00 CRITICAL fail "attack log" "missing $ALOG"; ALOG=; fi
+    else
+      AROOT=$(mktemp -d "$HOME/.keel-doctor.XXXXXX"); ALOG=${KEEL_DOCTOR_LOG:-$HERE/tests/harness/logs/doctor-attacks-$(date +%Y%m%d-%H%M%S).log}; mkdir -p "$(dirname "$ALOG")"
+      KEEL_ROOT=$AROOT/keel DOCKER=$DOCKER "$HERE/tests/harness/test-attacks.sh" >"$ALOG" 2>&1; rm -rf "$AROOT"
+    fi
+    if [ -n "$ALOG" ]; then
+      printf '%s  raw log: %s%s\n' "$D" "$ALOG" "$N"
+      SEEN=" "
+      while IFS= read -r line; do
+        id=${line#RESULT }; id=${id%%:*}; txt=${line#*: }; SEEN="$SEEN$id "
+        lvl=CRITICAL; [ "$id" = A10 ] && lvl=RECOMMENDED
+        case $txt in BLOCKED*|CONTAINED*) st=pass;; PARTIAL*|RISK*|N/A*) st=warn;; *) st=fail;; esac
+        check "ATK-$id" "$lvl" "$st" "$(atk_name "$id")" "$(echo "$txt" | cut -c1-110)"
+      done <<EOT
 $(grep -a '^RESULT ' "$ALOG")
 EOT
-    for id in $ATK_IDS; do case "$SEEN" in *" $id "*) ;; *) check "ATK-$id" CRITICAL fail "$(atk_name "$id")" "no result in log (suite crashed?)";; esac; done
+      for id in $ATK_IDS; do case "$SEEN" in *" $id "*) ;; *) check "ATK-$id" CRITICAL fail "$(atk_name "$id")" "no result in log (suite crashed?)";; esac; done
+    fi
   fi
 fi
 
