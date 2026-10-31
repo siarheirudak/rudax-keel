@@ -39,7 +39,7 @@ Other roles see the repository minus secrets, minus any extra paths in `.keel/de
 The orchestrator and the host dispatcher are planned for Step 7. They are not built yet. In that design, the orchestrator is the main Pi Agent role in its own container.
 
 - **Read:** everything except secrets and paths in `.keel/deny.local`. The D1 confidence-notes log is readable.
-- **Write zone only:** the brief; the split plan; dispatcher **request files**; the D1 confidence-notes log; owner decisions into ADR / `docs/decisions.md` and discoveries (via allowed paths); messages to the owner.
+- **Write zone only:** the brief; the split plan; dispatcher **request files**; the D1 confidence-notes log; owner decisions into ADR / `docs/owner-decisions.md` and discoveries (via allowed paths); messages to the owner.
 - **Must not write:** product code, tests, process files, or gates.
 - **Must not** launch containers or talk to other agents directly. It drops request files; the host **dispatcher** owns transitions and launches roles via `setup/keel.sh role`.
 
@@ -61,7 +61,7 @@ The harness today passes `--network none` to every container, including setup, e
 
 ## Skills each role receives
 
-A **skill** is a project file of instructions for a role, under `.agents/skills/`. Creating, changing, or deleting one requires the owner’s approval. [Human decisions](decisions.md).
+A **skill** is a project file of instructions for a role, under `.agents/skills/`. Creating, changing, or deleting one requires the owner’s approval. [Human decisions](owner-decisions.md).
 
 The developer, the tester, QA, and the architect receive project skills. The orchestrator can be asked, in chat, to order a skill. Usage is written to the log. A comparison trial of two versions is reserved for a major stack skill. How that trial would be measured is still open.
 

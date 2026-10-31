@@ -54,7 +54,7 @@ What each role is allowed to see is a **deny-list**: a role can read the reposit
 | Who can see which files? | [Roles and visibility](docs/roles.md) |
 | Which checks are mandatory, and which only warn? | [Security](docs/security.md) |
 | What standard do reviewers apply? | [Quality standard](docs/quality.md) |
-| When does the owner have to decide? | [Human decisions](docs/decisions.md) |
+| When does the owner have to decide? | [Human decisions](docs/owner-decisions.md) |
 | How are decisions and pitfalls remembered? | [Discoveries and ADRs](docs/discoveries.md) |
 | What is written down while a task runs? | [Logging and the task journal](docs/logging.md) |
 | What does a term mean? | [Glossary](docs/glossary.md) |

@@ -35,7 +35,7 @@ Both front ends hit the same warm orchestrator. There is no second confirmation 
 - **Warm per-task** Pi container: `pi --mode rpc` with the **session file in the task folder**. Removed at task end (PR / cancel / fail / dossier); on owner wait → **stop** (not remove), resume from session.
 - **One tool only:** `keel_request` (allowlisted kinds). Argv fail-closed: **no** bash, write, edit, or codemode. Read/search-class tools plus `keel_request` only.
 - **Read:** everything except **secrets** and paths in **`.keel/deny.local`**. Reads/writes the **D1 confidence-notes log** (hidden from the auditor until verdict). Ordinary product **tests are visible**.
-- **Write zone only (via dispatcher):** the brief; the split plan; `keel_request` payloads; the D1 log; ADR / `docs/decisions.md` and discoveries. Messages to the user (D2 cards: options + default) go through the dispatcher / intermediary.
+- **Write zone only (via dispatcher):** the brief; the split plan; `keel_request` payloads; the D1 log; ADR / `docs/owner-decisions.md` and discoveries. Messages to the user (D2 cards: options + default) go through the dispatcher / intermediary.
 - **Must not write:** product code, tests, process files, or gates.
 - **Does not launch containers** and does not talk to other agents. Extension computes a deterministic `idempotency_key`; dispatcher applies a two-phase WAL.
 - **D1** = orchestrator **confidence** (high / medium / low), not an owner decision. Low confidence always raises a D2. **D2** is always an owner decision.
@@ -58,7 +58,7 @@ A host script (not an agent) that:
 
 **Pi smoke (before implementation):** a short rpc and tool-lock smoke on the orchestrator image. It proves a `pi --mode rpc` session can start and stop, and that bash, write, and edit are unavailable.
 
-The owner's answers (a D2 question, a skill, a split, an irreversible change, a merge, or a release) are recorded in an ADR, in `docs/decisions.md`, or as a discovery. A new dependency still waits on a D2 question (`WAITING_DEP_D2`).
+The owner's answers (a D2 question, a skill, a split, an irreversible change, a merge, or a release) are recorded in an ADR, in `docs/owner-decisions.md`, or as a discovery. A new dependency still waits on a D2 question (`WAITING_DEP_D2`).
 
 ---
 
@@ -89,7 +89,7 @@ The owner's answers (a D2 question, a skill, a split, an irreversible change, a 
 - **Done when:** Fixture repo packages correctly under token budget; over-limit returns `NEEDS_SPLIT`; stale/renamed paths reported; index not stored on disk.
 
 ### Step 5 — Discoveries store (script filter accept/discard)
-- **Does:** Date-prefixed discovery files with front matter; agents may append candidates; host script filter auto-accepts only if schema, existing paths, size, no bypass imperatives, and significance check pass (concrete paths or a rule + non-obvious pitfall/decision). Failures **DISCARDED** (no proposed list). Dossier script writes abort-cause entries. Only harness edits/deletes accepted files. Answers that belong in product memory go into an ADR, `docs/decisions.md`, or a discovery.
+- **Does:** Date-prefixed discovery files with front matter; agents may append candidates; host script filter auto-accepts only if schema, existing paths, size, no bypass imperatives, and significance check pass (concrete paths or a rule + non-obvious pitfall/decision). Failures **DISCARDED** (no proposed list). Dossier script writes abort-cause entries. Only harness edits/deletes accepted files. Answers that belong in product memory go into an ADR, `docs/owner-decisions.md`, or a discovery.
 - **Depends on:** Step 4
 - **Effort:** M
 - **Done when:** Filter rejects bypass-imperative and insignificant fixtures; abort path writes cause via dossier script; L1 indexes only accepted discoveries; no proposed queue exists; those answers do not get a separate store.

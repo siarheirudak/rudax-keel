@@ -22,7 +22,7 @@ The owner does not have to read the code to merge. The owner reads an **envelope
 
 The envelope is bound to a **tree hash**. A tree hash is Git’s id for the exact file contents of a commit, ignoring the commit message. The green gate records the tree hash of the files it passed. Later CI blocks the pull request when the files on the branch are not that tree. A commit that appears after the gates, even with the same message, does not keep the old pass.
 
-If the brief is missing its required sections, the script does not open the envelope. Those sections are described in [Human decisions](decisions.md).
+If the brief is missing its required sections, the script does not open the envelope. Those sections are described in [Human decisions](owner-decisions.md).
 
 
 ## How chat reaches the chain
@@ -273,4 +273,4 @@ The starting threshold is a band of about 200 to 400 lines, counting human-writt
 
 ## Related
 
-[Pipeline](pipeline.md) · [Roles and visibility](roles.md) · [Human decisions](decisions.md) · [Working through a chat agent](working-through-chat.md) · [Implementation status](status.md)
+[Pipeline](pipeline.md) · [Roles and visibility](roles.md) · [Human decisions](owner-decisions.md) · [Working through a chat agent](working-through-chat.md) · [Implementation status](status.md)
