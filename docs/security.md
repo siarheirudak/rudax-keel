@@ -10,7 +10,27 @@ Three layers carry that idea. Only the first two exist in the repository.
 
 1. **GitHub.** The bot can open a pull request. The owner merges. Tag rules stop the bot from publishing a release. This is implemented. [GitHub setup](github-setup.md).
 2. **The harness doctor and the host gate.** `setup/keel-doctor.sh` reports whether this machine can run the harness. `setup/keel.sh gate` rejects an exported bundle that breaks a path, history, or test rule. This is implemented.
-3. **The v1 pipeline guards.** Per-role mounts, an egress proxy, a startup check that refuses a rootful daemon, fenced data, and the gates L4, L6, and L7. These are specified and not built. Where the prototype already does a piece of one, this page says so.
+3. **The v1 pipeline guards.** Per-role folder mounts are implemented in the harness. An egress proxy, a startup check that refuses a rootful daemon, fenced data, and the gates L4, L6, and L7 are specified and not built.
+
+## What a role can see
+
+`setup/keel.sh role` and `role-env` mount only the folder roots in `setup/allow/<role>.paths`. An unknown name, an empty list, a glob, or a path that escapes the tree refuses the launch. There is no whole-tree fallback.
+
+`setup/deny/base` withholds secret basenames and the harness paths `.keel/logs/`, `.keel/runs/`, `.keel/deny.local`, and `.git`. `.keel/decisions/` is withheld from every role except the orchestrator and the architect. `.agents/` is withheld from every role except the skills auditor. A project may add paths in `.keel/deny.local`. It cannot remove a base entry. The project file is read once per task. Roles cannot read or write it.
+
+`.keel/decisions/<task-id>/` is in the product git tree when a task records it. The orchestrator can write it. The architect can read it. A public product repository publishes those files. The harness prints that warning once and does not store task decisions itself. This repository does not commit any.
+
+Every launch appends one JSON object to `$KEEL_ROOT/.keel/logs/launch.jsonl`. The harness is the only writer. A record has `redactions` set to the number of replacements. A replacement is `[REDACTED:token]`, `[REDACTED:key]`, `[REDACTED:password]`, `[REDACTED:env]`, or `[REDACTED:unknown]`. If a value would still be present, the record is refused. Role output is not copied into the log. Cleanup does not delete the log. There is no size cap yet.
+
+`$KEEL_ROOT/.keel/runs/` is temporary mount state. It is removed when the command exits. The task deny snapshot is removed by `cleanup` and when `setup` fails. `.keel/logs/` and `.keel/runs/` are gitignored.
+
+Changing what a role can see is a `process-files` pull request, then review, then an owner merge.
+
+These remain outside this step:
+
+- A secret renamed so its basename is not in `setup/deny/base` is still visible. Content scanning is not in this step.
+- A secret-named file created inside an already mounted read-write directory during that same command can be read until the command ends. The next launch withholds a matching basename.
+- A read-only bind inside a read-write parent is how a withheld file stays unreadable. The suite checks that shape.
 
 ## Levels on the doctor
 
@@ -73,7 +93,7 @@ These are implemented, and they are CRITICAL to the account split in the same pl
 - The default branch accepts changes only through a pull request, with one approval from a code owner, and stale approvals are dismissed. The owner can merge without a second reviewer. That bypass is pull requests only. It does not allow a direct push.
 - Tags cannot be created, moved, or deleted except by an admin. The bot is not an admin.
 - The default branch also requires the check-run names `keel-gate` and `keel-process-files-separate`, from GitHub Actions, on a branch that is up to date. A status posted with a user token does not satisfy the rule.
-- A pull request that edits a process file must contain only process files. Process files include `.github/`, `setup/`, `scripts/`, `.cursor/`, `.claude/`, and names such as `AGENTS.md` and `CODEOWNERS`. The host gate’s forbid list also includes `.pi/` and `.gitmodules`.
+- A pull request that edits a process file must contain only process files. Process files are `.github/`, `scripts/`, and `setup/` at the root (except the whole paths `setup/README.md` and `setup/TESTING.md`, any case), plus `.pi/` and `.agents/` at any depth, such as `pkg/.pi/` and `apps/.agents/`. These names are process files anywhere, ignoring case: `AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md` (the fallback context file Pi Agent loads), `CODEOWNERS`, and `.shellcheckrc`. The host gate also forbids `.gitmodules`.
 - The default Actions token can read and cannot approve pull requests.
 - The bot is invited with write, not admin. Apply will not demote an account that already has admin. That step fails and leaves the role unchanged.
 

@@ -2,48 +2,46 @@
 
 A **role** is one job in the pipeline: orchestrator, architect, critic, tester, developer, auditor, design reviewer, verifier, QA, or researcher. The owner and the bot are not agent roles. The owner decides. The bot account opens pull requests.
 
-**Status.** The deny-list on this page is the v1 design. The harness that exists today starts every role with the same mounts. It does not yet enforce per-role deny mounts, it does not hide a new implementation from the tester, and it does not fence file contents as data. `setup/keel.sh role` accepts any role name and runs a shell command. The happy-path test uses the names `coder` and `tester`. Those names are not the v1 role set, and in that test the tester can read the file the coder just wrote.
+**Status.** Folder mounts are enforced by `setup/keel.sh role` and `role-env`. An unknown role name is refused. The gate suite’s work-tree container is `proto`, not a role. Content fencing is not in this step.
 
-## The deny-list
+## Folder allowlist and unified deny
 
-Visibility is a deny-list. A role may read the repository except the paths the list names. Enforcement is physical: the path is not mounted into that role’s container. The role is not asked to look away.
+A role sees the folder roots in `setup/allow/<role>.paths`, and nothing else. The unified deny then removes paths from those roots. A path on both lists is withheld. Enforcement is the mount: the path is not readable and not writable. The role is not asked to look away.
 
-Two sources fill the list:
-
-- Paths the harness always denies. A project cannot remove these.
-- A per-project file, `.keel/deny.local`, which may add more denies. It cannot grant a path the harness denied. In Step 1 of the implementation plan this file is a **flat** list of paths (no per-role prefixes yet).
-
-Secrets are denied to every role. A **secret** is a credential, a token, or any value that would let a role act as the owner or reach a system the task did not approve.
-
-Everything else on the list is denied to specific roles, below.
-
-Packaged text (repo files, ADRs, discoveries, skills, review diffs) is intended to be wrapped so the model treats it as data. That wrapping is called a **fence**. A sentence inside a fenced file is not an instruction to the agent. An instruction planted in a diff is a blocking review finding. **Content fencing (M5) is specified but deferred to the backlog**; it is not part of the first visibility step. The current containers receive ordinary files.
-
-## Who is denied what
-
-| Withheld | Denied to | Why |
+| Role | Folder roots | Write |
 |---|---|---|
-| Secrets | Every role, including the orchestrator | A role must not be able to act as the owner or call an unapproved system |
-| Paths in `.keel/deny.local` | Every role, including the orchestrator | Project extras such as user or customer data. Flat list; may only add denies |
-| D1 confidence-notes log | The auditor until the auditor’s verdict | The brief carries the D1 confidence level. The detailed notes live in a log the **orchestrator writes and may read**. Hidden from the auditor until verdict. Not an owner-decision store. Exact path still open |
-| The new implementation | The tester | The tester writes tests against stubs, on the commit from before the implementation. That tree is what gets mounted. Product tree mounts are **read-only**; writes only into allowed test directories (host `git diff --name-only` as defense in depth) |
-| Developer skills | The auditor, until the auditor’s verdict | The auditor judges the diff against the brief and the rules, without the implementer’s private notes |
-| Code and tokens | The researcher | The researcher looks up public sources for a skill and does not need the repository |
+| orchestrator | `briefs/`, `docs/`, `tests/`, `.keel/decisions/<task-id>/` | `briefs/`, `.keel/decisions/<task-id>/` |
+| architect | `briefs/`, `docs/`, `.keel/decisions/<task-id>/` | none in this step (decisions are read-only) |
+| developer | `src/`, `docs/`, `tests/` | `src/`, `docs/`. `tests/` is read-only |
+| tester | `src/`, `docs/`, `tests/` from the commit recorded at setup | `tests/` in that snapshot only |
+| auditor | `src/`, `docs/` | none |
+| skills_auditor | `skills-draft/`, `skill-review/` | none |
+| critic | `plans/` | none |
+| design_reviewer | `docs/` | none |
+| verifier | `findings/` | none |
+| qa | `qa-stub/` | none |
+| researcher | `research-stub/` | none |
 
-Ordinary tests are visible to every role with a work tree. Tester-written tests mount **read-only** for the developer. On gate FAIL the developer gets the **full** output and stacks. Honesty substitute for fitting code to tests: L7T mutation plus the L8 checklist item `Code hardcoded to specific test values instead of implementing the behavior` (see [Harness design](harness/README.md)).
+`setup/deny/base` always withholds secret basenames (`.env` and the other names in that file), `.keel/logs/`, `.keel/runs/`, `.keel/deny.local`, and `.git`. `.keel/decisions/` is withheld from every role except the orchestrator and the architect. `.agents/` is withheld from every role except the skills auditor. `.keel/deny.local` may add paths. A line that tries to remove a base entry refuses the launch. The file is read once per task. Roles cannot edit it.
 
-Other roles see the repository minus secrets, minus any extra paths in `.keel/deny.local`. The auditor sees the diff under review.
+D1 confidence notes and the handoff for a task live at `.keel/decisions/<task-id>/` in the product git tree (`d1.md`, `handoff.md`). The orchestrator can write them. The architect can read them. The developer, the tester, and the auditor cannot. A public product repository publishes those files. The harness prints that warning once. This repository does not commit task decisions.
 
-### Orchestrator read and write (planned, Step 7)
+Launch decisions are JSONL at `$KEEL_ROOT/.keel/logs/launch.jsonl`. Only the harness writes that file. Each record includes `redactions`. Replacements are `[REDACTED:token]`, `[REDACTED:key]`, `[REDACTED:password]`, `[REDACTED:env]`, or `[REDACTED:unknown]`. `.keel/runs/` is temporary and is removed when the command exits. Both directories are gitignored.
 
-The orchestrator and the host dispatcher are planned for Step 7. They are not built yet. In that design, the orchestrator is the main Pi Agent role in its own container.
+Changing a role’s folders, the deny base, or who can see decisions is a `process-files` pull request, then review, then an owner merge.
 
-- **Read:** everything except secrets and paths in `.keel/deny.local`. The D1 confidence-notes log is readable.
-- **Write zone only:** the brief; the split plan; dispatcher **request files**; the D1 confidence-notes log; owner decisions into ADR / `docs/decisions.md` and discoveries (via allowed paths); messages to the owner.
+A secret whose basename is not in the deny base is still visible. A secret-named file created inside a read-write mount during that same command can be read until the command ends. There is no size cap on the launch log. Content fencing is still backlog.
+
+### Orchestrator read and write
+
+The orchestrator and the host dispatcher are planned for Step 7. They are not built yet. The mount row above is what `role orchestrator` does now.
+
+- **Read:** the folders in the table, except paths the unified deny withholds.
+- **Write zone only, in this step:** `briefs/` and `.keel/decisions/<task-id>/`.
 - **Must not write:** product code, tests, process files, or gates.
-- **Must not** launch containers or talk to other agents directly. It drops request files; the host **dispatcher** owns transitions and launches roles via `setup/keel.sh role`.
+- **Must not** launch containers or talk to other agents directly. The host launches roles via `setup/keel.sh role`.
 
-Product tests live in `tests/` today. Nothing in the current CI hides that directory by role. [tests/README.md](../tests/README.md).
+Product tests live in `tests/` today. The developer can read that directory and cannot write it. [tests/README.md](../tests/README.md).
 
 ## Network
 

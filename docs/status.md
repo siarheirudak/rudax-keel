@@ -2,7 +2,7 @@
 
 This page is the line between what the repository does and what the v1 design specifies. When another page describes a link, a role mount, or a log, the behaviour is planned unless this page lists it under [Shipped](#shipped).
 
-Nothing in the L0–L11 chain runs. There is no Pi Agent integration, no `standards/rules.md`, no `.keel/` directory, no `.agents/skills/` directory, and no envelope. The bot is a real GitHub account used with the rules below. The pipeline’s “bot opens the pull request” step is still the push stub.
+Nothing in the L0–L11 chain runs. There is no Pi Agent integration, no `standards/rules.md`, no committed task decisions, no `.agents/skills/` directory, and no envelope. The harness creates `.keel/logs/` and `.keel/runs/` at runtime. The bot is a real GitHub account used with the rules below. The pipeline’s “bot opens the pull request” step is still the push stub.
 
 ## Shipped
 
@@ -48,15 +48,17 @@ The doctor’s levels, and the fact that rootless is still a warning, are in [Se
 
 The path checks in this gate are the behaviour the design wants L4, L6, L7, and L10 to share. They live inside `setup/keel.sh` today. They are not a library those links call, because those links do not exist.
 
+`role` and `role-env` mount per-role folder roots from `setup/allow/`, then apply `setup/deny/base` and `.keel/deny.local`. The developer’s `tests/` mount is read-only. The tester is mounted from the commit recorded at setup. Launch decisions are appended under `$KEEL_ROOT/.keel/logs/`. The matrix is in [Roles and visibility](roles.md).
+
 ## Specified and not built
 
-The v1 build is a sequence of steps. Each one is intended to land as its own pull request, opened by the bot, and merged by the owner. Process-file and skill changes land as separate pull requests labelled `process-files`, after the owner approves them. None of the steps below have been started in this repository. The Step 7 design (dispatcher and warm orchestrator) is in [Harness design](harness/README.md).
+The v1 build is a sequence of steps. Each one is intended to land as its own pull request, opened by the bot, and merged by the owner. Process-file and skill changes land as separate pull requests labelled `process-files`, after the owner approves them. Step 1’s folder mounts are in the harness. The later steps below are not started. The Step 7 design (dispatcher and warm orchestrator) is in [Harness design](harness/README.md).
 
 The order is the dependency order from the v1 plan. Steps later in the list need earlier ones. Parallel reading is fine. Parallel merging still has to respect the dependencies.
 
 | Step | What it adds | Depends on |
 |---|---|---|
-| 1 | Deny-list mounts. Ordinary tests stay visible; the developer mounts them read-only. Flat `.keel/deny.local`. Content fencing stays on the backlog | The harness that exists |
+| 1 | Folder allowlists, unified deny, tester pinned to the setup commit, launch JSONL. Content fencing stays on the backlog | The harness that exists |
 | 2 | An egress allowlist proxy | Step 1 |
 | 3 | Rootless as a hard startup failure, plus the rest of the v1 container limits, including a work-directory quota and a separate user for secrets. Playwright checked on the host. Chromium’s sandbox left on | Steps 1 and 2 |
 | 4 | L1 context packaging | Step 1 |
