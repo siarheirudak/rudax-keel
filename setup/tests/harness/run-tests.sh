@@ -23,9 +23,9 @@ grep -aE 'GATE PASS|RESULT|mode=' "$HERE/logs/happy-$TS.log"
 echo "== attacks     -> logs/attacks-$TS.log"
 "$HERE/test-attacks.sh" > "$HERE/logs/attacks-$TS.log" 2>&1 || rc=1
 grep -a '^RESULT ' "$HERE/logs/attacks-$TS.log"
-open_attacks=$(grep -a '^RESULT .*NOT BLOCKED' "$HERE/logs/attacks-$TS.log" || true)
+open_attacks=$(grep -aE '^RESULT .*(NOT BLOCKED|WRONG REASON)' "$HERE/logs/attacks-$TS.log" || true)
 if [ -n "$open_attacks" ]; then
-  echo "ERROR: an attack printed NOT BLOCKED" >&2
+  echo "ERROR: an attack printed NOT BLOCKED or WRONG REASON" >&2
   printf '%s\n' "$open_attacks" >&2
   rc=1
 fi
@@ -53,7 +53,7 @@ fi
 if [ -z "$(printf '%s\n' "$names" | sed '/^$/d')" ]; then
   echo "RESULT mutate: no-changed-files pass"
 else
-  echo "mutate: harness files changed; running the visibility set"
-  python3 "$HERE/mutate.py" M45 M46 M47 M48 M49 M50 M51 || rc=1
+  echo "mutate: harness files changed; running the mutant set"
+  python3 "$HERE/mutate.py" M17 M45 M46 M47 M48 M49 M50 M51 || rc=1
 fi
 exit $rc

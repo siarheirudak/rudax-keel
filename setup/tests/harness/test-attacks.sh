@@ -139,8 +139,14 @@ for v in 'mkdir -p .GitHub/workflows && echo x > .GitHub/workflows/w.yml && git 
 if [ "$a4c" = ok ]; then res A4c "BLOCKED (case-insensitive forbidden paths; rename and mode-only change both caught)"; else res A4c "$a4c"; fi
 echo "### A6c many small files (0 lines each)"; fresh
 $K proto evil rw 'mkdir m && i=0; while [ $i -lt 2000 ]; do : > m/f$i; i=$((i+1)); done; git add m && git commit -qm many'; $K export >/dev/null; gate_expect_fail A6c 'files changed >'
-echo "### A13 corrupt object (malformed commit) caught by fetch fsck"; fresh
-$K proto evil rw 'echo c > c13 && git add c13 && git commit -qm base13 && t=$(git rev-parse HEAD^{tree}) && p=$(git rev-parse HEAD) && c=$(printf "tree %s\nparent %s\nauthor agent <a@x> notadate\ncommitter agent <a@x> 1700000000 +0000\n\nbad\n" $t $p | git hash-object -t commit -w --literally --stdin) && git update-ref refs/heads/task-1 $c && git cat-file -p $c | head -3'
+echo "### A13 bad date on an ancestor of main (not in the bundle)"; fresh
+M0=$(git -C "$R" rev-parse main)
+TREE=$(git -C "$R" rev-parse 'HEAD^{tree}')
+B=$(printf "tree %s\nparent %s\nauthor agent <a@x> notadate\ncommitter agent <a@x> 1700000000 +0000\n\nbad\n" "$TREE" "$M0" | git -C "$R" hash-object -t commit -w --literally --stdin)
+M1=$(GIT_AUTHOR_NAME=h GIT_AUTHOR_EMAIL=h@x GIT_AUTHOR_DATE='1700000000 +0000' GIT_COMMITTER_NAME=h GIT_COMMITTER_EMAIL=h@x GIT_COMMITTER_DATE='1700000000 +0000' git -C "$R" commit-tree "$TREE" -p "$B" -m base)
+git -C "$R" update-ref refs/heads/main "$M1"
+printf '%s\n' "$M1" > "$P/task-1.base"
+$K proto evil rw "git update-ref refs/heads/task-1 $M1 && git checkout -qf task-1 && echo c > c13 && git add c13 && git commit -qm a13"
 $K export >/dev/null; gate_expect_fail A13 'fetch/fsck'
 echo "### A14 submodule / gitlink entry"; fresh
 $K proto evil rw 'git update-index --add --cacheinfo 160000,$(git rev-parse HEAD),sub && git commit -qm gitlink'; $K export >/dev/null; gate_expect_fail A14 'submodule|forbidden path'
