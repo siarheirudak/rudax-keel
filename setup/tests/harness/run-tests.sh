@@ -41,8 +41,8 @@ fi
 names=""
 if [ -n "$base" ] && git -C "$repo" rev-parse --verify "$base" >/dev/null 2>&1; then
   names=$(git -C "$repo" diff --name-only "$base"...HEAD -- setup/keel.sh setup/lib setup/allow setup/deny setup/keel-doctor.sh setup/tests/harness || true)
-  dirty=$(git -C "$repo" status --porcelain -- setup/keel.sh setup/lib setup/allow setup/deny setup/keel-doctor.sh setup/tests/harness || true)
-  names="${names}"$'\n'"${dirty}"
+  names="${names}"$'\n'"$(git -C "$repo" diff --name-only HEAD -- setup/keel.sh setup/lib setup/allow setup/deny setup/keel-doctor.sh setup/tests/harness || true)"
+  names="${names}"$'\n'"$(git -C "$repo" diff --cached --name-only -- setup/keel.sh setup/lib setup/allow setup/deny setup/keel-doctor.sh setup/tests/harness || true)"
 fi
 if [ -z "$(printf '%s\n' "$names" | sed '/^$/d')" ]; then
   echo "RESULT mutate: no-changed-files pass"
