@@ -40,7 +40,7 @@ The full chain, including who acts at each link and what stops it, is in [Archit
 | Orchestrator, architect, critic, tester, developer, auditor, design reviewer, verifier, QA, researcher | Agents (planned) | Reason about one part of the task, inside a container |
 | Host scripts (including the planned **dispatcher**) | Programs | Own task state and transitions, package context, run gates, install dependencies, open the pull request, write the log |
 
-What each role is allowed to see is a **deny-list**: a role can read the repository except for paths the list withholds, and the withheld paths are simply not mounted into that role’s container. The list can only grow. Details: [Roles and visibility](docs/roles.md).
+What each role is allowed to see is a **folder allowlist**, minus a unified deny that always wins. A path that is not mounted is invisible. Details: [Roles and visibility](docs/roles.md).
 
 ## Where to read
 
@@ -79,7 +79,7 @@ On a private repository on GitHub Free, rulesets are not available. Apply prints
 
 The bot must run where the only GitHub token is the bot’s token: a cloud VM, a separate OS user, or a container. It must not run in a login where the owner is already authenticated. [Why](docs/why.md#agent-environment).
 
-A pull request that edits a process file must contain only process files. Process files are `.github/`, `scripts/`, `.cursor/`, `.claude/`, and `setup/`, plus the names `CODEOWNERS`, `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `.cursorrules`, `.windsurfrules`, `.clinerules`, `.mcp.json`, and `.shellcheckrc` anywhere, including under `setup/`. `setup/README.md` and `setup/TESTING.md` are the only ordinary docs under `setup/`. The match is the whole path and ignores case. `setup/a/README.md` and every other file under `setup/` are process files. [Why](docs/why.md#scope).
+A pull request that edits a process file must contain only process files. Process files are `.github/`, `scripts/`, and `setup/` at the root, and `.pi/` and `.agents/` at any depth, such as `pkg/.pi/` and `apps/.agents/`. `setup/README.md` and `setup/TESTING.md` are the only ordinary docs under `setup/`. The match is the whole path and ignores case. `setup/a/README.md` and every other file under `setup/` are process files. These names are process files anywhere, ignoring case: `AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md` (the fallback context file Pi Agent loads), `CODEOWNERS`, and `.shellcheckrc`. [Why](docs/why.md#scope).
 
 ### Isolation harness
 

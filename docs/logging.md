@@ -1,6 +1,6 @@
 # Logging and the task journal
 
-Two records follow a task. One is a short journal the host keeps so the task can resume. The other is a system log a person can read later without the repository open beside them. Both are specified for v1. Neither is written by the code in this repository.
+Two records follow a task. One is a short journal the host keeps so the task can resume. The other is a system log a person can read later without the repository open beside them. Both are specified for v1. Neither is written by the code in this repository. The harness does write a separate launch log, described below.
 
 ## The task journal
 
@@ -19,7 +19,11 @@ Resume starts at the last entry that passed. When a link is redone, the journal 
 
 The script deletes the journal immediately after the owner merges. A merged task is remembered through the system log and through any discovery the filter accepted, not through the journal.
 
-The directory `.keel/runs/` does not exist in this repository.
+The directory `.keel/runs/` is not committed. The harness uses it as temporary mount state and removes it when the command exits. The journal file is still not written.
+
+## Launch decisions
+
+When `setup/keel.sh role` or `role-env` accepts or refuses a launch, the harness appends one JSON object to `$KEEL_ROOT/.keel/logs/launch.jsonl`. Roles cannot read or write that directory. Cleanup does not delete it. A record includes `redactions`. Secret values are replaced with `[REDACTED:token]`, `[REDACTED:key]`, `[REDACTED:password]`, `[REDACTED:env]`, or `[REDACTED:unknown]`. This is not the system log below. Rotation is not implemented.
 
 ## The system log
 
