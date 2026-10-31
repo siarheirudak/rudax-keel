@@ -55,7 +55,7 @@ Those instructions state the primary bridge role, require a per-relay checklist 
 
 ## What the orchestrator will and will not do
 
-- Will write the brief, split plans, messages to you, dispatcher request files, and the D1 confidence-notes log; may record decisions into ADR / [Human decisions](decisions.md) and discoveries.
+- Will write the brief, split plans, messages to you, dispatcher request files, and the D1 confidence-notes log; may record decisions into ADR / [Human decisions](owner-decisions.md) and discoveries.
 - Will not write product code, tests, or process files.
 - Will not launch other containers by itself (it drops request files; the dispatcher launches roles).
 - May read almost everything (including the D1 log). Will not see secrets or paths in `.keel/deny.local` (for example user/customer data).
@@ -64,4 +64,4 @@ Those instructions state the primary bridge role, require a per-relay checklist 
 
 ## Related
 
-[Architecture](architecture.md) · [Roles and visibility](roles.md) · [Human decisions](decisions.md) · [Glossary](glossary.md) · [Intermediary agent instructions](intermediary-agent-instructions.md)
+[Architecture](architecture.md) · [Roles and visibility](roles.md) · [Human decisions](owner-decisions.md) · [Glossary](glossary.md) · [Intermediary agent instructions](intermediary-agent-instructions.md)
