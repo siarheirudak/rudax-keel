@@ -70,7 +70,7 @@ The developer, the tester, QA, and the architect receive project skills. The cri
 
 **Result names.** `CONTEXT_READY`, `NEEDS_SPLIT`, `STALE_PATHS`.
 
-**Visibility.** The deny-list applies to what can be packaged. Secrets are never packaged. Ordinary tests may be packaged; tester-written tests mount read-only for the developer.
+**Visibility.** Packaging must not include a path the role cannot mount. Secrets are never packaged. The developer’s `tests/` mount is read-only. The matrix is in [Roles and visibility](roles.md).
 
 ## L2. Stubs and plan
 

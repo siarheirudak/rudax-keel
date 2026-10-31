@@ -28,9 +28,11 @@ DOCKER="sudo docker" bash setup/tests/harness/run-tests.sh
 `setup/tests/harness/run-tests.sh` does the following:
 
 1. Builds the `keel-git` image from `setup/docker/keel-git.Dockerfile`.
-2. Runs `setup/tests/harness/test-happy.sh`: init-repo, setup, a coder role, a tester role, export, gate, push-stub, then cleanup.
-3. Runs `setup/tests/harness/test-attacks.sh`. Each attack prints a `RESULT` line.
-4. Runs `setup/keel-doctor.sh` without `--attacks`, and prints that verdict last. If `KEEL_REPO` is unset, it runs `setup/keel.sh init-repo` first, because the suites delete their throwaway repo.
+2. Runs the allowlist and redaction self-test.
+3. Runs `setup/tests/harness/test-happy.sh`: init-repo, setup, the gate-suite containers, export, gate, push-stub, cleanup, then the visibility checks.
+4. Runs `setup/tests/harness/test-attacks.sh`. Each attack prints a `RESULT` line. The visibility checks run at the end.
+5. Runs `setup/keel-doctor.sh` without `--attacks`, and prints that verdict last. If `KEEL_REPO` is unset, it runs `setup/keel.sh init-repo` first, because the suites delete their throwaway repo.
+6. If harness files changed against the base, runs the visibility mutation set. If none changed, it logs `no-changed-files` and does not treat that as a mutation pass.
 
 The suites delete `KEEL_ROOT` (default `~/keel-proto`). That directory is throwaway data, not a checkout of this repository. On macOS, `KEEL_ROOT` must sit under a directory Docker Desktop shares. The defaults in `setup/lib/portable.sh` are `/Users`, `/Volumes`, `/private`, `/tmp`, and `/var/folders`. A home directory under `/Users` qualifies. Otherwise `setup/keel.sh` stops with exit code 4 and tells you so.
 
