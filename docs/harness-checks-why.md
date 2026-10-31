@@ -335,7 +335,7 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 
 **If it fails.** FAIL (CRITICAL): the isolation property is not holding on this machine. Do not run agents.
 
-**How to fix.** Keep `FORBID_PREFIX` and `FORBID_NAME` in `setup/keel.sh` in sync with `scripts/check-scope.py`. `setup/keel.sh` also forbids `.pi/` and `.gitmodules`.
+**How to fix.** Keep `FORBID_PREFIX` and `FORBID_NAME` in `setup/keel.sh` in sync with `scripts/check-scope.py`. The host gate also forbids `.gitmodules`.
 
 <a id="atk-a12b"></a>
 
@@ -636,17 +636,17 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 <a id="atk-a18"></a>
 <a id="atk-a18b"></a>
 
-### ATK-A18/A18b PR #5 process paths
+### ATK-A18/A18b Pi process paths
 
 **Level.** CRITICAL
 
-**Check.** `docs/AGENTS.md` (A18) must fail with `forbidden path`. A18b does the same, one path per run, for `CLAUDE.md`, `CLAUDE.local.md`, `CODEOWNERS`, `.cursorrules`, `.windsurfrules`, `.clinerules`, `.mcp.json`, `.shellcheckrc`, `.gitmodules`, `setup/`, `scripts/`, `.cursor/`, and `.claude/`. The doctor names both lines "PR #5 process paths". The suite calls this B2.
+**Check.** `docs/AGENTS.md` (A18) must fail with `forbidden path`. A18b does the same, one path per run, for `.pi/SYSTEM.md`, `.pi/extensions/x.ts`, `.pi/mcp.json`, `.agents/skills/a/SKILL.md`, `pkg/.pi/SYSTEM.md`, `apps/.agents/skills/x/SKILL.md`, `sub/AGENTS.override.md`, `sub/claude.md`, `CLAUDE.md`, `CODEOWNERS`, `.shellcheckrc`, `.gitmodules`, `setup/keel.sh`, and `scripts/check.sh`. `.pi/` and `.agents/` are process directories at any depth. `setup/README.md` and `setup/TESTING.md` are not forbidden. `CLAUDE.md` is the fallback context file Pi Agent loads. The doctor names both lines "Pi process paths". The suite calls this B2.
 
-**Why.** The gate must not be weaker than `scripts/check-scope.py`. `setup/keel.sh` comments that its forbidden set is that process set, plus `.pi/` and `.gitmodules`.
+**Why.** The gate must not be weaker than `scripts/check-scope.py` on Pi Agent paths. The host gate also forbids `.gitmodules`.
 
 **If it fails.** FAIL (CRITICAL): the isolation property is not holding on this machine. Do not run agents.
 
-**How to fix.** Rule names match as a basename at any depth (`(^|/)name$`). Prefixes match at the root.
+**How to fix.** Rule names match as a basename at any depth (`(^|/)name$`). `.github/`, `setup/`, and `scripts/` match at the root. `.pi/` and `.agents/` match at any depth (`(^|/)`).
 
 <a id="atk-a19"></a>
 <a id="atk-a19b"></a>

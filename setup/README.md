@@ -17,13 +17,17 @@ Apply is safe to re-run after each layer merge. Settings that already match are 
 
 Private repository on GitHub Free: rulesets do not exist. Continue only with `--accept-risk`, or by typing `yes`. The ruleset lines stay FAIL.
 
-Logs: `setup/logs/apply-<timestamp>.log` and `setup/logs/verify-<timestamp>.log` (gitignored). Each line links to [docs/why.md](../docs/why.md).
+Logs: `setup/logs/apply-<timestamp>.log` and `setup/logs/verify-<timestamp>.log` (gitignored). Each line links to [docs/why.md](../docs/why.md). The log file is plain text.
 
-- **OK** — just applied.
-- **ALREADY** — was already correct.
-- **NOT YET** — intentionally later. `require-checks` is NOT YET until `checks.yml` and `scope.yml` are on the default branch and every require-checks context has been reported by GitHub Actions app 15368. The reason lists the names that reported and the names still missing.
-- **FAIL** — not done. The script exits non-zero if any step is FAIL. A line that names a Settings page is a manual step the API cannot do.
-- **WARN** — noted, and the script still exits zero if nothing else failed. Verify uses this when the latest `checks` push to the default branch is red. A red pull request run does not count.
+- **✅ OK** — just applied.
+- **☑️ ALREADY** — was already correct.
+- **⏳ NOT YET** — intentionally later. `require-checks` is NOT YET until `checks.yml` and `scope.yml` are on the default branch and every require-checks context has been reported by GitHub Actions app 15368. The reason lists the names that reported and the names still missing.
+- **❌ FAIL** — not done. The script exits non-zero if any step is FAIL. A line that names a Settings page is a manual step the API cannot do.
+- **⚠️ WARN** — noted, and the script still exits zero if nothing else failed. Verify uses this when the latest `checks` push to the default branch is red. A red pull request run does not count.
+
+On a terminal, the emoji stands in front of the status word in each step line and in the summary. The word itself stays, so a search for `OK` or `NOT YET` still matches. When stdout is not a terminal, the lines are plain text. `--no-emoji`, or `NO_EMOJI=1`, forces plain text on a terminal too. Apply and verify use the same marks.
+
+When any step is NOT YET, apply prints a separate block after the summary. The block names what is not ready and why, then this line: `run setup/apply-github-rules.sh again after the first pull request has run the checks`. NOT YET does not by itself make the exit code non-zero. The usual case is `require-checks`. After `checks.yml` and `scope.yml` are on the default branch, open a pull request so those checks run, then run apply again. That second run creates `require-checks` once both names have been reported.
 
 An unpinned `uses:` is OK with a reason starting `warning:`.
 
