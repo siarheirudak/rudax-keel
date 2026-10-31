@@ -60,6 +60,7 @@ M = {
  'M49': ('lib/visibility.py', '.casefold()  # fold-nfc-case', '  # fold-nfc-case', 'break casefold matching', ['V-A15']),
  'M50': ('lib/visibility.py', 'unicodedata.normalize("NFC", text).casefold()', 'text.casefold()', 'break NFC matching', ['V-A16']),
  'M51': ('lib/visibility.py', 'return _redact_impl(text, env)  # redaction-on', 'return text, 0  # redaction-on', 'disable log redaction', ['V-A24']),
+ 'M52': ('lib/visibility.py', 'same_fs = False  # developer-same-fs', 'same_fs = True  # developer-same-fs', 'make developer tests writable on the same filesystem as src', ['V-A10-hardlink']),
 }
 M['M15'] = (K, M['M13'][1], M['M13'][2], M['M15'][3], M['M15'][4])  # applied together with M14 below
 GREEN = re.compile(r'^(BLOCKED|CONTAINED|PARTIAL|N/A)')

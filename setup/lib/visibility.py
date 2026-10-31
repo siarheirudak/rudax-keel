@@ -472,6 +472,8 @@ def now_ts():
 
 
 def fixture_detail(keel):
+    if os.environ.get("KEEL_REDACT_FIXTURE") != "1":
+        return ""
     path = os.path.join(keel, ".keel", "redact-fixture")
     if os.path.isfile(path) and not os.path.islink(path):
         return read_text(path)
@@ -657,6 +659,13 @@ def build_mounts(role, work, harness, keel, task, repo, env):
                 raise PolicyError("allow_not_dir", "setup/allow/" + role + ".paths", line, rel)
         if not os.path.isdir(host):
             raise PolicyError("allow_not_dir", "setup/allow/" + role + ".paths", line, rel)
+        # Separate binds keep tests and src on different mounts, so a hardlink cannot cross them.
+        same_fs = False  # developer-same-fs
+        if role == "developer" and same_fs:
+            if not mounts:
+                mounts.append((source, "/work", "rw"))
+            mounted.append(logical)
+            continue
         mounts.append((host, container, mode))
         mounted.append(logical)
         local_masks = []
@@ -887,7 +896,26 @@ except skills_auditor path .agents
         last = json.loads(logged.strip().splitlines()[-1])
         assert last["redactions"] >= 1
         assert last["event"] == "launch_ok"
-        # guard: a broken redaction must not keep the raw value
+        fix = os.path.join(keel, ".keel", "redact-fixture")
+        with open(fix, "w", encoding="utf-8") as handle:
+            handle.write(token + "\nFIXTURE-RECORD\n")
+        os.environ.pop("KEEL_REDACT_FIXTURE", None)
+        log_ok(keel, "developer", ["src"], [], env, "")
+        quiet = json.loads(open(os.path.join(keel, ".keel", "logs", "launch.jsonl"), encoding="utf-8").read().strip().splitlines()[-1])
+        assert quiet["redactions"] == 0, quiet
+        assert token not in quiet["detail"]
+        assert "FIXTURE-RECORD" not in quiet["detail"]
+        os.environ["KEEL_REDACT_FIXTURE"] = "1"
+        try:
+            log_ok(keel, "developer", ["src"], [], env, "")
+            fed = json.loads(open(os.path.join(keel, ".keel", "logs", "launch.jsonl"), encoding="utf-8").read().strip().splitlines()[-1])
+            assert fed["redactions"] >= 1, fed
+            assert token not in fed["detail"]
+            assert "[REDACTED:token]" in fed["detail"]
+            assert "FIXTURE-RECORD" in fed["detail"]
+        finally:
+            os.environ.pop("KEEL_REDACT_FIXTURE", None)
+            os.remove(fix)
     finally:
         shutil.rmtree(tmp)
     print("visibility self-test ok")

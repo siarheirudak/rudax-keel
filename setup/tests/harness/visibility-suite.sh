@@ -12,6 +12,7 @@ export P=$KEEL_ROOT
 export W=$P/work/task-1
 export SETUP
 export DOCKER=${DOCKER:-docker}
+trap 'rm -f "$P/.keel/redact-fixture"' EXIT
 res(){ echo "RESULT $1: $2"; }
 bad=0
 mark(){
@@ -45,6 +46,16 @@ LOG(){ echo "$P/.keel/logs/launch.jsonl"; }
 rm -rf "$P"
 "$K" init-repo >/dev/null
 "$K" setup >/dev/null
+launch_bad=0
+for role in orchestrator architect tester developer auditor skills_auditor critic design_reviewer verifier qa researcher; do
+  out=$("$K" role "$role" 'echo LAUNCH-OK' 2>&1) || true
+  if ! printf '%s\n' "$out" | grep -q LAUNCH-OK; then
+    echo "launch $role failed: $out"
+    launch_bad=1
+  fi
+done
+if [ "$launch_bad" -eq 0 ]; then mark V-H9 ok "every role launches"; else mark V-H9 bad "a role refused"; fi
+rm -f "$P/task-1.deny"
 mkdir -p "$W/briefs" "$W/docs" "$W/src" "$W/tests" "$W/skills-draft" "$W/skill-review" \
   "$W/plans" "$W/findings" "$W/qa-stub" "$W/research-stub" \
   "$W/.keel/decisions/task-1" "$W/.agents/skills/draft" "$P/.keel"
@@ -63,16 +74,6 @@ TOKEN='ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 export GH_TOKEN="$TOKEN"
 export KEEL_SECRET='envonlysecretvalue123456'
 python3 - << 'PY'
-import base64, os
-token = os.environ["GH_TOKEN"]
-secret = os.environ["KEEL_SECRET"]
-blob = base64.b64encode(token.encode()).decode()
-text = token + "\n" + blob + "\n" + secret + "\npassword=hunter2hunter2hunter2\nZz9unknownSecretValue1234567890abcd\n"
-open("/tmp/vis-fixture.txt","w",encoding="utf-8").write(text)
-open(os.environ["P"] + "/.keel/redact-fixture","w",encoding="utf-8").write(text)
-print("blob", blob)
-PY
-python3 - << 'PY'
 import os, unicodedata
 root = os.environ["W"]
 nfd = unicodedata.normalize("NFD", "caf\u00e9")
@@ -86,6 +87,12 @@ echo "### developer bundle"
 out=$($K role developer 'printf "tests=%s\n" "$(cat /work/tests/readme.txt)"; echo hack > /work/tests/hack.txt && echo WRITE-OK || echo WRITE-FAIL; printf "under=%s\n" "$(cat /work/src/.env 2>/dev/null)"; cat /work/.env >/dev/null 2>&1 && echo ROOT-OK || echo NOROOT; printf "case=%s\n" "$(cat /work/src/.ENV 2>/dev/null)"; printf "cust=%s\n" "$(cat /work/src/customer.txt 2>/dev/null)"; echo STDOUT-MARKER')
 echo "$out"
 if echo "$out" | grep -q 'tests=readme' && echo "$out" | grep -q WRITE-FAIL && [ ! -e "$W/tests/hack.txt" ]; then mark V-H1 ok "read tests, write failed"; mark V-A2 ok "tests stay read-only"; else mark V-H1 bad "tests=$out"; mark V-A2 bad "write"; fi
+before=$(cksum "$W/tests/readme.txt")
+link_out=$("$K" role developer 'ln /work/tests/readme.txt /work/src/v-a10-alias >/tmp/ln.out 2>&1; echo ln_rc:$?; echo pwn > /work/src/v-a10-alias; echo alias_rc:$?; printf "tests_now=%s\n" "$(cat /work/tests/readme.txt)"')
+echo "hardlink: $link_out"
+after=$(cksum "$W/tests/readme.txt")
+if [ "$before" = "$after" ] && echo "$link_out" | grep -q 'tests_now=readme'; then mark V-A10-hardlink ok "tests file unchanged"; else mark V-A10-hardlink bad "tests file changed"; fi
+rm -f "$W/src/v-a10-alias"
 if echo "$out" | grep -q UNDERSECRET; then mark V-A20 bad "deny lost"; mark V-H3 bad "under visible"; else mark V-A20 ok "deny wins"; mark V-H3 ok "basename withheld"; fi
 if echo "$out" | grep -q NOROOT && ! echo "$out" | grep -q ROOTSECRET; then mark V-A1 ok "root secret absent"; else mark V-A1 bad "root visible"; fi
 if echo "$out" | grep -q CASESECRET; then mark V-A15 bad "casefold"; else mark V-A15 ok "casefold withheld"; fi
@@ -157,7 +164,22 @@ ln "$W/src/.env" "$W/src/alias"
 out=$($K role developer 'printf "alias=%s\n" "$(cat /work/src/alias 2>/dev/null)"' 2>&1)
 echo "hard: $out"
 if ! echo "$out" | grep -q UNDERSECRET && echo "$out" | grep -q hardlink_withheld; then mark V-A8 ok "hardlink refused"; else mark V-A8 bad "$out"; fi
+rm -f "$W/src/alias"
 
+export KEEL_REDACT_FIXTURE=1
+python3 - << 'PY'
+import base64, os
+token = os.environ["GH_TOKEN"]
+secret = os.environ["KEEL_SECRET"]
+blob = base64.b64encode(token.encode()).decode()
+text = token + "\n" + blob + "\n" + secret + "\npassword=hunter2hunter2hunter2\nZz9unknownSecretValue1234567890abcd\nFIXTURE-RECORD\n"
+os.makedirs(os.path.join(os.environ["P"], ".keel"), exist_ok=True)
+open(os.path.join(os.environ["P"], ".keel", "redact-fixture"), "w", encoding="utf-8").write(text)
+PY
+fix_out=$("$K" role developer 'echo FIXTURE-LAUNCH')
+unset KEEL_REDACT_FIXTURE
+rm -f "$P/.keel/redact-fixture"
+echo "fixture launch: $fix_out"
 if python3 - << 'PY'
 import json, os, sys
 p=os.environ["P"]+"/.keel/logs/launch.jsonl"
@@ -170,19 +192,27 @@ if token in text or secret in text or blob in text or "Zz9unknownSecretValue1234
     bad.append("raw")
 if "STDOUT-MARKER" in text:
     bad.append("stdout")
-if "[REDACTED:token]" not in text or "[REDACTED:env]" not in text or "[REDACTED:password]" not in text or "[REDACTED:unknown]" not in text:
-    bad.append("placeholder")
-counts=[]
+rows=[]
 for line in text.splitlines():
     if not line.strip():
         continue
     obj=json.loads(line)
-    counts.append(obj.get("redactions"))
+    rows.append(obj)
     if obj.get("event")=="launch_ok" and obj.get("role")=="developer":
         if "mounted_roots" not in obj or "denied_withheld" not in obj:
             bad.append("fields")
-if any(c != 5 for c in counts):
-    bad.append("count %s" % counts[:8])
+fed=[obj for obj in rows if "FIXTURE-RECORD" in str(obj.get("detail") or "")]
+if not fed:
+    bad.append("no fixture record")
+else:
+    if any(obj.get("redactions") != 5 for obj in fed):
+        bad.append("count %s" % [obj.get("redactions") for obj in fed])
+    joined="\n".join(str(obj.get("detail") or "") for obj in fed)
+    if "[REDACTED:token]" not in joined or "[REDACTED:env]" not in joined or "[REDACTED:password]" not in joined or "[REDACTED:unknown]" not in joined:
+        bad.append("placeholder")
+other=[obj.get("redactions") for obj in rows if obj not in fed]
+if any(c != 0 for c in other):
+    bad.append("leak %s" % other[:8])
 print("REDACT", "ok" if not bad else "bad "+",".join(bad))
 sys.exit(0 if not bad else 1)
 PY

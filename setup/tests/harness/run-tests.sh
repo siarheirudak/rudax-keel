@@ -33,6 +33,8 @@ echo "== keel-doctor (verdict last; on a fresh throwaway repo, the suites wiped 
 [ -n "${KEEL_REPO:-}" ] || "$SETUP/keel.sh" init-repo >/dev/null
 "$SETUP/keel-doctor.sh" || rc=1
 fi
+echo "== doctor result ids"
+"$HERE/test-doctor-ids.sh" || rc=1
 echo "== mutate"
 repo=$(cd "$SETUP/.." && pwd)
 base=${KEEL_MUTATE_BASE:-}
@@ -54,6 +56,6 @@ if [ -z "$(printf '%s\n' "$names" | sed '/^$/d')" ]; then
   echo "RESULT mutate: no-changed-files pass"
 else
   echo "mutate: harness files changed; running the mutant set"
-  python3 "$HERE/mutate.py" M17 M45 M46 M47 M48 M49 M50 M51 || rc=1
+  python3 "$HERE/mutate.py" M17 M45 M46 M47 M48 M49 M50 M51 M52 || rc=1
 fi
 exit $rc

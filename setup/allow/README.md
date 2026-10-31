@@ -2,7 +2,7 @@
 
 `setup/keel.sh role <name>` and `role-env <name>` mount only the folder roots in `setup/allow/<name>.paths`. One folder root per line. Blank lines and `#` comments are ignored. Globs, absolute paths, and `..` are refused. An empty list, a missing file, or an unknown name refuses the launch.
 
-Read-only and read-write are fixed in `setup/lib/visibility.py`. `tests/` is read-only for the developer. The tester is mounted from the commit recorded at setup, and can write only `tests/` in that snapshot.
+Read-only and read-write are fixed in `setup/lib/visibility.py`. `tests/` is read-only for the developer. Developer `tests/` and `src/` are separate mounts, so a hardlink from one to the other fails and a write in `src/` does not change the tests file. The tester is mounted from the commit recorded at setup, and can write only `tests/` in that snapshot.
 
 `setup/deny/base` is the immutable withhold list (secret basenames and harness paths). `.keel/deny.local` may add paths. A line that tries to remove a base entry refuses the launch. The project file is read once per task, at the first launch, and later edits are ignored. Roles cannot read or write `.keel/deny.local`, `.keel/logs/`, or `.keel/runs/`.
 

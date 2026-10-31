@@ -105,6 +105,14 @@ case "${1:-}" in
 init-repo) mkdir -p "$R" "$P/.gatehome"; cd "$R" || exit 1; git init -q; git symbolic-ref HEAD refs/heads/main
   git config gc.auto 0; git config maintenance.auto false; git config gc.pruneExpire never; git config gc.reflogExpireUnreachable never
   printf '#!/bin/sh\nset -e\ngrep -q hello app.txt && echo TESTS-OK\n' > test.sh; echo hello > app.txt; mkdir -p .github; echo ci > .github/ci.yml; echo rules > AGENTS.md
+  # Every default allow root, so each role can launch on this throwaway repo.
+  sed -e 's/[[:space:]]*#.*//' -e '/^[[:space:]]*$/d' "$HERE"/allow/*.paths | while IFS= read -r rel; do
+    rel=$(printf '%s' "$rel" | awk '{print $1}')
+    [ -n "$rel" ] || continue
+    if [ "$rel" = ".keel/decisions" ]; then rel=".keel/decisions/$T"; fi
+    mkdir -p -- "$rel"
+    : > "$rel/.keep"
+  done
   git add -A; git -c user.name=h -c user.email=h@x commit -qm init; echo "repo main=$(git rev-parse main) gc.auto=$(git config gc.auto) gc.pruneExpire=$(git config gc.pruneExpire)";;
 setup) need_docker; M=$(git -C "$R" rev-parse main); mkdir -p "$W" "$B" "$(dirname "$S")"
   git init -q --bare "$S"; reset_shadow; echo "$M" > "$P/$T.base"
@@ -189,6 +197,8 @@ repo-gc|repo-prune) tasks_active && { echo "REFUSED: tasks active ($(cd "$P/work
 set-main) new=$2; old=$(git -C "$R" rev-parse main)
   if tasks_active && ! git -C "$R" merge-base --is-ancestor "$old" "$new"; then echo "REFUSED: main $old -> $new is not fast-forward while tasks active"; exit 3; fi
   git -C "$R" update-ref refs/heads/main "$new" "$old" && echo "main -> $new";;
-cleanup) rm -rf "$P/$T.deny" "$P/.keel/runs" "$W/.keel/runs" "$W" "$P/work/$T-env" "$S" "$G" "$B/$T.bundle" "$P/$T.base" "$P/$T.mode"; mkdir -p "$P/work"; echo "cleaned $T";;
+cleanup) rm -rf "$P/$T.deny" "$P/.keel/runs" "$W/.keel/runs" "$W" "$P/work/$T-env" "$S" "$G" "$B/$T.bundle" "$P/$T.base" "$P/$T.mode"
+  rm -f "$P/.keel/redact-fixture"
+  mkdir -p "$P/work"; echo "cleaned $T";;
 *) sed -n 2,7p "$0"; exit 2;;
 esac
