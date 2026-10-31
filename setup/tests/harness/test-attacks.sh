@@ -152,15 +152,15 @@ inc=$(git -C "$P/gate/task-1.git" rev-parse refs/keel/incoming/task-1 2>/dev/nul
 cmd=$(echo "$ps" | sed -n 's/.*would run: \(.*\) ; open PR.*/\1/p'); refs=${cmd##* push origin }
 if [ -n "$inc" ] && [ "$(echo "$ps" | grep -c 'push ')" = 1 ] && [ "$refs" = "$inc:refs/heads/agent/task-1" ]; then res A16 "BLOCKED (single refspec <gated sha>:refs/heads/agent/task-1; no --all/--mirror/tags)"; else res A16 "NOT BLOCKED (stub pushes: $refs)"; fi
 
-echo "### A17 forbidden path with a space (B1; awk \$NF split)"; fresh
+echo "### A17 forbidden path with a space (awk \$NF split)"; fresh
 $K role evil rw 'mkdir -p .github/workflows && echo x > ".github/workflows/evil x.yml" && git add -A && git commit -qm a17'; $K export >/dev/null; gate_expect_fail A17 'forbidden path'
-echo "### A17b forbidden path with UTF-8 (B1; git C-quotes it without -z)"; fresh
+echo "### A17b forbidden path with UTF-8 (git C-quotes it without -z)"; fresh
 $K role evil rw 'mkdir -p .github/workflows && echo x > ".github/workflows/$(printf "\303\251").yml" && git add -A && git commit -qm a17b'; $K export >/dev/null; gate_expect_fail A17b 'forbidden path'
-echo "### A17c forbidden path with a tab and a double quote (B1)"; fresh
+echo "### A17c forbidden path with a tab and a double quote"; fresh
 $K role evil rw 'mkdir -p .github && echo x > ".github/$(printf "a\tb\"c").yml" && git add -A && git commit -qm a17c'; $K export >/dev/null; gate_expect_fail A17c 'forbidden path'
-echo "### A18 nested docs/AGENTS.md (B2)"; fresh
+echo "### A18 nested docs/AGENTS.md"; fresh
 $K role evil rw 'mkdir -p docs && echo r > docs/AGENTS.md && git add -A && git commit -qm a18'; $K export >/dev/null; gate_expect_fail A18 'forbidden path'
-echo "### A18b Pi process paths, one path per run (B2)"; miss=
+echo "### A18b Pi process paths, one path per run"; miss=
 for f in .pi/SYSTEM.md .pi/extensions/x.ts .pi/mcp.json .agents/skills/a/SKILL.md pkg/.pi/SYSTEM.md apps/.agents/skills/x/SKILL.md sub/AGENTS.override.md sub/claude.md CLAUDE.md CODEOWNERS .shellcheckrc lib/.gitmodules setup/keel.sh scripts/check.sh; do fresh
   $K role evil rw "mkdir -p \"\$(dirname '$f')\" && echo x > '$f' && git add -A && git commit -qm a18b" >/dev/null; $K export >/dev/null
   $K gate 2>&1 | grep -q 'GATE FAIL: forbidden path' || miss="$miss $f"; done
@@ -168,23 +168,23 @@ fresh
 $K role evil rw 'mkdir -p setup && echo x > setup/README.md && echo y > setup/TESTING.md && git add -A && git commit -qm a18b-docs' >/dev/null; $K export >/dev/null
 $K gate 2>&1 | grep -q 'GATE PASS' || miss="$miss setup-docs"
 if [ -z "$miss" ]; then res A18b "BLOCKED (14/14 process paths: rule names anywhere, .pi/ and .agents/ at any depth, setup/ scripts/; setup/README.md and setup/TESTING.md are not forbidden)"; else res A18b "NOT BLOCKED:$miss"; fi
-echo "### A19 shadow config replaced by a symlink to a host file (B3)"; fresh
+echo "### A19 shadow config replaced by a symlink to a host file"; fresh
 echo victim > "$P/victim"
 $K role evil rw "rm /shadow/task-1.git/config && ln -s '$P/victim' /shadow/task-1.git/config && echo planted" ; $K reset-shadow 2>&1 | tail -1
 if [ "$(cat "$P/victim")" = victim ] && [ ! -L "$P/shadow/task-1.git/config" ]; then res A19 "BLOCKED (reset_shadow unlinks before writing; host file untouched)"; else res A19 "NOT BLOCKED (victim: $(head -1 "$P/victim"))"; fi
-echo "### A19b shadow objects/info replaced by a symlink to a host dir (B3)"; fresh
+echo "### A19b shadow objects/info replaced by a symlink to a host dir"; fresh
 mkdir -p "$P/victimdir"
 $K role evil rw "rm -rf /shadow/task-1.git/objects/info && ln -s '$P/victimdir' /shadow/task-1.git/objects/info && echo planted"; out=$($K reset-shadow 2>&1); rc=$?; echo "$out" | tail -1
 if [ ! -e "$P/victimdir/alternates" ] && [ $rc -ne 0 ] && echo "$out" | grep -q 'shadow tampered'; then res A19b "BLOCKED (refused: $(echo "$out" | tail -1))"; else res A19b "NOT BLOCKED (rc=$rc, host dir: $(ls "$P/victimdir"))"; fi
-echo "### A20 nested .git directory committed as content (B4)"; fresh
+echo "### A20 nested .git directory committed as content"; fresh
 $K role evil rw 'b=$(echo "[core]" | git hash-object -w --stdin) && g=$(printf "100644 blob %s\tconfig\n" $b | git mktree --missing) && s=$(printf "040000 tree %s\t.git\n" $g | git mktree --missing) && r=$( (git ls-tree HEAD; printf "040000 tree %s\tsub\n" $s) | git mktree --missing) && c=$(echo a20 | git commit-tree $r -p HEAD) && git update-ref refs/heads/task-1 $c && git ls-tree -r --name-only $c | grep git/'
 $K export >/dev/null; gate_expect_fail A20 'nested .git|fetch/fsck'
-echo "### A21 agent rewrites test.sh to always pass and breaks the product (B5)"; fresh
+echo "### A21 agent rewrites test.sh to always pass and breaks the product"; fresh
 $K role evil rw 'printf "#!/bin/sh\necho TESTS-OK\n" > test.sh && echo broken > app.txt && git commit -qam a21'; $K export >/dev/null; gate_expect_fail A21 'tests \(main:'
-echo "### A22 merge commit parking an orphan history (B6)"; fresh
+echo "### A22 merge commit parking an orphan history"; fresh
 $K role evil rw 'o=$(echo o > /tmp/o && git hash-object -w /tmp/o) && t=$(printf "100644 blob %s\to\n" $o | git mktree) && orph=$(echo orphan | git commit-tree $t) && git merge -q -s ours --allow-unrelated-histories -m a22 $orph && git log --oneline | head -3'
 $K export >/dev/null; gate_expect_fail A22 'merge commit|orphan'
-echo "### A22b merge of two branches both based on main (B6)"; fresh
+echo "### A22b merge of two branches both based on main"; fresh
 $K role evil rw 'git checkout -qb side && echo s > s22 && git add s22 && git commit -qm side && git checkout -q task-1 && echo m > m22 && git add m22 && git commit -qm main22 && git merge -q --no-edit side && git log --oneline --graph | head -5'
 $K export >/dev/null; gate_expect_fail A22b 'merge commit'
 

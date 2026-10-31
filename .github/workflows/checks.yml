@@ -122,7 +122,7 @@ jobs:
           fi
           exec env -i "${clean[@]}" bash setup/tests/harness/run-tests.sh
 
-  gate:
+  keel-gate:
     name: keel-gate
     needs: [actionlint, shellcheck, json, md-links, action-pins, fake-gh, project, harness]
     if: always()

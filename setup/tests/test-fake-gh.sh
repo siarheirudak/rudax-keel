@@ -691,6 +691,7 @@ need_not_yet_block
 ok "require-checks waits until both check runs have reported"
 
 reset
+# Names below (gate / process-files-separate) are intentionally wrong: prove apply ignores non-matching check names.
 mutate 'state["files"][".github/workflows/checks.yml"]="name: checks\n"; state["files"][".github/workflows/scope.yml"]="name: scope\n"; state["workflow_runs"]={"checks.yml":[{"id":1,"conclusion":"success","head_branch":"main","head_sha":"sha-checks","event":"push","jobs":[{"name":"gate"}]}],"scope.yml":[{"id":2,"conclusion":"success","head_branch":"pr","head_sha":"sha-scope","event":"pull_request_target","jobs":[{"name":"process-files-separate"}]}]}; state["check_runs"]=[{"head_sha":"sha-checks","name":"gate","conclusion":"success","app_id":15368},{"head_sha":"sha-scope","name":"process-files-separate","conclusion":"success","app_id":15368}]'
 run "$APPLY" owner/repo agent
 assert_rc 0

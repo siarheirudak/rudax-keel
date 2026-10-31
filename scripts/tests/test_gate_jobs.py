@@ -12,7 +12,7 @@ TYPES = "types: [opened, synchronize, reopened, edited]"
 def fail(message):
     print(message, file=sys.stderr)
     print(
-        "how to fix: keep scripts/gate-jobs.txt, the gate needs list, and the R_* env vars in .github/workflows/checks.yml the same",
+        "how to fix: keep scripts/gate-jobs.txt, the keel-gate needs list, and the R_* env vars in .github/workflows/checks.yml the same",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -60,12 +60,12 @@ def main():
     missing = [job for job in listed if job not in blocks]
     if missing:
         fail("gate list names missing jobs: {0}".format(", ".join(missing)))
-    gate = blocks.get("gate", "")
+    gate = blocks.get("keel-gate", "")
     if "name: keel-gate" not in gate:
-        fail("gate job name must be keel-gate")
+        fail("keel-gate job name must be keel-gate")
     needs = re.search(r"^    needs:\s*\[([^\]]+)\]\s*$", gate, re.M)
     if not needs:
-        fail("gate job has no needs list")
+        fail("keel-gate job has no needs list")
     needed = [part.strip() for part in needs.group(1).split(",")]
     if needed != listed:
         fail("needs {0} != gate-jobs.txt {1}".format(needed, listed))
