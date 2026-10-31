@@ -53,6 +53,13 @@ M = {
  'M42': (K, 'show "main:$TEST_ENTRY"', 'show "$I:$TEST_ENTRY"', 'B5: test entrypoint pinned to main', ['A21']),
  'M43': (K, '--min-parents=2 "main..$I")" ] ||', '--min-parents=2 "main..$I")" ] || true ||', 'B6: reject merge commits', ['A22b']),
  'M44': (K, '--max-parents=0 "main..$I")" ] ||', '--max-parents=0 "main..$I")" ] || true ||', 'B6: reject orphan/root commits', []),
+ 'M45': ('lib/visibility.py', 'return "ro"  # developer-tests-ro', 'return "rw"  # developer-tests-ro', 'drop read-only on tests', ['V-A2']),
+ 'M46': ('lib/visibility.py', 'apply_overlay = True  # deny-overlay-on', 'apply_overlay = False  # deny-overlay-on', 'skip the deny', ['V-A20']),
+ 'M47': (K, '  # Whole-tree fallback is not used.\n  :', '  MNT+=(-v "$W:/work:rw")', 'restore the whole-tree fallback', ['V-A17']),
+ 'M48': ('lib/visibility.py', 'raise PolicyError("deny_narrow", ".keel/deny.local", rec.line, rec.value)  # narrow-refused', 'rules[:] = [r for r in rules if not (r.kind == "name" and fold_key(r.value) == fold_key(rec.value))]  # narrow-refused', 'narrow the deny base', ['V-A19']),
+ 'M49': ('lib/visibility.py', '.casefold()  # fold-nfc-case', '  # fold-nfc-case', 'break casefold matching', ['V-A15']),
+ 'M50': ('lib/visibility.py', 'unicodedata.normalize("NFC", text).casefold()', 'text.casefold()', 'break NFC matching', ['V-A16']),
+ 'M51': ('lib/visibility.py', 'return _redact_impl(text, env)  # redaction-on', 'return text, 0  # redaction-on', 'disable log redaction', ['V-A24']),
 }
 M['M15'] = (K, M['M13'][1], M['M13'][2], M['M15'][3], M['M15'][4])  # applied together with M14 below
 GREEN = re.compile(r'^(BLOCKED|CONTAINED|PARTIAL|N/A)')
@@ -61,11 +68,13 @@ def run(mid):
     f, old, new, what, exp = M[mid][:5]
     d = tempfile.mkdtemp(prefix=f'mut-{mid}-', dir=os.path.expanduser('~'))
     src = os.path.join(d, 'p')
-    os.makedirs(os.path.join(src, 'lib'))
     os.makedirs(os.path.join(src, 'tests', 'harness'))
     shutil.copy2(os.path.join(SETUP, 'keel.sh'), os.path.join(src, 'keel.sh'))
-    shutil.copy2(os.path.join(SETUP, 'lib', 'portable.sh'), os.path.join(src, 'lib', 'portable.sh'))
+    shutil.copytree(os.path.join(SETUP, 'lib'), os.path.join(src, 'lib'))
+    shutil.copytree(os.path.join(SETUP, 'allow'), os.path.join(src, 'allow'))
+    shutil.copytree(os.path.join(SETUP, 'deny'), os.path.join(src, 'deny'))
     shutil.copy2(os.path.join(HARNESS, 'test-attacks.sh'), os.path.join(src, 'tests', 'harness', 'test-attacks.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'visibility-suite.sh'), os.path.join(src, 'tests', 'harness', 'visibility-suite.sh'))
     p = os.path.join(src, f); s = open(p).read()
     edits = [(old, new)] + list(M[mid][5] if len(M[mid]) > 5 else []) + ([(M['M14'][1], M['M14'][2])] if mid == 'M15' else [])
     for o, n in edits:

@@ -1,0 +1,19 @@
+# keel-deny-base
+# Basename and path withholds. A project file cannot remove these.
+name .env
+name .env.local
+name .env.production
+name .env.development
+name id_rsa
+name id_ed25519
+name credentials.json
+name secrets.json
+name .npmrc
+name .pypirc
+path .keel/logs
+path .keel/runs
+path .keel/deny.local
+path .git
+path .git/hooks
+except orchestrator,architect path .keel/decisions
+except skills_auditor path .agents
