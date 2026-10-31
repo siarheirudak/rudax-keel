@@ -24,7 +24,7 @@ M = {
  'M14': (K, '[ "$(hgit -C "$G" merge-base main "$I")" = "$M" ] || fail', 'true || fail', 'gate: merge-base == main', []),
  'M15': (K, '[ "$pre" = "$M" ] || fail', 'true || fail', 'gate: prerequisite AND merge-base (M15 also applies M14)', ['A8', 'A8b']),
  'M16': (K, 'else fail "foreign-owned files: $bad"; fi', 'fi', 'gate: ownership', ['A11-detect']),
- 'M17': (K, '-c fetch.fsckObjects=true -c transfer.fsckObjects=true ', '', 'gate: fsck on fetch', ['A13']),
+ 'M17': (K, 'hgit -C "$G" fsck --no-dangling "$I" >/dev/null || fail "fetch/fsck"', 'true', 'gate: fsck received commits', ['A13']),
  'M18': (K, '[ -z "$gl" ] ||', 'true ||', 'gate: gitlink rule', ['A14']),
  'M19': (K, '[ "$nf" -le "$MAX_FILES" ] || fail', 'true || fail', 'gate: file-count limit', ['A6c']),
  'M20': (K, '[ -z "$badid" ] || fail', 'true || fail', 'gate: agent identity', ['A15']),

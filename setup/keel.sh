@@ -156,6 +156,9 @@ gate) F=$B/$T.bundle; M=$(git -C "$R" rev-parse main); I=refs/keel/incoming/$T
   heads=$(hgit -C "$G" bundle list-heads "$F"); if [ "$(echo "$heads" | wc -l | tr -d ' ')" != 1 ] || [ "$(echo "$heads" | awk '{print $2}')" != "refs/heads/$T" ]; then fail "refs in bundle must be exactly refs/heads/$T, got: $(echo "$heads" | tr '\n' ' ')"; fi
   pre=$(sed -n '2,/^$/p' "$F" | grep -a '^-' | cut -c2-41); [ "$pre" = "$M" ] || fail "bundle base '$pre' != current main $M"
   hgit -C "$G" -c fetch.fsckObjects=true -c transfer.fsckObjects=true fetch -q --no-tags "$F" "+refs/heads/$T:$I" || fail "fetch/fsck"
+  # A bundle fetch does not pass those fsck flags to index-pack, so a bad
+  # commit date in the pack is accepted. Check the received tip explicitly.
+  hgit -C "$G" fsck --no-dangling "$I" >/dev/null || fail "fetch/fsck"
   [ "$(hgit -C "$G" merge-base main "$I")" = "$M" ] || fail "merge-base != main"
   [ -z "$(hgit -C "$G" rev-list --min-parents=2 "main..$I")" ] || fail "merge commit in change (exactly one parent required)"
   [ -z "$(hgit -C "$G" rev-list --max-parents=0 "main..$I")" ] || fail "orphan/root commit in change"

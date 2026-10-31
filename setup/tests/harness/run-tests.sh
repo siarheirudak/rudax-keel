@@ -23,6 +23,12 @@ grep -aE 'GATE PASS|RESULT|mode=' "$HERE/logs/happy-$TS.log"
 echo "== attacks     -> logs/attacks-$TS.log"
 "$HERE/test-attacks.sh" > "$HERE/logs/attacks-$TS.log" 2>&1 || rc=1
 grep -a '^RESULT ' "$HERE/logs/attacks-$TS.log"
+open_attacks=$(grep -a '^RESULT .*NOT BLOCKED' "$HERE/logs/attacks-$TS.log" || true)
+if [ -n "$open_attacks" ]; then
+  echo "ERROR: an attack printed NOT BLOCKED" >&2
+  printf '%s\n' "$open_attacks" >&2
+  rc=1
+fi
 echo "== keel-doctor (verdict last; on a fresh throwaway repo, the suites wiped theirs)"
 [ -n "${KEEL_REPO:-}" ] || "$SETUP/keel.sh" init-repo >/dev/null
 "$SETUP/keel-doctor.sh" || rc=1
