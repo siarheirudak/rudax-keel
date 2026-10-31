@@ -86,6 +86,17 @@ if git -C "$KEEL_REPO" rev-parse --git-dir >/dev/null 2>&1; then
   if br=$(git -C "$KEEL_REPO" symbolic-ref --short HEAD 2>/dev/null); [ "$br" = main ]; then check REPO-04 RECOMMENDED pass "on main"; else check REPO-04 RECOMMENDED warn "branch" "HEAD is '${br:-detached}', expected main"; fi
 else check REPO-01 CRITICAL fail "repository" "no git repo at $KEEL_REPO (set KEEL_REPO, or run: keel.sh init-repo for a throwaway one)"; fi
 
+section "Visibility"
+if ! command -v python3 >/dev/null 2>&1; then
+  check VIS-01 CRITICAL fail "allow and deny loader" "python3 is missing"
+else
+  if verr=$(python3 "$HERE/lib/visibility.py" doctor --harness "$HERE" 2>&1); then
+    check VIS-01 CRITICAL pass "allow and deny loader" "folder allowlists and the deny base parse"
+  else
+    check VIS-01 CRITICAL fail "allow and deny loader" "$(printf '%s' "$verr" | head -1 | cut -c1-140)"
+  fi
+fi
+
 section "Disk"
 dir=$KEEL_ROOT; while [ ! -d "$dir" ]; do dir=$(dirname "$dir"); done
 free=$(free_gib "$dir")
@@ -102,7 +113,7 @@ atk_name(){ case $1 in
   A6b) echo "gate: diff line limit";; A7) echo "gate: extra branch/tag rejected";; A7b) echo "gate: wrong branch name rejected";; A8) echo "gate: stale base rejected";;
   A8b) echo "gate: bundle without base rejected";; A12b) echo "forced git safety config in roles";; A4c) echo "gate: case/rename/mode forbidden-path variants";;
   A6c) echo "gate: changed-file count limit";; A13) echo "gate: fsck rejects corrupt objects";; A14) echo "gate: submodule/gitlink rejected";;
-  A15) echo "gate: spoofed commit identity rejected";; A16) echo "push stub: one gated sha, one branch";; A17|A17b|A17c) echo "gate: NUL-safe path parsing (space, UTF-8, tab/quote)";; A18|A18b) echo "gate: Pi process paths";; A19|A19b) echo "reset_shadow refuses symlinks";; A20) echo "gate: nested .git path";; A21) echo "gate: tests from main's entrypoint";; A22|A22b) echo "gate: no merge/orphan commits";; H5) echo "cpu limit";; A9) echo "reviewer can't commit";; A10) echo "gc guard";; A10b) echo "main can't move backwards";;
+  A15) echo "gate: commit identity rejected";; A16) echo "push stub: one gated sha, one branch";; A17|A17b|A17c) echo "gate: NUL-safe path parsing (space, UTF-8, tab/quote)";; A18|A18b) echo "gate: Pi process paths";; A19|A19b) echo "reset_shadow refuses symlinks";; A20) echo "gate: nested .git path";; A21) echo "gate: tests from main's entrypoint";; A22|A22b) echo "gate: no merge/orphan commits";; H5) echo "cpu limit";; A9) echo "reviewer can't commit";; A10) echo "gc guard";; A10b) echo "main can't move backwards";;
   A11) echo "no root-owned files";; A11-detect) echo "gate rejects foreign-owned files";; H1) echo "no mount/chown/caps";; H2) echo "fork bomb contained";;
   H3) echo "memory limit";; H4) echo "no writes outside mounts";; *) echo "$1";; esac; }
 

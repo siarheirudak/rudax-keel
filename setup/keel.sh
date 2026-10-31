@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # rudax-keel variant 2 prototype (tested on Linux; macOS Docker Desktop untested). bash 3.2+.
 # Usage: keel.sh <cmd>
-# cmds: init-repo | setup | reset-shadow | mode | role <name> <rw|ro> <sh-cmd> | role-env <sh-cmd> | export | gate | push-stub
+# cmds: init-repo | setup | reset-shadow | mode | proto <name> <rw|ro> <sh-cmd> | proto-env <sh-cmd> | role <name> [rw|ro] <sh-cmd> | role-env <name> <sh-cmd> | export | gate | push-stub
 #       | repo-gc | repo-prune | set-main <sha> | cleanup
 # env: KEEL_ROOT (default ~/keel-proto), TASK, DOCKER (docker | "sudo docker" | podman), IMG,
 #      KEEL_POINTER_MODE (auto | pointer | env)
@@ -36,6 +36,53 @@ GITENV=(-e HOME=/tmp -e "GIT_CONFIG_PARAMETERS='core.hooksPath'='/dev/null' 'cor
   -e GIT_AUTHOR_NAME=agent -e GIT_AUTHOR_EMAIL=a@x -e GIT_COMMITTER_NAME=agent -e GIT_COMMITTER_EMAIL=a@x)
 hgit(){ env -i PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin HOME="$P/.gatehome" GIT_CONFIG_NOSYSTEM=1 git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.pager=cat -c protocol.allow=never -c protocol.file.allow=always "$@"; }
 crun(){ $DOCKER run "${HARDEN[@]}" "${GITENV[@]}" "$@"; }
+KEEL_CMD=${1:-}
+keel_on_exit() {
+  local ec=$?
+  rm -rf "$P/.keel/runs"
+  if [ "$KEEL_CMD" = cleanup ] || { [ "$KEEL_CMD" = setup ] && [ "$ec" -ne 0 ]; }; then
+    rm -rf "$P/$T.deny" "$W/.keel/runs"
+  fi
+}
+trap keel_on_exit EXIT
+role_mounts() {
+  local role=$1 mf rc=0 kind src dst how
+  mkdir -p "$P/.keel/runs"
+  mf=$P/.keel/runs/mounts.$$
+  python3 "$HERE/lib/visibility.py" mounts --role "$role" --work "$W" --harness "$HERE" --keel "$P" --task "$T" --repo "$R" >"$mf" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    cat "$mf"
+    rm -f "$mf"
+    return "$rc"
+  fi
+  MNT=()
+  bad=0
+  while IFS=$'\t' read -r kind src dst how; do
+    [ -n "${kind:-}" ] || continue
+    if [ "$kind" != MOUNT ]; then
+      echo "REFUSED: bad mount record" >&2
+      bad=1
+      break
+    fi
+    MNT+=(-v "$src:$dst:$how")
+  done <"$mf"
+  rm -f "$mf"
+  [ "$bad" -eq 0 ] || return 1
+  return 0
+}
+run_policy() {
+  local name=$1
+  shift
+  role_mounts "$name" || return $?
+  echo "== role $name (policy)"
+  # Whole-tree fallback is not used.
+  :
+  if [ "${#MNT[@]}" -eq 0 ]; then
+    crun -w /tmp "$IMG" sh -c "$*"
+  else
+    crun "${MNT[@]}" -w /work "$IMG" sh -c "$*"
+  fi
+}
 mode(){ cat "$P/$T.mode" 2>/dev/null || echo pointer; }
 # work-tree mounts for the current mode. $1 = rw|ro. Sets array MNT.
 work_mounts(){ local m=$1
@@ -76,11 +123,23 @@ setup) need_docker; M=$(git -C "$R" rev-parse main); mkdir -p "$W" "$B" "$(dirna
   echo "mode=$md";;
 mode) mode;;
 reset-shadow) reset_shadow; echo "shadow reset";;
-role) shift; name=$1 m=$2; shift 2; reset_shadow
+proto) shift; name=$1 m=$2; shift 2; reset_shadow
   echo "== role $name ($m) [shadow reset, mode=$(mode)]"; work_mounts "$m"
   crun -v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c "$*";;
-role-env) shift; WE=$P/work/$T-env; mkdir -p "$WE"; reset_shadow
+proto-env) shift; WE=$P/work/$T-env; mkdir -p "$WE"; reset_shadow
   crun -e "GIT_DIR=/shadow/$T.git" -e GIT_WORK_TREE=/work -v "$R/.git/objects:/base/objects:ro" -v "$WE:/work" -v "$S:/shadow/$T.git" -w /work "$IMG" sh -c "$*";;
+role) shift; name=$1; shift
+  if [ "${1:-}" = rw ] || [ "${1:-}" = ro ]; then shift; fi
+  reset_shadow
+  run_policy "$name" "$@" || exit $?;;
+role-env) shift
+  if [ "$#" -lt 2 ]; then
+    python3 "$HERE/lib/visibility.py" refuse --code role_env_args --role "" --work "$W" --harness "$HERE" --keel "$P" --task "$T" --repo "$R" --file role-env --line 0
+    exit 1
+  fi
+  name=$1; shift
+  reset_shadow
+  run_policy "$name" "$@" || exit $?;;
 export) M=$(cat "$P/$T.base"); rm -f "$B/$T.bundle"; reset_shadow
   crun -v "$R/.git/objects:/base/objects:ro" -v "$S:/shadow/$T.git:ro" -v "$B:/bundles" "$IMG" \
     git --git-dir="/shadow/$T.git" bundle create "/bundles/$T.bundle" "refs/heads/$T" "^$M";;
@@ -127,6 +186,6 @@ repo-gc|repo-prune) tasks_active && { echo "REFUSED: tasks active ($(cd "$P/work
 set-main) new=$2; old=$(git -C "$R" rev-parse main)
   if tasks_active && ! git -C "$R" merge-base --is-ancestor "$old" "$new"; then echo "REFUSED: main $old -> $new is not fast-forward while tasks active"; exit 3; fi
   git -C "$R" update-ref refs/heads/main "$new" "$old" && echo "main -> $new";;
-cleanup) rm -rf "$W" "$P/work/$T-env" "$S" "$G" "$B/$T.bundle" "$P/$T.base" "$P/$T.mode"; mkdir -p "$P/work"; echo "cleaned $T";;
+cleanup) rm -rf "$P/$T.deny" "$P/.keel/runs" "$W/.keel/runs" "$W" "$P/work/$T-env" "$S" "$G" "$B/$T.bundle" "$P/$T.base" "$P/$T.mode"; mkdir -p "$P/work"; echo "cleaned $T";;
 *) sed -n 2,7p "$0"; exit 2;;
 esac

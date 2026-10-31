@@ -1,0 +1,4 @@
+# Roots of the pinned base tree. tests/ in that tree is writable.
+src
+docs
+tests
