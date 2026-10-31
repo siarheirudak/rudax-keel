@@ -625,7 +625,7 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 
 **Level.** CRITICAL
 
-**Check.** Commits adding `.github/workflows/evil x.yml` (space), `.github/workflows/é.yml` (UTF-8, which git C-quotes), and `.github/a<TAB>b"c.yml` must fail with `forbidden path`. The suite calls these B1.
+**Check.** Commits adding `.github/workflows/evil x.yml` (space), `.github/workflows/é.yml` (UTF-8, which git C-quotes), and `.github/a<TAB>b"c.yml` must fail with `forbidden path`.
 
 **Why.** Splitting `git diff --raw` on whitespace lets a space or a C-quoted path slip past every path rule.
 
@@ -640,7 +640,7 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 
 **Level.** CRITICAL
 
-**Check.** `docs/AGENTS.md` (A18) must fail with `forbidden path`. A18b does the same, one path per run, for `CLAUDE.md`, `CLAUDE.local.md`, `CODEOWNERS`, `.cursorrules`, `.windsurfrules`, `.clinerules`, `.mcp.json`, `.shellcheckrc`, `.gitmodules`, `setup/`, `scripts/`, `.cursor/`, and `.claude/`. The doctor names both lines "PR #5 process paths". The suite calls this B2.
+**Check.** `docs/AGENTS.md` (A18) must fail with `forbidden path`. A18b does the same, one path per run, for `CLAUDE.md`, `CLAUDE.local.md`, `CODEOWNERS`, `.cursorrules`, `.windsurfrules`, `.clinerules`, `.mcp.json`, `.shellcheckrc`, `.gitmodules`, `setup/`, `scripts/`, `.cursor/`, and `.claude/`. The doctor names both lines "PR #5 process paths".
 
 **Why.** The gate must not be weaker than `scripts/check-scope.py`. `setup/keel.sh` comments that its forbidden set is that process set, plus `.pi/` and `.gitmodules`.
 
@@ -655,7 +655,7 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 
 **Level.** CRITICAL
 
-**Check.** The agent replaces `shadow/<task>.git/config` with a symlink to a host file (A19), or `objects/info` with a symlink to a host dir (A19b). The host file must stay unchanged, and A19b must be refused (exit 8, `shadow tampered`). The suite calls this B3.
+**Check.** The agent replaces `shadow/<task>.git/config` with a symlink to a host file (A19), or `objects/info` with a symlink to a host dir (A19b). The host file must stay unchanged, and A19b must be refused (exit 8, `shadow tampered`).
 
 **Why.** The shadow is writable for the agent and `reset_shadow` runs on the host as the owner. Writing through a symlink clobbers any host file the owner can write.
 
@@ -669,7 +669,7 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 
 **Level.** CRITICAL
 
-**Check.** A hand-built tree containing `sub/.git/config` must fail. The suite accepts either `nested .git` or `fetch/fsck`. Fetch fsck catches it first. The gate rule `(^|/)\.git(/|$)` is the second layer. Mutants M40 and M41 in `setup/tests/harness/mutate.py` cover those two layers. The suite calls this B4.
+**Check.** A hand-built tree containing `sub/.git/config` must fail. The suite accepts either `nested .git` or `fetch/fsck`. Fetch fsck catches it first. The gate rule `(^|/)\.git(/|$)` is the second layer. Mutants M40 and M41 in `setup/tests/harness/mutate.py` cover those two layers.
 
 **Why.** A nested `.git` runs agent-chosen config (for example `core.fsmonitor`) if anyone ever runs git in that directory on the host.
 
@@ -683,7 +683,7 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 
 **Level.** CRITICAL
 
-**Check.** The agent rewrites `test.sh` to always print OK and breaks `app.txt`. The gate must fail with `tests (main:test.sh)`. The suite calls this B5.
+**Check.** The agent rewrites `test.sh` to always print OK and breaks `app.txt`. The gate must fail with `tests (main:test.sh)`.
 
 **Why.** If the agent controls the test script, a passing gate test means nothing.
 
@@ -698,7 +698,7 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 
 **Level.** CRITICAL
 
-**Check.** A merge with an unrelated orphan history (`-s ours`, zero files changed) (A22) and a merge of two main-based branches (A22b) must fail. The suite calls this B6.
+**Check.** A merge with an unrelated orphan history (`-s ours`, zero files changed) (A22) and a merge of two main-based branches (A22b) must fail.
 
 **Why.** Merges let an agent park unrelated history on the branch the broker pushes, with an empty diff.
 

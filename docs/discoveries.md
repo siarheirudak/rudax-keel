@@ -44,7 +44,7 @@ An accepted file is edited or deleted only by the harness, not by an agent role.
 
 When a cycle aborts, the dossier script writes the abort-cause entry. The agent that was running does not write it.
 
-The same pitfall accepted twice is one of the triggers for the skills side path: improve the skill that should have prevented it, or propose a new skill. That proposal still waits for the owner. [Human decisions](decisions.md#approvals).
+The same pitfall accepted twice is one of the triggers for the skills side path: improve the skill that should have prevented it, or propose a new skill. That proposal still waits for the owner. [Human decisions](owner-decisions.md#approvals).
 
 ## What is not a discovery
 
