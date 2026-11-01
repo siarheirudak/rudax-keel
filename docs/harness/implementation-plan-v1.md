@@ -64,8 +64,8 @@ The owner's answers (a D2 question, a skill, a split, an irreversible change, a 
 
 ## Build order
 
-### Step 1 — Visibility deny-list + mount policy
-- **Does:** Enforce deny-list by not mounting: **secrets** (all roles); **D1 confidence-notes log** (**auditor** until verdict only — orchestrator writes and may read it); new implementation (tester → pre-implementation commit); developer skills (auditor until verdict). Ordinary product **tests are visible** to roles that mount the work tree; **developer** mounts tests **read-only**. Harness-fixed paths + **`.keel/deny.local`** as a **flat list** of extra paths denied to **all** agents (including the orchestrator; e.g. user/customer data), enforced at **container mount** level, documented; project file may only **add** denies. Harness **base secret-pattern list**; projects may only **extend** it (cannot narrow). Tester write-scope and L3 product-RO / test-RW mounts are finalized in **Step 7** on top of this matrix. Content fencing is not in this step (backlog). See [Roles and visibility](../roles.md).
+### Step 1 — Folder allowlist + unified deny
+- **Does:** Mount only the folder roots in `setup/allow/<role>.paths`. `setup/deny/base` plus add-only `.keel/deny.local` withhold secrets, logs, runs, and `.keel/deny.local` itself. `.keel/decisions/<task-id>/` is for the orchestrator and the architect. The tester sees the commit recorded at setup. The developer’s `tests/` mount is read-only. Launch decisions are JSONL with typed redaction. Content fencing is not in this step. See [Roles and visibility](../roles.md).
 - **Depends on:** isolation (green), gate (green)
 - **Effort:** M
 - **Done when:** Developer can read tests but cannot write them (RO mount); orchestrator can read the D1 log and cannot see secrets/`deny.local` paths; auditor cannot see developer skills or D1 log before verdict; `deny.local` is flat and extend-only; secret-pattern base cannot be narrowed; docs state the matrix (no fence fixtures required here).
