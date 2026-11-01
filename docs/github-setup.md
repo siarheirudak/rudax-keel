@@ -76,6 +76,8 @@ Apply is idempotent. Run it again after each layer is merged. A setting that alr
 | Fork approval | On a public repository, require approval for fork pull request workflows from all outside collaborators. On a private repository the step is OK: `not applicable (private repo)`. |
 | Allowed actions | GitHub-owned actions, plus the exact `uses:` values in workflows on the default branch. |
 
+`require-checks` takes two passes. The first run of `setup/apply-github-rules.sh` stays NOT YET until `checks.yml` and `scope.yml` are on the default branch and GitHub Actions has reported both `keel-gate` and `keel-process-files-separate`. Apply then prints a separate block at the end. The block names what is not ready, why, and says to run `setup/apply-github-rules.sh` again after the first pull request has run the checks. Open that pull request, wait for both checks, and run apply again. The second run creates the ruleset. NOT YET does not by itself make the script fail.
+
 The agent GitHub account must accept the collaborator invitation before verify's agent-role step can pass.
 
 <a id="how-rulesets-stack"></a>
