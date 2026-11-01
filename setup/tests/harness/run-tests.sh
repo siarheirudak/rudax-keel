@@ -13,6 +13,8 @@ echo "== mutate plan"
 "$HERE/test-mutate-plan.sh" || exit 1
 echo "== nested ro probe"
 "$HERE/test-vis-ro.sh" || exit 1
+echo "== memory verdict"
+"$HERE/test-h3-verdict.sh" || exit 1
 mkdir -p "$HERE/logs"
 TS=$(date +%Y%m%d-%H%M%S)
 $DOCKER info >/dev/null 2>&1 || { echo "ERROR: $(docker_hint)" >&2; exit 5; }
@@ -28,9 +30,9 @@ grep -aE 'GATE PASS|RESULT|mode=' "$HERE/logs/happy-$TS.log"
 echo "== attacks     -> logs/attacks-$TS.log"
 "$HERE/test-attacks.sh" > "$HERE/logs/attacks-$TS.log" 2>&1 || rc=1
 grep -a '^RESULT ' "$HERE/logs/attacks-$TS.log"
-open_attacks=$(grep -aE '^RESULT .*(NOT BLOCKED|WRONG REASON)' "$HERE/logs/attacks-$TS.log" || true)
+open_attacks=$(grep -aE '^RESULT .*(NOT BLOCKED|WRONG REASON|: ERROR)' "$HERE/logs/attacks-$TS.log" || true)
 if [ -n "$open_attacks" ]; then
-  echo "ERROR: an attack printed NOT BLOCKED or WRONG REASON" >&2
+  echo "ERROR: an attack printed NOT BLOCKED, WRONG REASON, or ERROR" >&2
   printf '%s\n' "$open_attacks" >&2
   rc=1
 fi
@@ -51,7 +53,7 @@ if mutate_plan >"$decision_file"; then
   case $decision in
     "RESULT mutate: run")
       echo "mutate: harness files changed; running the mutant set"
-      python3 "$HERE/mutate.py" M17 M45 M46 M47 M48 M49 M50 M51 M52 || rc=1
+      python3 "$HERE/mutate.py" M17 M27 M45 M46 M47 M48 M49 M50 M51 M52 || rc=1
       ;;
     "RESULT mutate: skipped (no harness files changed)")
       ;;

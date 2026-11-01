@@ -4,8 +4,63 @@
 set -u; HERE=$(cd "$(dirname "$0")" && pwd -P); SETUP=$(cd "$HERE/../.." && pwd -P); K="$SETUP/keel.sh"; # shellcheck source=setup/lib/portable.sh
 . "$SETUP/lib/portable.sh"; export KEEL_ROOT=${KEEL_ROOT:-$HOME/keel-proto}; P=$KEEL_ROOT
 R=$P/repo W=$P/work/task-1 S=$P/shadow/task-1.git; D=${DOCKER:-docker}
+# shellcheck source=setup/tests/harness/h3-verdict.sh
+. "$HERE/h3-verdict.sh"
 res(){ echo "RESULT $1: $2"; }
 fresh(){ rm -rf "$P"; $K init-repo >/dev/null; $K setup >/dev/null; }
+h3_diag(){
+  echo "  H3 diag:"
+  $K proto h3diag ro 'echo memory.max=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo missing); echo memory.swap.max=$(cat /sys/fs/cgroup/memory.swap.max 2>/dev/null || echo missing); echo swaps=$(cat /proc/swaps 2>/dev/null); free' || true
+  echo "  host swaps: $(tr '\n' ';' < /proc/swaps 2>/dev/null || true)"
+  echo "  host free: $(free -m 2>/dev/null | tr '\n' ';')"
+  echo "  docker cgroup:"
+  $D info 2>/dev/null | grep -i -E 'cgroup|Memory|Swap' || true
+}
+run_h3(){
+  local bytes chunks out rc cidf cid oom verdict
+  bytes=$(h3_mem_bytes "${MEM:-512m}")
+  chunks=$(( (bytes * 2) / 1048576 + 256 ))
+  cat > "$W/h3-alloc.sh" << EOF
+#!/bin/sh
+mm=\$(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo missing)
+echo mem-max=\$mm
+sw=\$(cat /sys/fs/cgroup/memory.swap.max 2>/dev/null || echo missing)
+echo mem-swap-max=\$sw
+if [ "\$mm" != "$bytes" ]; then
+  echo mem-limit=absent
+  exit 0
+fi
+echo mem-limit=present
+awk 'BEGIN{ for (i=0;i<$chunks;i++) a[i]=sprintf("%1048576d", i) }'
+echo alloc-rc=\$?
+EOF
+  cidf=$(mktemp)
+  rm -f "$cidf"
+  set +e
+  out=$(KEEL_CIDFILE="$cidf" $K proto mem rw 'sh /work/h3-alloc.sh' 2>&1)
+  rc=$?
+  set +e
+  oom=unknown
+  if [ -s "$cidf" ]; then
+    cid=$(cat "$cidf")
+    oom=$($D inspect -f '{{.State.OOMKilled}}' "$cid" 2>/dev/null || echo gone)
+    $D rm -f "$cid" >/dev/null 2>&1 || true
+  fi
+  rm -f "$cidf" "$W/h3-alloc.sh"
+  echo "  docker-rc=$rc oom=$oom"
+  echo "$out"
+  verdict=$(h3_verdict "$out" "$rc" "$oom" "$bytes")
+  res H3 "$verdict"
+  case $verdict in
+    CONTAINED*) return 0;;
+    *) h3_diag; return 1;;
+  esac
+}
+if [ "${H3_ONLY:-}" = 1 ]; then
+  fresh
+  run_h3
+  exit $?
+fi
 # gate_expect_fail <ID> <regex the GATE FAIL reason must match>: failing for a DIFFERENT reason is not a pass
 gate_expect_fail(){ out=$($K gate 2>&1); rc=$?; echo "$out" | tail -2; why=$(echo "$out" | grep 'GATE FAIL' | head -1)
   if [ $rc -eq 0 ]; then res "$1" "NOT BLOCKED"; elif echo "$why" | grep -qE "$2"; then res "$1" "BLOCKED (gate: $why)"; else res "$1" "WRONG REASON (expected /$2/, got: ${why:-rc=$rc})"; fi; }
@@ -124,8 +179,7 @@ echo "### H5 cpu limit"
 cm=$($K proto cchk ro 'cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo unknown'); cm=$(echo "$cm" | tail -1); echo "  cpu.max=$cm"
 case $cm in max*|unknown|'') res H5 "NOT BLOCKED (no cpu quota: $cm)";; *) res H5 "CONTAINED (cpu quota $cm)";; esac
 echo "### H3 memory limit"; fresh
-out=$($K proto mem rw 'head -c 2000m /dev/zero | tail >/dev/null; echo tail-rc=$?' 2>&1); echo "$out"
-if echo "$out" | grep -q 'tail-rc=137'; then res H3 "CONTAINED (2 GB allocation OOM-killed, 137)"; else res H3 "NOT BLOCKED"; fi
+run_h3 || true
 echo "### H4 write outside mounts"; fresh
 out=$($K proto w rw 'n=0; for f in /etc/x /usr/x /root/x /x /var/x /home/x /base/objects/x; do touch $f 2>/dev/null && n=$((n+1)); done; echo outside-writes=$n; echo rootfs=$(grep " / " /proc/mounts | tail -1 | cut -d" " -f4 | cut -d, -f1); dd if=/dev/zero of=/tmp/big bs=1M count=100 2>/dev/null; echo tmp-bytes=$(stat -c %s /tmp/big)'); echo "$out"
 if echo "$out" | grep -q 'outside-writes=0' && echo "$out" | grep -q 'rootfs=ro' && [ "$(echo "$out" | sed -n 's/tmp-bytes=//p')" -le 67108864 ]; then res H4 "BLOCKED (rootfs mounted ro, 0 writes outside mounts; /tmp capped at 64 MiB)"; else res H4 "NOT BLOCKED"; fi

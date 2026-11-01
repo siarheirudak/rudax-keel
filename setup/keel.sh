@@ -35,7 +35,19 @@ case "$DOCKER" in *podman*) HARDEN+=(--userns=keep-id);; esac
 GITENV=(-e HOME=/tmp -e "GIT_CONFIG_PARAMETERS='core.hooksPath'='/dev/null' 'core.fsmonitor'='false'"
   -e GIT_AUTHOR_NAME=agent -e GIT_AUTHOR_EMAIL=a@x -e GIT_COMMITTER_NAME=agent -e GIT_COMMITTER_EMAIL=a@x)
 hgit(){ env -i PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin HOME="$P/.gatehome" GIT_CONFIG_NOSYSTEM=1 git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.pager=cat -c protocol.allow=never -c protocol.file.allow=always "$@"; }
-crun(){ $DOCKER run "${HARDEN[@]}" "${GITENV[@]}" "$@"; }
+crun(){
+  local a harden=()
+  if [ -n "${KEEL_CIDFILE:-}" ]; then
+    for a in "${HARDEN[@]}"; do
+      [ "$a" = "--rm" ] && continue
+      harden+=("$a")
+    done
+    harden+=(--cidfile "$KEEL_CIDFILE")
+  else
+    harden=("${HARDEN[@]}")
+  fi
+  $DOCKER run "${harden[@]}" "${GITENV[@]}" "$@"
+}
 KEEL_CMD=${1:-}
 keel_on_exit() {
   local ec=$?

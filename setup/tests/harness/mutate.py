@@ -75,6 +75,7 @@ def run(mid):
     shutil.copytree(os.path.join(SETUP, 'allow'), os.path.join(src, 'allow'))
     shutil.copytree(os.path.join(SETUP, 'deny'), os.path.join(src, 'deny'))
     shutil.copy2(os.path.join(HARNESS, 'test-attacks.sh'), os.path.join(src, 'tests', 'harness', 'test-attacks.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'h3-verdict.sh'), os.path.join(src, 'tests', 'harness', 'h3-verdict.sh'))
     shutil.copy2(os.path.join(HARNESS, 'visibility-suite.sh'), os.path.join(src, 'tests', 'harness', 'visibility-suite.sh'))
     p = os.path.join(src, f); s = open(p).read()
     edits = [(old, new)] + list(M[mid][5] if len(M[mid]) > 5 else []) + ([(M['M14'][1], M['M14'][2])] if mid == 'M15' else [])
