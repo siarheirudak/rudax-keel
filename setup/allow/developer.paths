@@ -1,0 +1,4 @@
+# Product roots. tests/ is mounted read-only.
+src
+docs
+tests
