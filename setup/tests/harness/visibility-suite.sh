@@ -18,6 +18,33 @@ bad=0
 mark(){
   if [ "$2" = ok ]; then res "$1" "BLOCKED ($3)"; else res "$1" "NOT BLOCKED ($3)"; bad=1; fi
 }
+# $DOCKER may be several words ("sudo docker"). Do not quote it.
+ro_probe() {
+  local vro out err
+  # shellcheck disable=SC2086
+  if ! err=$($DOCKER info 2>&1); then
+    [ -n "$err" ] && printf '%s\n' "$err" >&2
+    res V-RO "ERROR docker unavailable"
+    bad=1
+    return 0
+  fi
+  vro=$(mktemp -d)
+  mkdir -p "$vro/parent/child"
+  echo child > "$vro/parent/child/file.txt"
+  # shellcheck disable=SC2086
+  out=$($DOCKER run --rm --read-only --user "$(id -u):$(id -g)" -v "$vro/parent:/work:rw" -v "$vro/parent/child:/work/child:ro" keel-git sh -c 'echo hack > /work/child/file.txt && echo WRITE-OK || echo WRITE-FAIL' 2>&1) || true
+  rm -rf "$vro"
+  if printf '%s\n' "$out" | grep -q WRITE-FAIL; then
+    mark V-RO ok "nested read-only child"
+  else
+    [ -n "$out" ] && printf '%s\n' "$out" >&2
+    mark V-RO bad "nested ro failed"
+  fi
+}
+if [ "${VIS_RO_ONLY:-}" = 1 ]; then
+  ro_probe
+  exit "$bad"
+fi
 need_log(){
   python3 - "$1" "$2" "$3" << 'PY'
 import json, sys
@@ -341,15 +368,7 @@ prc=$?
 if [ $prc -eq 0 ]; then mark V-PARSE ok "parser attacks"; else mark V-PARSE bad "parser rc=$prc"; fi
 
 # nested ro
-vro=$(mktemp -d)
-mkdir -p "$vro/parent/child"
-echo child > "$vro/parent/child/file.txt"
-if docker run --rm --read-only --user "$(id -u):$(id -g)" -v "$vro/parent:/work:rw" -v "$vro/parent/child:/work/child:ro" keel-git sh -c 'echo hack > /work/child/file.txt && echo WRITE-OK || echo WRITE-FAIL' | grep -q WRITE-FAIL; then
-  mark V-RO ok "nested read-only child"
-else
-  mark V-RO bad "nested ro failed"
-fi
-rm -rf "$vro"
+ro_probe
 
 "$K" cleanup >/dev/null
 if [ -e "$P/task-1.deny" ] || [ -d "$P/.keel/runs" ]; then mark V-RUNS bad "left behind"; else mark V-RUNS ok "cleaned"; fi

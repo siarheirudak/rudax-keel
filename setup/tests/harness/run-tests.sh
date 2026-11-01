@@ -11,6 +11,8 @@ SETUP=$(cd "$HERE/../.." && pwd -P)
 DOCKER=${DOCKER:-docker}; export DOCKER
 echo "== mutate plan"
 "$HERE/test-mutate-plan.sh" || exit 1
+echo "== nested ro probe"
+"$HERE/test-vis-ro.sh" || exit 1
 mkdir -p "$HERE/logs"
 TS=$(date +%Y%m%d-%H%M%S)
 $DOCKER info >/dev/null 2>&1 || { echo "ERROR: $(docker_hint)" >&2; exit 5; }
