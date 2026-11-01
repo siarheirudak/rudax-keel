@@ -63,4 +63,4 @@ The harness suites write under `setup/tests/harness/logs/`, also gitignored. Tho
 
 ## Related
 
-[Discoveries and ADRs](discoveries.md) · [Human decisions](decisions.md) · [Implementation status](status.md)
+[Discoveries and ADRs](discoveries.md) · [Human decisions](owner-decisions.md) · [Implementation status](status.md)

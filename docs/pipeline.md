@@ -310,7 +310,7 @@ The human-size band used when judging whether a pull request is large is the sam
 
 **Visibility.** The envelope is the page the owner reads. The design expects the owner to be able to merge from that page.
 
-Release is a separate owner action after the merge, documented in [Human decisions](decisions.md#release).
+Release is a separate owner action after the merge, documented in [Human decisions](owner-decisions.md#release).
 
 ## L11. After the merge
 
@@ -347,4 +347,4 @@ Release is a separate owner action after the merge, documented in [Human decisio
 
 ## Related
 
-[Architecture](architecture.md) · [Human decisions](decisions.md) · [Quality standard](quality.md) · [Implementation status](status.md)
+[Architecture](architecture.md) · [Human decisions](owner-decisions.md) · [Quality standard](quality.md) · [Implementation status](status.md)
