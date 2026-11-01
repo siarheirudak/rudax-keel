@@ -22,6 +22,7 @@ for id in $ids; do
     printf 'RESULT %s: BLOCKED (score)\n' "$id" >> "$miss"
   fi
 done
+printf '%s\n' 'RESULT mutate: skipped (no harness files changed)' >> "$full"
 while IFS= read -r name; do
   [ -n "$name" ] || continue
   unset "$name"
@@ -45,8 +46,8 @@ if [ "$miss_ec" -eq 0 ] || ! grep -q 'NOT READY' "$miss_out" || ! grep -q 'ATK-V
   cat "$miss_out" >&2
   fail=1
 fi
-if [ "$full_ec" -ne 0 ] || grep -q 'NOT READY' "$full_out"; then
-  echo "complete result list was not ready (exit $full_ec)" >&2
+if [ "$full_ec" -ne 0 ] || grep -q 'NOT READY' "$full_out" || grep -q 'ATK-mutate' "$full_out"; then
+  echo "complete result list was not ready, or a skip was scored (exit $full_ec)" >&2
   cat "$full_out" >&2
   fail=1
 fi

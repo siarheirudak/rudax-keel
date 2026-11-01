@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # run-tests.sh: build the image, run both suites, then print the keel-doctor verdict last. Any OS with bash 3.2+ and Docker.
 # Creates a THROWAWAY repo under $KEEL_ROOT (wiped!). No network, no tokens, no GitHub.
-# env: DOCKER (default docker; Linux without docker group: DOCKER="sudo docker"), KEEL_ROOT (default ~/keel-proto)
+# env: DOCKER (default docker; Linux without docker group: DOCKER="sudo docker"), KEEL_ROOT (default ~/keel-proto),
+#      KEEL_MUTATE_BASE (commit to diff; otherwise GITHUB_BASE_REF or origin/main)
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 SETUP=$(cd "$HERE/../.." && pwd -P)
 # shellcheck source=setup/lib/portable.sh
 . "$SETUP/lib/portable.sh"
 DOCKER=${DOCKER:-docker}; export DOCKER
+echo "== mutate plan"
+"$HERE/test-mutate-plan.sh" || exit 1
 mkdir -p "$HERE/logs"
 TS=$(date +%Y%m%d-%H%M%S)
 $DOCKER info >/dev/null 2>&1 || { echo "ERROR: $(docker_hint)" >&2; exit 5; }
@@ -36,26 +39,27 @@ fi
 echo "== doctor result ids"
 "$HERE/test-doctor-ids.sh" || rc=1
 echo "== mutate"
-repo=$(cd "$SETUP/.." && pwd)
-base=${KEEL_MUTATE_BASE:-}
-if [ -z "$base" ]; then
-  if [ -n "${GITHUB_BASE_REF:-}" ]; then
-    git -C "$repo" fetch --depth=1 origin "$GITHUB_BASE_REF" >/dev/null 2>&1 || true
-    base="origin/$GITHUB_BASE_REF"
-  elif git -C "$repo" rev-parse --verify origin/main >/dev/null 2>&1; then
-    base=origin/main
-  fi
-fi
-names=""
-if [ -n "$base" ] && git -C "$repo" rev-parse --verify "$base" >/dev/null 2>&1; then
-  names=$(git -C "$repo" diff --name-only "$base"...HEAD -- setup/keel.sh setup/lib setup/allow setup/deny setup/keel-doctor.sh setup/tests/harness || true)
-  names="${names}"$'\n'"$(git -C "$repo" diff --name-only HEAD -- setup/keel.sh setup/lib setup/allow setup/deny setup/keel-doctor.sh setup/tests/harness || true)"
-  names="${names}"$'\n'"$(git -C "$repo" diff --cached --name-only -- setup/keel.sh setup/lib setup/allow setup/deny setup/keel-doctor.sh setup/tests/harness || true)"
-fi
-if [ -z "$(printf '%s\n' "$names" | sed '/^$/d')" ]; then
-  echo "RESULT mutate: no-changed-files pass"
+# shellcheck source=setup/tests/harness/mutate-plan.sh
+. "$HERE/mutate-plan.sh"
+decision_file=$(mktemp)
+if mutate_plan >"$decision_file"; then
+  decision=$(cat "$decision_file")
+  rm -f "$decision_file"
+  printf '%s\n' "$decision"
+  case $decision in
+    "RESULT mutate: run")
+      echo "mutate: harness files changed; running the mutant set"
+      python3 "$HERE/mutate.py" M17 M45 M46 M47 M48 M49 M50 M51 M52 || rc=1
+      ;;
+    "RESULT mutate: skipped (no harness files changed)")
+      ;;
+    *)
+      echo "ERROR: mutate: unexpected decision" >&2
+      rc=1
+      ;;
+  esac
 else
-  echo "mutate: harness files changed; running the mutant set"
-  python3 "$HERE/mutate.py" M17 M45 M46 M47 M48 M49 M50 M51 M52 || rc=1
+  rm -f "$decision_file"
+  rc=1
 fi
 exit $rc

@@ -145,7 +145,10 @@ if [ $ATTACKS = 1 ]; then
       printf '%s  raw log: %s%s\n' "$D" "$ALOG" "$N"
       SEEN=" "
       while IFS= read -r line; do
-        id=${line#RESULT }; id=${id%%:*}; txt=${line#*: }; SEEN="$SEEN$id "
+        id=${line#RESULT }; id=${id%%:*}; txt=${line#*: }
+        # A skipped result is not a pass and not a failure.
+        case $txt in *skipped*) continue;; esac
+        SEEN="$SEEN$id "
         lvl=CRITICAL; [ "$id" = A10 ] && lvl=RECOMMENDED
         case $txt in BLOCKED*|CONTAINED*) st=pass;; PARTIAL*|RISK*|N/A*) st=warn;; *) st=fail;; esac
         check "ATK-$id" "$lvl" "$st" "$(atk_name "$id")" "$(echo "$txt" | cut -c1-110)"
