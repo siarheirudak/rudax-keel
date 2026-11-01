@@ -97,17 +97,25 @@ jobs:
 
   harness:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Build keel-git
         run: docker build -t keel-git -f setup/docker/keel-git.Dockerfile setup/docker
       - name: Run the harness
-        # The runner sets GITHUB_* names. keel-doctor treats any GH_* or GITHUB_* name as a token.
+        # The runner sets GITHUB_* names. keel-doctor treats any GH_* or GITHUB_* name as a token,
+        # so the base ref is passed as KEEL_MUTATE_BASE and those names are not forwarded.
         run: |
           set -eu
+          if [ -n "${GITHUB_BASE_REF:-}" ]; then
+            mutate_base="origin/${GITHUB_BASE_REF}"
+          else
+            mutate_base="origin/main"
+          fi
+          git rev-parse --verify "${mutate_base}^{commit}" >/dev/null
           clean=(
             "HOME=$HOME"
             "PATH=$PATH"
@@ -116,6 +124,7 @@ jobs:
             "SHELL=${SHELL:-/bin/bash}"
             "LANG=${LANG:-C.UTF-8}"
             "TMPDIR=${TMPDIR:-/tmp}"
+            "KEEL_MUTATE_BASE=${mutate_base}"
           )
           if [ -n "${DOCKER_HOST:-}" ]; then
             clean+=("DOCKER_HOST=$DOCKER_HOST")
