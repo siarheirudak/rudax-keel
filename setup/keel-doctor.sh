@@ -110,6 +110,27 @@ else
   fi
 fi
 
+section "Egress"
+# shellcheck source=setup/lib/egress.sh
+. "$HERE/lib/egress.sh"
+egress_names
+if $DOCKER image inspect keel-proxy >/dev/null 2>&1; then
+  check EG-01 CRITICAL pass "proxy image" "keel-proxy present"
+else
+  check EG-01 CRITICAL fail "proxy image" "keel-proxy is missing"
+fi
+if got=$($DOCKER network inspect -f '{{.Internal}}' "$EGRESS_NET" 2>/dev/null); [ "$got" = true ]; then
+  check EG-02 CRITICAL pass "egress network" "$EGRESS_NET internal"
+else
+  check EG-02 CRITICAL fail "egress network" "${EGRESS_NET} internal flag is '${got:-missing}'"
+fi
+health=$($DOCKER run --rm --network "$EGRESS_NET" keel-git sh -c 'printf "GET http://keel-proxy/ HTTP/1.1\r\nHost: keel-proxy\r\nConnection: close\r\n\r\n" | nc -w 3 keel-proxy 3128' 2>&1 || true)
+if printf '%s\n' "$health" | grep -q DENIED; then
+  check EG-03 CRITICAL pass "proxy health" "forward port answered"
+else
+  check EG-03 CRITICAL fail "proxy health" "$(printf '%s' "$health" | tail -1 | cut -c1-120)"
+fi
+
 section "Disk"
 dir=$KEEL_ROOT; while [ ! -d "$dir" ]; do dir=$(dirname "$dir"); done
 free=$(free_gib "$dir")
@@ -118,9 +139,9 @@ elif [ "$free" -ge 2 ]; then check DISK-01 RECOMMENDED warn "free disk" "${free}
 else check DISK-01 RECOMMENDED fail "free disk" "${free} GiB at $dir (< 2 GiB)"; fi
 
 # attack id -> human name (bash 3.2: no associative arrays)
-ATK_IDS="N1 N2 A1 A2 A3 A12 A12b A4 A4b A4c A5 A6 A6b A6c A7 A7b A8 A8b A9 A10 A10b A11 A11-detect A13 A14 A15 A16 A17 A17b A17c A18 A18b A19 A19b A20 A21 A22 A22b H1 H2 H3 H4 H5 V-H9 V-H1 V-A2 V-A10-hardlink V-A20 V-H3 V-A1 V-A15 V-A25 V-A24b V-A16 V-H2 V-H5 V-A5 V-H6 V-H7 V-A27 V-H4 V-A6 V-A23 V-A28 V-A25b V-A11 V-A25c V-A17 V-A18 V-H6b V-A12 V-A7 V-A8 V-A24 V-A29 V-A30 V-A31 V-H8 V-LOG V-A13 V-A14 V-A4 V-A21 V-A22 V-A19 V-A3 V-A3b V-A26 V-A32 V-PARSE V-RO V-RUNS"
+ATK_IDS="N1 N2 A1 A2 A3 A12 A12b A4 A4b A4c A5 A6 A6b A6c A7 A7b A8 A8b A9 A10 A10b A11 A11-detect A13 A14 A15 A16 A17 A17b A17c A18 A18b A19 A19b A20 A21 A22 A22b H1 H2 H3 H4 H5 V-H9 V-H1 V-A2 V-A10-hardlink V-A20 V-H3 V-A1 V-A15 V-A25 V-A24b V-A16 V-H2 V-H5 V-A5 V-H6 V-H7 V-A27 V-H4 V-A6 V-A23 V-A28 V-A25b V-A11 V-A25c V-A17 V-A18 V-H6b V-A12 V-A7 V-A8 V-A24 V-A29 V-A30 V-A31 V-H8 V-LOG V-A13 V-A14 V-A4 V-A21 V-A22 V-A19 V-A3 V-A3b V-A26 V-A32 V-PARSE V-RO V-RUNS E-H1 E-H2 E-H3 E-H4 E-H5 E-H6 E-A1 E-A2 E-A3 E-A4 E-A5 E-A6 E-A7 E-A8 E-A9 E-A10 E-A11 E-A12 E-A13 E-A14 E-A15 E-A16 E-A17"
 atk_name(){ case $1 in
-  N1) echo "no network in agent container";; N2) echo "host token not passed to container";; A1) echo "/base/objects is read-only";;
+  N1) echo "proto and gate containers have no network";; N2) echo "host token not passed to container";; A1) echo "/base/objects is read-only";;
   A2) echo "pointer file can't be rewritten";; A3) echo "shadow hooks/fsmonitor never run on host";; A12) echo "role A's hook doesn't run in role B/export";;
   A4) echo "gate: .github/ forbidden";; A4b) echo "gate: AGENTS.md, .pi/ forbidden";; A5) echo "gate: symlink rejected";; A6) echo "gate: bundle size limit";;
   A6b) echo "gate: diff line limit";; A7) echo "gate: extra branch/tag rejected";; A7b) echo "gate: wrong branch name rejected";; A8) echo "gate: stale base rejected";;

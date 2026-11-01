@@ -16,4 +16,5 @@ echo "### step5"; $K push-stub
 echo "### step1-alt GIT_DIR/GIT_WORK_TREE (no pointer file)"
 $K proto-env 'git checkout -q -f task-1 2>&1; ls; echo env > envfile && git add envfile && git commit -qm "env-variant commit" && git log --oneline -1; ls -a'
 echo "### step7 cleanup"; $K cleanup; ls "$KEEL_ROOT"/work "$KEEL_ROOT"/shadow "$KEEL_ROOT"/gate; git -C "$KEEL_ROOT/repo" for-each-ref
+KEEL_ROOT="${KEEL_ROOT}-eg" bash "$HERE/test-egress.sh" || exit 1
 KEEL_ROOT="${KEEL_ROOT}-vis" bash "$HERE/visibility-suite.sh" || exit 1
