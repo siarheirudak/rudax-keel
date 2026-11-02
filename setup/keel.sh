@@ -237,14 +237,26 @@ gate) F=$B/$T.bundle; M=$(git -C "$R" rev-parse main); I=refs/keel/incoming/$T
       case $path in
         /*|*../*) fail "secret scan: bad path";;
       esac
+      # Product ignore and config files are not part of the scan tree.
+      case $(basename -- "$path") in
+        .gitleaks.toml|.gitleaksignore) continue;;  # harness-owned-ignore
+      esac
       mkdir -p "$scan/$(dirname -- "$path")"
       hgit -C "$G" show "$I:$path" > "$scan/$path" || fail "secret scan: unreadable path"
     done < <(hgit -C "$G" diff -z --name-only --diff-filter=ACMRT main "$I")
-    if ! "$gl" dir --no-banner --redact --config "$HERE/gitleaks.toml" "$scan" >/dev/null 2>&1; then
-      rm -rf "$scan"
-      fail "secret in change"
-    fi
+    sec_ec=0
+    (
+      cd "$scan" || exit 2
+      env -u GITLEAKS_CONFIG -u GITLEAKS_CONFIG_TOML \
+        "$gl" dir --no-banner --redact --timeout 30 --ignore-gitleaks-allow \
+        -i "$HERE/gitleaks.ignore" --config "$HERE/gitleaks.toml" . >/dev/null 2>&1
+    ) || sec_ec=$?
     rm -rf "$scan"
+    if [ "$sec_ec" -eq 1 ]; then
+      fail "secret in change"
+    elif [ "$sec_ec" -ne 0 ]; then
+      fail "secret scan failed"
+    fi
   fi
   TD=$(mktemp -d "$P/.gatehome/src.XXXXXX"); TE=$(mktemp -d "$P/.gatehome/entry.XXXXXX")
   hgit -C "$G" archive "$I" | tar -x --no-same-owner -C "$TD"

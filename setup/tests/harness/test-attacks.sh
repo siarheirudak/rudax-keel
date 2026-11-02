@@ -261,6 +261,16 @@ fresh
 $K proto evil rw 'printf "%s\n" "ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE" > leak.txt && git add leak.txt && git commit -qm sec' >/dev/null
 $K export >/dev/null
 gate_expect_fail SEC-03 'secret'
+echo "### SEC-04 inline allow comment"
+fresh
+$K proto evil rw 'printf "%s # gitleaks:allow\n" "ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE" > leak.txt && git add leak.txt && git commit -qm allowc' >/dev/null
+$K export >/dev/null
+gate_expect_fail SEC-04 'secret'
+echo "### SEC-05 product ignore file"
+fresh
+$K proto evil rw 'printf "%s\n" "ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE" > leak.txt; printf "%s\n" "leak.txt:keel-github-pat:1" > .gitleaksignore; git add leak.txt .gitleaksignore && git commit -qm ign' >/dev/null
+$K export >/dev/null
+gate_expect_fail SEC-05 'secret'
 echo "### N1 network from agent container"; fresh
 out=$($K proto net rw 'ls /sys/class/net | tr "\n" " "; echo; wget -q -T 5 -O- http://1.1.1.1 >/dev/null 2>&1 && echo NET-OK; nslookup github.com >/dev/null 2>&1 && echo DNS-OK; true'); echo "$out"
 if echo "$out" | grep -qE 'NET-OK|DNS-OK'; then res N1 "NOT BLOCKED"; else res N1 "BLOCKED (only $(echo "$out" | sed -n 2p)interfaces; no HTTP, no DNS)"; fi
