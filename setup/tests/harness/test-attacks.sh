@@ -4,6 +4,7 @@
 set -u; HERE=$(cd "$(dirname "$0")" && pwd -P); SETUP=$(cd "$HERE/../.." && pwd -P); K="$SETUP/keel.sh"; # shellcheck source=setup/lib/portable.sh
 . "$SETUP/lib/portable.sh"; export KEEL_ROOT=${KEEL_ROOT:-$HOME/keel-proto}; P=$KEEL_ROOT
 R=$P/repo W=$P/work/task-1 S=$P/shadow/task-1.git; D=${DOCKER:-docker}
+unset GH_TOKEN GITHUB_TOKEN BOT_GH_TOKEN GITHUB_PAT AWS_SECRET_ACCESS_KEY AWS_ACCESS_KEY_ID API_KEY API_TOKEN NPM_TOKEN PYPI_TOKEN PASSWORD OPENAI_API_KEY KEEL_SECRET ANTHROPIC_API_KEY GEMINI_API_KEY GOOGLE_API_KEY OPENROUTER_API_KEY || true
 # shellcheck source=setup/tests/harness/h3-verdict.sh
 . "$HERE/h3-verdict.sh"
 res(){ echo "RESULT $1: $2"; }
