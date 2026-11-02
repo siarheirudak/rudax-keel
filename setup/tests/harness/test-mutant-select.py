@@ -37,8 +37,12 @@ def validate():
         if not os.path.isfile(os.path.join(root, path)):
             fail("missing trigger " + path)
     mapped = {path for paths in mf.FILES.values() for path in paths}
-    if set(mf.TARGET_ONLY) != mapped:
-        fail("target-only files must be exactly the mutant targets")
+    if not set(mf.TARGET_ONLY) <= mapped:
+        fail("target-only file is not a mutant target")
+    if "setup/check.sh" not in mapped or "setup/check.sh" in mf.TARGET_ONLY:
+        fail("check.sh must be a mapped oracle")
+    if "M79" not in mf.CI_IDS:
+        fail("M79 is not in the CI set")
     for path in mf.TARGET_ONLY:
         if path.startswith("setup/") or path.startswith(".github/"):
             continue
@@ -89,6 +93,7 @@ def main():
         "setup/gitleaks-install.sh",
         "setup/gitleaks.ignore",
         "setup/keel-doctor.sh",
+        "setup/check.sh",
         "setup/tests/harness/mutate-plan.sh",
         "setup/not-a-mapped-target",
         ".github/workflows/mutate-full.yml",
