@@ -1,12 +1,26 @@
 # Why each keel-doctor check exists
 
-This page explains every check printed by `setup/keel-doctor.sh`. Each line of doctor output has an ID. The section for that ID is below. The fragment is the ID in lower case (`docs/harness-checks-why.md#env-08`).
+This page explains every check printed by `setup/keel-doctor.sh`. Each line of doctor output has an ID. The section for that ID is below. The fragment is the ID in lower case (`docs/harness-checks-why.md#env-08`). V-A9 is owner-only and is not a doctor line.
 
 How to run it: [Getting started](harness-getting-started.md).
 
 **Rule:** any new check needs a section here, in this shape, before it is added to the doctor. Same rule as [docs/why.md](why.md).
 
-Levels: **CRITICAL**: a failure means NOT READY and exit code 1. **RECOMMENDED**: warn, harness still usable. **OPTIONAL**: informational.
+Levels: **CRITICAL**: a failure means NOT READY and exit code 1. **RECOMMENDED**: warn, harness still usable. **OPTIONAL**: informational. **Owner-only**: the doctor does not print the id. The owner checks it.
+
+<a id="v-a9"></a>
+
+### V-A9 path traversal and a second mount
+
+**Level.** Owner-only.
+
+**Check.** The owner checks that `../` and a second mount cannot widen what a role sees. The allow parser refuses a `../` path. The attack suite does not score V-A9.
+
+**Why.** A traversal or a second mount can show a path the allowlist withheld.
+
+**If it fails.** The owner treats the machine as not ready for agents.
+
+**How to fix.** Keep `../` refused in the allow parser. Do not add a mount that escapes an allow root.
 
 <a id="supported-os"></a>
 
@@ -949,7 +963,7 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 
 **Level.** CRITICAL
 
-**Check.** A mode-160000 entry is rejected. `.gitmodules` is also a forbidden path.
+**Check.** A mode-160000 entry is rejected. A path whose basename is `.gitmodules`, including `lib/.gitmodules`, is also forbidden.
 
 **Why.** A gitlink pulls in code from another repository that nobody reviewed. CI or a later checkout might fetch it.
 
@@ -1008,7 +1022,7 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 
 **Level.** CRITICAL
 
-**Check.** `docs/AGENTS.md` (A18) must fail with `forbidden path`. A18b does the same, one path per run, for `.pi/SYSTEM.md`, `.pi/extensions/x.ts`, `.pi/mcp.json`, `.agents/skills/a/SKILL.md`, `pkg/.pi/SYSTEM.md`, `apps/.agents/skills/x/SKILL.md`, `sub/AGENTS.override.md`, `sub/claude.md`, `CLAUDE.md`, `CODEOWNERS`, `.shellcheckrc`, `.gitmodules`, `setup/keel.sh`, and `scripts/check.sh`. `.pi/` and `.agents/` are process directories at any depth. `setup/README.md` and `setup/TESTING.md` are not forbidden. `CLAUDE.md` is the fallback context file Pi Agent loads. The doctor names both lines "Pi process paths".
+**Check.** `docs/AGENTS.md` (A18) must fail with `forbidden path`. A18b does the same, one path per run, for `.pi/SYSTEM.md`, `.pi/extensions/x.ts`, `.pi/mcp.json`, `.agents/skills/a/SKILL.md`, `pkg/.pi/SYSTEM.md`, `apps/.agents/skills/x/SKILL.md`, `sub/AGENTS.override.md`, `sub/claude.md`, `CLAUDE.md`, `CODEOWNERS`, `.shellcheckrc`, `lib/.gitmodules`, `setup/keel.sh`, and `scripts/check.sh`. `.pi/` and `.agents/` are process directories at any depth. `setup/README.md` and `setup/TESTING.md` are not forbidden. `CLAUDE.md` is the fallback context file Pi Agent loads. The doctor names both lines "Pi process paths".
 
 **Why.** The gate must not be weaker than `scripts/check-scope.py` on Pi Agent paths. The host gate also forbids `.gitmodules`.
 
@@ -1212,7 +1226,7 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 
 **If it fails.** FAIL.
 
-**How to fix.** Keep the scan limited to files added or edited in the change. Do not scan history. A secret split across files, or encoded so the shape is gone, is not this check.
+**How to fix.** Keep the scan limited to files added or edited in the change. Git history is not scanned. An encoded secret is not this check. A secret split across files is not this check.
 
 <a id="atk-sec-03"></a>
 
