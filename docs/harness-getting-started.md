@@ -27,7 +27,7 @@ DOCKER="sudo docker" bash setup/tests/harness/run-tests.sh
 
 `setup/tests/harness/run-tests.sh` does the following:
 
-1. Runs `setup/tests/harness/test-mutate-plan.sh`. A missing base commit must fail. The old “no changed files, so pass” result must not come back.
+1. Runs `setup/tests/harness/test-mutant-select.py` and `setup/tests/harness/test-mutate-plan.sh`. A missing base commit must fail. The old “no changed files, so pass” result must not come back. A selector that drops every mutant must fail.
 2. Runs `setup/tests/harness/test-vis-ro.sh`. A container command that cannot reach a daemon is an error, not `NOT BLOCKED`.
 3. Runs `setup/tests/harness/test-h3-verdict.sh`. An unrelated exit 137 must not count as the memory limit containing the allocator.
 4. Builds `keel-git` from `setup/docker/keel-git.Dockerfile` and `keel-proxy` from `setup/docker/keel-proxy.Dockerfile`.
@@ -36,7 +36,7 @@ DOCKER="sudo docker" bash setup/tests/harness/run-tests.sh
 7. Runs `setup/tests/harness/test-attacks.sh`. Each attack prints a `RESULT` line. The egress checks and the visibility checks run at the end.
 8. Runs `setup/keel-doctor.sh` without `--attacks`. If `KEEL_REPO` is unset, it runs `setup/keel.sh init-repo` first, because the suites delete their throwaway repo.
 9. Runs `setup/tests/harness/test-doctor-ids.sh`. A result id the doctor requires, if it is absent from the scored log, makes the verdict NOT READY.
-10. If harness files changed against the base, runs the mutant set. If none changed, it logs `RESULT mutate: skipped (no harness files changed)` and does not run the mutants.
+10. Runs the mutants whose mapped files changed against the base. A change to `setup/tests/harness/mutate.py`, `setup/tests/harness/run-tests.sh`, `setup/tests/harness/mutant_files.py`, or `.github/workflows/checks.yml` runs the full set. If none of the mapped files changed, it logs `RESULT mutate: skipped (no harness files changed)` and does not run the mutants. That line is a skip, not a pass. `.github/workflows/mutate-full.yml` runs the full set once a day and from `workflow_dispatch`. A failed run stays red and updates one open issue.
 
 The suites delete `KEEL_ROOT` (default `~/keel-proto`). That directory is throwaway data, not a checkout of this repository. On macOS, `KEEL_ROOT` must sit under a directory Docker Desktop shares. The defaults in `setup/lib/portable.sh` are `/Users`, `/Volumes`, `/private`, `/tmp`, and `/var/folders`. A home directory under `/Users` qualifies. Otherwise `setup/keel.sh` stops with exit code 4 and tells you so.
 
