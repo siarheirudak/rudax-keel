@@ -197,20 +197,19 @@ rm -f "$W/src/alias"
 
 export KEEL_REDACT_FIXTURE=1
 export GH_TOKEN='ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
-export KEEL_SECRET='envonlysecretvalue123456'
 python3 - << 'PY'
 import base64, os, sys
 sys.path.insert(0, os.path.join(os.environ["SETUP"], "lib"))
 import visibility
 token = os.environ["GH_TOKEN"]
-secret = os.environ["KEEL_SECRET"]
 blob = base64.b64encode(token.encode()).decode()
-text = token + "\n" + blob + "\n" + secret + "\npassword=hunter2hunter2hunter2\nZz9unknownSecretValue1234567890abcd\nFIXTURE-RECORD\n"
+shaped = "sk-ant-" + ("f" * 24)
+text = token + "\n" + blob + "\n" + shaped + "\npassword=hunter2hunter2hunter2\nZz9unknownSecretValue1234567890abcd\nFIXTURE-RECORD\n"
 os.makedirs(os.path.join(os.environ["P"], ".keel"), exist_ok=True)
 open(os.path.join(os.environ["P"], ".keel", "redact-fixture"), "w", encoding="utf-8").write(text)
 visibility.log_ok(os.environ["P"], "developer", ["src"], [], os.environ, "")
 PY
-unset KEEL_REDACT_FIXTURE GH_TOKEN KEEL_SECRET
+unset KEEL_REDACT_FIXTURE GH_TOKEN
 rm -f "$P/.keel/redact-fixture"
 echo "fixture launch: logged"
 
@@ -223,6 +222,17 @@ elif echo "$secret_out" | grep -q secret_env; then
   mark S-A1 ok "secret env refused"
 else
   mark S-A1 bad "no refuse"
+fi
+
+plain=envonlysecretvalue123456
+name_out=$(KEEL_SECRET="$plain" "$K" role developer 'echo LAUNCH-OK' 2>&1 || true)
+echo "keel-secret-name: $name_out"
+if echo "$name_out" | grep -q LAUNCH-OK || echo "$name_out" | grep -q "$plain" || grep -q "$plain" "$(LOG)"; then
+  mark S-A4 bad "name not refused"
+elif echo "$name_out" | grep -q secret_env; then
+  mark S-A4 ok "name refused"
+else
+  mark S-A4 bad "no refuse"
 fi
 
 if python3 - << 'PY'
@@ -276,11 +286,11 @@ if python3 - << 'PY'
 import json, os, sys
 p=os.environ["P"]+"/.keel/logs/launch.jsonl"
 token='ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
-secret='envonlysecretvalue123456'
+shaped='sk-ant-' + ('f' * 24)
 blob=__import__("base64").b64encode(token.encode()).decode()
 text=open(p,encoding="utf-8").read()
 bad=[]
-if token in text or secret in text or blob in text or "Zz9unknownSecretValue1234567890abcd" in text or "hunter2hunter2hunter2" in text:
+if token in text or shaped in text or blob in text or "Zz9unknownSecretValue1234567890abcd" in text or "hunter2hunter2hunter2" in text:
     bad.append("raw")
 if "STDOUT-MARKER" in text:
     bad.append("stdout")
@@ -300,7 +310,7 @@ else:
     if any(obj.get("redactions") != 5 for obj in fed):
         bad.append("count %s" % [obj.get("redactions") for obj in fed])
     joined="\n".join(str(obj.get("detail") or "") for obj in fed)
-    if "[REDACTED:token]" not in joined or "[REDACTED:env]" not in joined or "[REDACTED:password]" not in joined or "[REDACTED:unknown]" not in joined:
+    if "[REDACTED:token]" not in joined or "[REDACTED:password]" not in joined or "[REDACTED:unknown]" not in joined:
         bad.append("placeholder")
 other=[obj.get("redactions") for obj in rows if obj not in fed]
 if any(c != 0 for c in other):
