@@ -1,0 +1,43 @@
+title = "keel"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "keel-github-pat"
+description = "GitHub personal access token shape"
+regex = '''ghp_[0-9A-Za-z]{36}'''
+keywords = ["ghp_"]
+
+[[rules]]
+id = "keel-github-fine"
+description = "GitHub fine-grained token shape"
+regex = '''github_pat_[0-9A-Za-z_]{22,}'''
+keywords = ["github_pat_"]
+
+[[rules]]
+id = "keel-gho"
+description = "GitHub OAuth token shape"
+regex = '''gho_[0-9A-Za-z]{36}'''
+keywords = ["gho_"]
+
+[[rules]]
+id = "keel-sk"
+description = "sk- or sk-ant- key shape"
+regex = '''sk-(?:ant-)?[0-9A-Za-z_\-]{20,}'''
+keywords = ["sk-"]
+
+[[rules]]
+id = "keel-pem"
+description = "PEM private key block"
+regex = '''-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----'''
+keywords = ["PRIVATE KEY"]
+
+# Only the obvious tokens planted in harness fixtures. Any other shape still fails.
+[allowlist]
+description = "harness fixture tokens"
+regexes = [
+  '''ghp_A{36}''',
+  '''ghp_B{36}''',
+  '''ghp_Z{36}''',
+]

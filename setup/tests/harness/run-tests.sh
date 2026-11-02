@@ -18,6 +18,8 @@ echo "== memory verdict"
 mkdir -p "$HERE/logs"
 TS=$(date +%Y%m%d-%H%M%S)
 $DOCKER info >/dev/null 2>&1 || { echo "ERROR: $(docker_hint)" >&2; exit 5; }
+echo "== gitleaks"
+bash "$SETUP/gitleaks-install.sh" || { echo "ERROR: gitleaks install failed" >&2; exit 1; }
 echo "== build image keel-git (native arch: $($DOCKER info --format '{{.Architecture}}'))"
 $DOCKER build -q -t keel-git -f "$SETUP/docker/keel-git.Dockerfile" "$SETUP/docker" >/dev/null || { echo "ERROR: image build failed" >&2; exit 1; }
 echo "== build image keel-proxy"
@@ -57,7 +59,7 @@ if mutate_plan >"$decision_file"; then
   case $decision in
     "RESULT mutate: run")
       echo "mutate: harness files changed; running the mutant set"
-      python3 "$HERE/mutate.py" M03 M17 M27 M45 M46 M47 M48 M49 M50 M51 M52 M53 M54 M55 M56 M57 M58 M59 M60 M61 M62 M63 M64 M65 M66 M67 M68 M69 M70 M71 M72 || rc=1
+      python3 "$HERE/mutate.py" M03 M17 M27 M45 M46 M47 M48 M49 M50 M51 M52 M53 M54 M55 M56 M57 M58 M59 M60 M61 M62 M63 M64 M65 M66 M67 M68 M69 M70 M71 M72 M73 M74 M75 || rc=1
       ;;
     "RESULT mutate: skipped (no harness files changed)")
       ;;

@@ -103,6 +103,8 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Install gitleaks
+        run: bash setup/gitleaks-install.sh
       - name: Build keel-git
         run: docker build -t keel-git -f setup/docker/keel-git.Dockerfile setup/docker
       - name: Run the harness
