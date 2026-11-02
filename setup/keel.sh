@@ -224,6 +224,40 @@ gate) F=$B/$T.bundle; M=$(git -C "$R" rev-parse main); I=refs/keel/incoming/$T
   badid=$(hgit -C "$G" log --format='%an <%ae>|%cn <%ce>' "main..$I" | grep -vxF "$AGENT_IDENT|$AGENT_IDENT" | head -1)
   [ -z "$badid" ] || fail "commit identity '$badid' is not the agent identity '$AGENT_IDENT'"
   lines=$(hgit -C "$G" diff --numstat main "$I" | awk '{a+=($1=="-"?0:$1)+($2=="-"?0:$2)}END{print a+0}'); [ "$lines" -le "$MAX_LINES" ] || fail "diff $lines lines > $MAX_LINES"
+  # Scan the files this change adds or edits. Not the repository history.
+  secret_scan=1  # secret-scan
+  if [ "$secret_scan" = 1 ]; then
+    gl=${KEEL_GITLEAKS:-$HOME/.cache/keel/gitleaks-8.30.1/gitleaks}
+    [ -x "$gl" ] || fail "secret scan: gitleaks missing"
+    scan=$P/.gatehome/secret-scan
+    rm -rf "$scan"
+    mkdir -p "$scan"
+    while IFS= read -r -d '' path; do
+      [ -n "$path" ] || continue
+      case $path in
+        /*|*../*) fail "secret scan: bad path";;
+      esac
+      # Product ignore and config files are not part of the scan tree.
+      case $(basename -- "$path") in
+        .gitleaks.toml|.gitleaksignore) continue;;  # harness-owned-ignore
+      esac
+      mkdir -p "$scan/$(dirname -- "$path")"
+      hgit -C "$G" show "$I:$path" > "$scan/$path" || fail "secret scan: unreadable path"
+    done < <(hgit -C "$G" diff -z --name-only --diff-filter=ACMRT main "$I")
+    sec_ec=0
+    (
+      cd "$scan" || exit 2
+      env -u GITLEAKS_CONFIG -u GITLEAKS_CONFIG_TOML \
+        "$gl" dir --no-banner --redact --timeout 30 --ignore-gitleaks-allow \
+        -i "$HERE/gitleaks.ignore" --config "$HERE/gitleaks.toml" . >/dev/null 2>&1
+    ) || sec_ec=$?
+    rm -rf "$scan"
+    if [ "$sec_ec" -eq 1 ]; then
+      fail "secret in change"
+    elif [ "$sec_ec" -ne 0 ]; then
+      fail "secret scan failed"
+    fi
+  fi
   TD=$(mktemp -d "$P/.gatehome/src.XXXXXX"); TE=$(mktemp -d "$P/.gatehome/entry.XXXXXX")
   hgit -C "$G" archive "$I" | tar -x --no-same-owner -C "$TD"
   hgit -C "$G" show "main:$TEST_ENTRY" > "$TE/entry.sh" || { rm -rf "$TD" "$TE"; fail "no $TEST_ENTRY on main"; }
