@@ -27,7 +27,7 @@ DOCKER="sudo docker" bash setup/tests/harness/run-tests.sh
 
 `setup/tests/harness/run-tests.sh` does the following:
 
-1. Runs `setup/tests/harness/test-mutate-plan.sh`. A missing base commit must fail. The old “no changed files, so pass” result must not come back.
+1. Runs `setup/tests/harness/test-mutant-select.py` and `setup/tests/harness/test-mutate-plan.sh`. A missing base commit must fail. The old “no changed files, so pass” result must not come back. A selector that drops every mutant must fail.
 2. Runs `setup/tests/harness/test-vis-ro.sh`. A container command that cannot reach a daemon is an error, not `NOT BLOCKED`.
 3. Runs `setup/tests/harness/test-h3-verdict.sh`. An unrelated exit 137 must not count as the memory limit containing the allocator.
 4. Builds `keel-git` from `setup/docker/keel-git.Dockerfile` and `keel-proxy` from `setup/docker/keel-proxy.Dockerfile`.
@@ -36,7 +36,7 @@ DOCKER="sudo docker" bash setup/tests/harness/run-tests.sh
 7. Runs `setup/tests/harness/test-attacks.sh`. Each attack prints a `RESULT` line. The egress checks and the visibility checks run at the end.
 8. Runs `setup/keel-doctor.sh` without `--attacks`. If `KEEL_REPO` is unset, it runs `setup/keel.sh init-repo` first, because the suites delete their throwaway repo.
 9. Runs `setup/tests/harness/test-doctor-ids.sh`. A result id the doctor requires, if it is absent from the scored log, makes the verdict NOT READY.
-10. If harness files changed against the base, runs the mutant set. If none changed, it logs `RESULT mutate: skipped (no harness files changed)` and does not run the mutants.
+10. Runs the mutants whose mapped files changed against the base. A change to a mutant's own mapped file runs only the CI mutants for that file. Any other change under `setup/` or `.github/` runs the full set, including a file that is not a mapped target. The full set covers the attack suite and the happy-path suite and their helpers (`setup/tests/harness/test-attacks.sh`, `setup/tests/harness/test-happy.sh`, `setup/tests/harness/h3-verdict.sh`, `setup/tests/harness/test-egress.sh`, `setup/tests/harness/visibility-suite.sh`), shared libraries such as `setup/lib/portable.sh` and `setup/common.sh`, `setup/allow/`, `setup/deny/`, `setup/egress/`, the Dockerfiles, `setup/gitleaks.toml`, `setup/gitleaks-install.sh`, `setup/gitleaks.ignore`, `setup/keel-doctor.sh`, `setup/tests/harness/mutate-plan.sh`, `setup/tests/harness/mutate.py`, `setup/tests/harness/run-tests.sh`, `setup/tests/harness/mutant_files.py`, and workflow files such as `.github/workflows/checks.yml`. If no mapped file changed and nothing else under `setup/` or `.github/` changed, it logs `RESULT mutate: skipped (no harness files changed)` and does not run the mutants. That line is a skip, not a pass. `.github/workflows/mutate-full.yml` runs the full set once a day and from `workflow_dispatch`. A failed run stays red and updates one open issue.
 
 The suites delete `KEEL_ROOT` (default `~/keel-proto`). That directory is throwaway data, not a checkout of this repository. On macOS, `KEEL_ROOT` must sit under a directory Docker Desktop shares. The defaults in `setup/lib/portable.sh` are `/Users`, `/Volumes`, `/private`, `/tmp`, and `/var/folders`. A home directory under `/Users` qualifies. Otherwise `setup/keel.sh` stops with exit code 4 and tells you so.
 
