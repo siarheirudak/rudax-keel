@@ -23,7 +23,7 @@ The directory `.keel/runs/` is not committed. The harness uses it as temporary m
 
 ## Launch decisions
 
-When `setup/keel.sh role` or `role-env` accepts or refuses a launch, the harness appends one JSON object to `$KEEL_ROOT/.keel/logs/launch.jsonl`. Roles cannot read or write that directory. Cleanup does not delete it. A record includes `redactions`. Secret values are replaced with `[REDACTED:token]`, `[REDACTED:key]`, `[REDACTED:password]`, `[REDACTED:env]`, or `[REDACTED:unknown]`. This is not the system log below. Rotation is not implemented.
+When `setup/keel.sh role` or `role-env` accepts or refuses a launch, the harness appends one JSON object to `$KEEL_ROOT/.keel/logs/launch.jsonl`. Roles cannot read or write that directory. Cleanup does not delete it. A record keeps only the allowlisted fields and includes `redactions`. Secret shapes are replaced with `[REDACTED:token]`, `[REDACTED:key]`, `[REDACTED:password]`, `[REDACTED:env]`, or `[REDACTED:unknown]`. A refuse caused by a denylisted name stores the name, not the value. This is not the system log below. Rotation is not implemented.
 
 ## The system log
 

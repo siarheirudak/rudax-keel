@@ -103,9 +103,13 @@ Each rule’s failure mode is in [why.md](why.md). On a personal repository, Git
 
 <a id="tokens"></a>
 
-The design keeps a GitHub token in one place: the push step that opens the pull request. Agent containers and the host gate do not receive it.
+Roles do not hold secret values, and the harness does not pass the host environment into a role container. A key lives only in a dedicated broker: the future model mediator, or the owner push script. `role` and `role-env` refuse to start, with a non-zero exit and a refuse line that names the variable and not its value, when the launching environment contains any exact name on `LAUNCH_DENY_ENV` in `setup/lib/visibility.py`. That list is the existing `SECRET_ENV` names plus `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, and `OPENROUTER_API_KEY`. It is not a prefix match.
 
-Today, `push-stub` has no token and does not push. SEC-01 fails the doctor when `GH_*`, `GITHUB_*`, or `BOT_GH_TOKEN` is set in the doctor’s environment. The check prints variable names, not values. The attack suite checks that those variables are not visible inside a role container.
+A renamed variable is not on that list. Format-pattern redaction in the launch log is the backstop for token prefixes, `sk-` and `sk-ant-` keys, PEM private key blocks, and `password=`, `api_key=`, and `token=` assignments. A secret scanner is not part of this step. Text sent to an allowlisted model provider is an accepted residual: the proxy allows the connection, and this log does not see the body.
+
+The launch log still compares exact values of the existing `SECRET_ENV` names when those names are set in the process that writes the log. That comparison is unchanged.
+
+Today, `push-stub` has no token and does not push. SEC-01 fails the doctor when `GH_*`, `GITHUB_*`, or `BOT_GH_TOKEN` is set in the doctor’s environment. The check prints variable names, not values. The attack suite checks that a denylisted name refuses the role and that a clean environment can start one.
 
 ## Fenced data
 
