@@ -107,7 +107,7 @@ Roles do not hold secret values, and the harness does not pass the host environm
 
 A renamed variable is not on that list. Format-pattern redaction in the launch log is the backstop for token prefixes, `sk-` and `sk-ant-` keys, PEM private key blocks, and `password=`, `api_key=`, and `token=` assignments. A secret scanner is not part of this step. Text sent to an allowlisted model provider is an accepted residual: the proxy allows the connection, and this log does not see the body.
 
-The launch log still compares exact values of the existing `SECRET_ENV` names when those names are set in the process that writes the log. That comparison is unchanged.
+The launch log does not read environment values. A denylisted name refuses the launch. Text that reaches the log is redacted only when it matches a format pattern.
 
 Today, `push-stub` has no token and does not push. SEC-01 fails the doctor when `GH_*`, `GITHUB_*`, or `BOT_GH_TOKEN` is set in the doctor’s environment. The check prints variable names, not values. The attack suite checks that a denylisted name refuses the role and that a clean environment can start one.
 
