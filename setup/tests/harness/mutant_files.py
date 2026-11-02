@@ -81,6 +81,9 @@ FILES = {
     "M73": ["setup/keel.sh"],
     "M74": ["setup/keel.sh"],
     "M75": ["setup/keel.sh"],
+    "M76": ["setup/lib/egress.py"],
+    "M77": ["setup/lib/egress.sh"],
+    "M78": ["setup/tests/harness/attack-results.sh"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -119,6 +122,9 @@ CI_IDS = [
     "M73",
     "M74",
     "M75",
+    "M76",
+    "M77",
+    "M78",
 ]
 
 # A change to one of these files selects only the CI mutants mapped to it.
@@ -129,6 +135,7 @@ TARGET_ONLY = frozenset((
     "setup/lib/egress.sh",
     "setup/lib/egress.py",
     "setup/lib/egress_proxy.py",
+    "setup/tests/harness/attack-results.sh",
 ))
 
 # Selector files. Covered by the setup/ and .github/ rule; kept so a test can name them.

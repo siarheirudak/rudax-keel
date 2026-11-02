@@ -84,6 +84,9 @@ M = {
  'M73': (K, 'secret_scan=1  # secret-scan', 'secret_scan=0  # secret-scan', 'skip the secret scan', ['SEC-03']),
  'M74': (K, '--ignore-gitleaks-allow ', '', 'honor inline allow comments', ['SEC-04']),
  'M75': (K, '.gitleaks.toml|.gitleaksignore) continue;;  # harness-owned-ignore', '.gitleaks.toml|.gitleaksignore) ;;  # harness-owned-ignore', 'load a product ignore file', ['SEC-05']),
+ 'M76': ('lib/egress.py', '            entries.append(item)\n    return entries  # allow-entries', '            entries.append(item)\n    entries.append(("example.com", None))  # allow-extra-host\n    return entries  # allow-entries', 'allowlist accepts example.com', ['E-A1']),
+ 'M77': ('lib/egress.sh', '$DOCKER run "${args[@]}" "${GITENV[@]}" "$@"  # role-env-explicit', '$DOCKER run "${args[@]}" "${GITENV[@]}" -e "GH_TOKEN=${GH_TOKEN:-}" -e "GITHUB_TOKEN=${GITHUB_TOKEN:-}" -e "KEEL_SECRET=${KEEL_SECRET:-}" "$@"  # role-env-explicit', 'role container receives secret names', ['S-H1']),
+ 'M78': ('tests/harness/attack-results.sh', 'NOT BLOCKED|', '', 'treat NOT BLOCKED as pass', ['CHK-1']),
 }
 M['M15'] = (K, M['M13'][1], M['M13'][2], M['M15'][3], M['M15'][4])  # applied together with M14 below
 GREEN = re.compile(r'^(BLOCKED|CONTAINED|PARTIAL|N/A)')
@@ -109,6 +112,8 @@ def run(mid):
     shutil.copy2(os.path.join(HARNESS, 'test-egress.sh'), os.path.join(src, 'tests', 'harness', 'test-egress.sh'))
     shutil.copy2(os.path.join(HARNESS, 'h3-verdict.sh'), os.path.join(src, 'tests', 'harness', 'h3-verdict.sh'))
     shutil.copy2(os.path.join(HARNESS, 'visibility-suite.sh'), os.path.join(src, 'tests', 'harness', 'visibility-suite.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'attack-results.sh'), os.path.join(src, 'tests', 'harness', 'attack-results.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'test-attack-results.sh'), os.path.join(src, 'tests', 'harness', 'test-attack-results.sh'))
     p = os.path.join(src, f); s = open(p).read()
     edits = [(old, new)] + list(M[mid][5] if len(M[mid]) > 5 else []) + ([(M['M14'][1], M['M14'][2])] if mid == 'M15' else [])
     env = dict(os.environ, KEEL_ROOT=os.path.join(d, 'k'), KEEL_NS=mid)
@@ -119,7 +124,8 @@ def run(mid):
             s = s.replace(o, n)
         open(p, 'w').write(s)
         try:
-            out = subprocess.run(['bash', os.path.join(src, 'tests', 'harness', 'test-attacks.sh')], env=env, capture_output=True, text=True, timeout=900).stdout
+            script = 'test-attack-results.sh' if mid == 'M78' else 'test-attacks.sh'
+            out = subprocess.run(['bash', os.path.join(src, 'tests', 'harness', script)], env=env, capture_output=True, text=True, timeout=900).stdout
         except subprocess.TimeoutExpired:
             return mid, what, exp, None, 'timeout'
         open(os.path.join(HARNESS, 'logs', f'mutation-{mid}.log'), 'w').write(out)
