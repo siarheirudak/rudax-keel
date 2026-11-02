@@ -76,8 +76,73 @@ printf 'b\n' >"$changed/setup/keel.sh"
 git -C "$changed" add setup/keel.sh
 git -C "$changed" commit -qm change
 out=$(env -u GITHUB_BASE_REF KEEL_MUTATE_BASE=origin/main KEEL_MUTATE_REPO="$changed" bash "$PLAN")
+case $out in
+  "RESULT mutate: run "*) ;;
+  *)
+    echo "expected selective run, got: $out" >&2
+    exit 1
+    ;;
+esac
+if ! printf '%s\n' "$out" | grep -Eq '(^| )M03( |$)'; then
+  echo "keel.sh selection dropped M03: $out" >&2
+  exit 1
+fi
+if printf '%s\n' "$out" | grep -Eq '(^| )M51( |$)'; then
+  echo "keel.sh selection included M51: $out" >&2
+  exit 1
+fi
+
+selector=$root/selector
+mkdir -p "$selector/setup/tests/harness"
+git_repo "$selector"
+printf 'a\n' >"$selector/setup/tests/harness/mutate.py"
+git -C "$selector" add setup/tests/harness/mutate.py
+git -C "$selector" commit -qm base
+git -C "$selector" branch -M main
+git -C "$selector" update-ref refs/remotes/origin/main HEAD
+git -C "$selector" checkout -q -b feature
+printf 'b\n' >"$selector/setup/tests/harness/mutate.py"
+git -C "$selector" add setup/tests/harness/mutate.py
+git -C "$selector" commit -qm change
+out=$(env -u GITHUB_BASE_REF KEEL_MUTATE_BASE=origin/main KEEL_MUTATE_REPO="$selector" bash "$PLAN")
 if [ "$out" != "RESULT mutate: run" ]; then
-  echo "expected run, got: $out" >&2
+  echo "expected full run, got: $out" >&2
+  exit 1
+fi
+
+workflow=$root/workflow
+mkdir -p "$workflow/.github/workflows"
+git_repo "$workflow"
+printf 'a\n' >"$workflow/.github/workflows/checks.yml"
+git -C "$workflow" add .github/workflows/checks.yml
+git -C "$workflow" commit -qm base
+git -C "$workflow" branch -M main
+git -C "$workflow" update-ref refs/remotes/origin/main HEAD
+git -C "$workflow" checkout -q -b feature
+printf 'b\n' >"$workflow/.github/workflows/checks.yml"
+git -C "$workflow" add .github/workflows/checks.yml
+git -C "$workflow" commit -qm change
+out=$(env -u GITHUB_BASE_REF KEEL_MUTATE_BASE=origin/main KEEL_MUTATE_REPO="$workflow" bash "$PLAN")
+if [ "$out" != "RESULT mutate: run" ]; then
+  echo "expected full run for checks.yml, got: $out" >&2
+  exit 1
+fi
+
+unmapped=$root/unmapped
+mkdir -p "$unmapped/setup"
+git_repo "$unmapped"
+printf 'a\n' >"$unmapped/setup/keel-doctor.sh"
+git -C "$unmapped" add setup/keel-doctor.sh
+git -C "$unmapped" commit -qm base
+git -C "$unmapped" branch -M main
+git -C "$unmapped" update-ref refs/remotes/origin/main HEAD
+git -C "$unmapped" checkout -q -b feature
+printf 'b\n' >"$unmapped/setup/keel-doctor.sh"
+git -C "$unmapped" add setup/keel-doctor.sh
+git -C "$unmapped" commit -qm change
+out=$(env -u GITHUB_BASE_REF KEEL_MUTATE_BASE=origin/main KEEL_MUTATE_REPO="$unmapped" bash "$PLAN")
+if [ "$out" != "RESULT mutate: skipped (no harness files changed)" ]; then
+  echo "expected skip for an unmapped file, got: $out" >&2
   exit 1
 fi
 
