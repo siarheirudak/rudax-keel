@@ -92,59 +92,36 @@ if printf '%s\n' "$out" | grep -Eq '(^| )M51( |$)'; then
   exit 1
 fi
 
-selector=$root/selector
-mkdir -p "$selector/setup/tests/harness"
-git_repo "$selector"
-printf 'a\n' >"$selector/setup/tests/harness/mutate.py"
-git -C "$selector" add setup/tests/harness/mutate.py
-git -C "$selector" commit -qm base
-git -C "$selector" branch -M main
-git -C "$selector" update-ref refs/remotes/origin/main HEAD
-git -C "$selector" checkout -q -b feature
-printf 'b\n' >"$selector/setup/tests/harness/mutate.py"
-git -C "$selector" add setup/tests/harness/mutate.py
-git -C "$selector" commit -qm change
-out=$(env -u GITHUB_BASE_REF KEEL_MUTATE_BASE=origin/main KEEL_MUTATE_REPO="$selector" bash "$PLAN")
-if [ "$out" != "RESULT mutate: run" ]; then
-  echo "expected full run, got: $out" >&2
-  exit 1
-fi
+expect_full() {
+  local file=$1 repo
+  repo=$root/case-$(printf '%s' "$file" | tr '/' '-')
+  mkdir -p "$repo/$(dirname "$file")"
+  git_repo "$repo"
+  printf 'a\n' >"$repo/$file"
+  git -C "$repo" add -- "$file"
+  git -C "$repo" commit -qm base
+  git -C "$repo" branch -M main
+  git -C "$repo" update-ref refs/remotes/origin/main HEAD
+  git -C "$repo" checkout -q -b feature
+  printf 'b\n' >"$repo/$file"
+  git -C "$repo" add -- "$file"
+  git -C "$repo" commit -qm change
+  out=$(env -u GITHUB_BASE_REF KEEL_MUTATE_BASE=origin/main KEEL_MUTATE_REPO="$repo" bash "$PLAN")
+  if [ "$out" != "RESULT mutate: run" ]; then
+    echo "expected full run for $file, got: $out" >&2
+    exit 1
+  fi
+}
 
-workflow=$root/workflow
-mkdir -p "$workflow/.github/workflows"
-git_repo "$workflow"
-printf 'a\n' >"$workflow/.github/workflows/checks.yml"
-git -C "$workflow" add .github/workflows/checks.yml
-git -C "$workflow" commit -qm base
-git -C "$workflow" branch -M main
-git -C "$workflow" update-ref refs/remotes/origin/main HEAD
-git -C "$workflow" checkout -q -b feature
-printf 'b\n' >"$workflow/.github/workflows/checks.yml"
-git -C "$workflow" add .github/workflows/checks.yml
-git -C "$workflow" commit -qm change
-out=$(env -u GITHUB_BASE_REF KEEL_MUTATE_BASE=origin/main KEEL_MUTATE_REPO="$workflow" bash "$PLAN")
-if [ "$out" != "RESULT mutate: run" ]; then
-  echo "expected full run for checks.yml, got: $out" >&2
-  exit 1
-fi
-
-unmapped=$root/unmapped
-mkdir -p "$unmapped/setup"
-git_repo "$unmapped"
-printf 'a\n' >"$unmapped/setup/keel-doctor.sh"
-git -C "$unmapped" add setup/keel-doctor.sh
-git -C "$unmapped" commit -qm base
-git -C "$unmapped" branch -M main
-git -C "$unmapped" update-ref refs/remotes/origin/main HEAD
-git -C "$unmapped" checkout -q -b feature
-printf 'b\n' >"$unmapped/setup/keel-doctor.sh"
-git -C "$unmapped" add setup/keel-doctor.sh
-git -C "$unmapped" commit -qm change
-out=$(env -u GITHUB_BASE_REF KEEL_MUTATE_BASE=origin/main KEEL_MUTATE_REPO="$unmapped" bash "$PLAN")
-if [ "$out" != "RESULT mutate: skipped (no harness files changed)" ]; then
-  echo "expected skip for an unmapped file, got: $out" >&2
-  exit 1
-fi
+expect_full setup/tests/harness/mutate.py
+expect_full .github/workflows/checks.yml
+expect_full setup/keel-doctor.sh
+expect_full setup/tests/harness/test-attacks.sh
+expect_full setup/tests/harness/mutate-plan.sh
+expect_full setup/docker/keel-git.Dockerfile
+expect_full setup/allow/developer.paths
+expect_full .github/workflows/mutate-full.yml
+expect_full setup/not-a-mapped-target
 
 bogus=$root/bogus
 mkdir -p "$bogus"

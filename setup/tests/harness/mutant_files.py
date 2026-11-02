@@ -121,7 +121,17 @@ CI_IDS = [
     "M75",
 ]
 
-# A change to any of these runs the full CI set, not a subset.
+# A change to one of these files selects only the CI mutants mapped to it.
+# Every other changed path under setup/ or .github/ selects the full CI set.
+TARGET_ONLY = frozenset((
+    "setup/keel.sh",
+    "setup/lib/visibility.py",
+    "setup/lib/egress.sh",
+    "setup/lib/egress.py",
+    "setup/lib/egress_proxy.py",
+))
+
+# Selector files. Covered by the setup/ and .github/ rule; kept so a test can name them.
 TRIGGERS = [
     "setup/tests/harness/mutate.py",
     "setup/tests/harness/run-tests.sh",
@@ -137,24 +147,33 @@ class SelectionError(Exception):
     pass
 
 
+def needs_full_set(changed):
+    """True when a changed path is under setup/ or .github/ and is not a mapped target."""
+    for path in changed:
+        if path in TARGET_ONLY:
+            continue
+        if path.startswith("setup/") or path.startswith(".github/"):
+            return True
+    return False
+
+
 def select_mutants(changed):
     """Return (status, ids). status is full, some, or skip."""
-    changed_set = set(changed)
-    if changed_set & set(TRIGGERS):
+    if needs_full_set(changed):
         return ("full", list(CI_IDS))
-    chosen = [mid for mid in CI_IDS if changed_set & set(FILES[mid])]
+    chosen = [mid for mid in CI_IDS if set(changed) & set(FILES[mid])]
     if not chosen:
         return ("skip", [])
     return ("some", chosen)
 
 
 def check_selection(changed, select=None):
-    """Fail when a selector drops mutants or skips a trigger file."""
+    """Fail when a selector drops mutants or skips a file that requires the full set."""
     choose = select or select_mutants
     status, ids = choose(list(changed))
     ids = list(ids)
     changed_set = set(changed)
-    if changed_set & set(TRIGGERS):
+    if needs_full_set(changed):
         if status != "full" or ids != list(CI_IDS):
             raise SelectionError("full set required")
         return status, ids

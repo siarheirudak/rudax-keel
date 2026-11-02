@@ -36,6 +36,13 @@ def validate():
     for path in mf.TRIGGERS:
         if not os.path.isfile(os.path.join(root, path)):
             fail("missing trigger " + path)
+    mapped = {path for paths in mf.FILES.values() for path in paths}
+    if set(mf.TARGET_ONLY) != mapped:
+        fail("target-only files must be exactly the mutant targets")
+    for path in mf.TARGET_ONLY:
+        if path.startswith("setup/") or path.startswith(".github/"):
+            continue
+        fail("target-only path is outside setup/ and .github/: " + path)
 
 
 def expect_some(changed, present, absent):
@@ -61,6 +68,47 @@ def main():
         got = mf.check_selection([trigger])
         if got != ("full", list(mf.CI_IDS)):
             fail("trigger %s -> %s" % (trigger, got))
+    full_paths = [
+        "setup/tests/harness/test-attacks.sh",
+        "setup/tests/harness/test-happy.sh",
+        "setup/tests/harness/h3-verdict.sh",
+        "setup/tests/harness/test-egress.sh",
+        "setup/tests/harness/visibility-suite.sh",
+        "setup/lib/portable.sh",
+        "setup/common.sh",
+        "setup/lib/mock_model.py",
+        "setup/allow/developer.paths",
+        "setup/deny/base",
+        "setup/egress/developer.allow",
+        "setup/docker/keel-git.Dockerfile",
+        "setup/docker/keel-proxy.Dockerfile",
+        "setup/gitleaks.toml",
+        "setup/gitleaks-install.sh",
+        "setup/gitleaks.ignore",
+        "setup/keel-doctor.sh",
+        "setup/tests/harness/mutate-plan.sh",
+        "setup/not-a-mapped-target",
+        ".github/workflows/mutate-full.yml",
+        ".github/unknown.yml",
+    ]
+    root = os.path.abspath(os.path.join(HERE, os.pardir, os.pardir, os.pardir))
+    for path in full_paths:
+        if path in mf.TARGET_ONLY:
+            fail("full-set path listed as a mapped target " + path)
+        if "not-a-mapped-target" not in path and not path.endswith("unknown.yml"):
+            if not os.path.isfile(os.path.join(root, path)):
+                fail("missing full-set path " + path)
+        got = mf.select_mutants([path])
+        if got != ("full", list(mf.CI_IDS)):
+            fail("full set required for %s, got %s" % (path, got))
+        if mf.decision_line([path]) != mf.FULL_LINE:
+            fail("decision for %s" % path)
+    mixed = mf.select_mutants(["setup/keel.sh", "setup/tests/harness/test-attacks.sh"])
+    if mixed != ("full", list(mf.CI_IDS)):
+        fail("oracle next to a target must select the full set")
+    outside = mf.check_selection(["scripts/check.sh"])
+    if outside != ("skip", []):
+        fail("a file outside setup/ and .github/ should skip")
     skipped = mf.check_selection(["docs/security.md"])
     if skipped != ("skip", []):
         fail("docs should skip")
@@ -78,6 +126,14 @@ def main():
     else:
         fail("always-none was not caught")
 
+    try:
+        mf.check_selection(["setup/keel-doctor.sh"], always_none)
+    except mf.SelectionError as err:
+        if "full set required" not in str(err):
+            fail("wrong error " + str(err))
+    else:
+        fail("always-none on an oracle was not caught")
+
     def always_some(_changed):
         return ("some", ["M03"])
 
@@ -88,6 +144,14 @@ def main():
             fail("wrong error " + str(err))
     else:
         fail("partial-on-trigger was not caught")
+
+    try:
+        mf.check_selection(["setup/tests/harness/test-attacks.sh"], always_some)
+    except mf.SelectionError as err:
+        if "full set required" not in str(err):
+            fail("wrong error " + str(err))
+    else:
+        fail("partial-on-oracle was not caught")
 
     line = mf.decision_line(["setup/keel.sh"])
     parts = line.split()
