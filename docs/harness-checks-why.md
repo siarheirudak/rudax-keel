@@ -1199,3 +1199,31 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 **If it fails.** FAIL.
 
 **How to fix.** Log that failure and return non-zero. Do not ignore it.
+
+<a id="atk-sec-h1"></a>
+
+### ATK-SEC-H1 clean bundle
+
+**Level.** CRITICAL
+
+**Check.** A change with no secret shape passes the gate.
+
+**Why.** The scanner must not fail an ordinary bundle.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep the scan limited to files added or edited in the change. Do not scan history.
+
+<a id="atk-sec-03"></a>
+
+### ATK-SEC-03 secret shape in the change
+
+**Level.** CRITICAL
+
+**Check.** A bundle that adds a `ghp_` shaped token fails the gate with `secret in change`. The token text is not printed.
+
+**Why.** A secret in the change must not pass the host gate.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep the gitleaks scan in `setup/keel.sh gate`. Install the pinned binary before the gate runs. The allowlist is only the harness fixture tokens.
