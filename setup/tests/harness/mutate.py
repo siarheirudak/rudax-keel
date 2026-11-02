@@ -61,9 +61,31 @@ M = {
  'M50': ('lib/visibility.py', 'unicodedata.normalize("NFC", text).casefold()', 'text.casefold()', 'break NFC matching', ['V-A16']),
  'M51': ('lib/visibility.py', 'return _redact_impl(text, env)  # redaction-on', 'return text, 0  # redaction-on', 'disable log redaction', ['V-A24']),
  'M52': ('lib/visibility.py', 'same_fs = False  # developer-same-fs', 'same_fs = True  # developer-same-fs', 'make developer tests writable on the same filesystem as src', ['V-A10-hardlink']),
+ 'M53': ('lib/egress.sh', 'net_internal=true  # egress-internal', 'net_internal=false  # egress-internal', 'role network is not internal', ['E-A2']),
+ 'M54': ('lib/egress.sh', "developer) printf '%s\\n' egress;;  # developer-egress", "developer) printf '%s\\n' open;;  # developer-egress", 'developer uses the open bridge', ['E-A2']),
+ 'M55': ('lib/egress.sh', "critic) printf '%s\\n' none;;  # critic-none", "critic) printf '%s\\n' egress;;  # critic-none", 'critic joins egress', ['E-A3']),
+ 'M56': ('lib/egress.sh', "qa|researcher) printf '%s\\n' none;;  # qa-researcher-none", "qa|researcher) printf '%s\\n' egress;;  # qa-researcher-none", 'qa and researcher join egress', ['E-A4', 'E-A7']),
+ 'M57': ('lib/egress.py', 'return True  # egress-log-on', 'return False  # egress-log-on', 'disable denial log', ['E-H3']),
+ 'M58': ('lib/egress.py', 'return "hostport"  # egress-log-hostport', 'return "url"  # egress-log-hostport', 'log the full url', ['E-H3']),
+ 'M59': ('lib/egress.py', 'return decide_exact(entries, host)  # egress-exact', 'return True  # egress-exact', 'allow every host', ['E-A1', 'E-A17']),
+ 'M60': ('lib/egress.py', 'return decide_port(entries, host, port, kind)  # egress-ports', 'return True  # egress-ports', 'allow every port', ['E-A12']),
+ 'M61': ('lib/egress_proxy.py', 'use_connect_target = True  # connect-target-acl', 'use_connect_target = False  # connect-target-acl', 'authorize CONNECT from the Host header', ['E-A13']),
+ 'M62': ('lib/egress_proxy.py', 'follow_redirects = False  # redirect-recheck', 'follow_redirects = True  # redirect-recheck', 'follow redirects inside the proxy', ['E-A14']),
+ 'M63': ('lib/egress_proxy.py', 'ADMIN_HOST = "127.0.0.1"  # proxy-admin-local', 'ADMIN_HOST = "0.0.0.0"  # proxy-admin-local', 'admin port on the role network', ['E-A8']),
+ 'M64': ('lib/egress.sh', 'dns_forward=off  # dns-forward-off', 'dns_forward=on  # dns-forward-off', 'forward external DNS', ['E-A9']),
+ 'M65': ('lib/egress.sh', 'ipv6_off=1  # egress-ipv6-off', 'ipv6_off=0  # egress-ipv6-off', 'enable ipv6 in the role', ['E-A10']),
+ 'M66': ('lib/egress.sh', 'egress_fail_closed=1  # egress-fail-closed', 'egress_fail_closed=0  # egress-fail-closed', 'launch when the proxy is down', ['E-A16']),
+ 'M67': (K, 'use_none=1  # proto-network-none', 'use_none=0  # proto-network-none', 'proto drops network none', ['N1']),
+ 'M68': ('lib/egress.py', 'return clean_host(host)  # egress-sanitize', 'return host  # egress-sanitize', 'log the raw host', ['E-A15']),
 }
 M['M15'] = (K, M['M13'][1], M['M13'][2], M['M15'][3], M['M15'][4])  # applied together with M14 below
 GREEN = re.compile(r'^(BLOCKED|CONTAINED|PARTIAL|N/A)')
+
+def cleanup_ns(mid):
+    ns = mid.lower()
+    docker = os.environ.get('DOCKER', 'docker').split()
+    subprocess.run(docker + ['rm', '-f', 'keel-proxy-' + ns, 'keel-mock-' + ns], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(docker + ['network', 'rm', 'keel-egress-' + ns, 'keel-out-' + ns], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def run(mid):
     f, old, new, what, exp = M[mid][:5]
@@ -74,22 +96,31 @@ def run(mid):
     shutil.copytree(os.path.join(SETUP, 'lib'), os.path.join(src, 'lib'))
     shutil.copytree(os.path.join(SETUP, 'allow'), os.path.join(src, 'allow'))
     shutil.copytree(os.path.join(SETUP, 'deny'), os.path.join(src, 'deny'))
+    shutil.copytree(os.path.join(SETUP, 'egress'), os.path.join(src, 'egress'))
     shutil.copy2(os.path.join(HARNESS, 'test-attacks.sh'), os.path.join(src, 'tests', 'harness', 'test-attacks.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'test-egress.sh'), os.path.join(src, 'tests', 'harness', 'test-egress.sh'))
     shutil.copy2(os.path.join(HARNESS, 'h3-verdict.sh'), os.path.join(src, 'tests', 'harness', 'h3-verdict.sh'))
     shutil.copy2(os.path.join(HARNESS, 'visibility-suite.sh'), os.path.join(src, 'tests', 'harness', 'visibility-suite.sh'))
     p = os.path.join(src, f); s = open(p).read()
     edits = [(old, new)] + list(M[mid][5] if len(M[mid]) > 5 else []) + ([(M['M14'][1], M['M14'][2])] if mid == 'M15' else [])
-    for o, n in edits:
-        if s.count(o) != 1: return mid, what, exp, None, f'mutation did not apply ({s.count(o)} matches)'
-        s = s.replace(o, n)
-    open(p, 'w').write(s)
-    env = dict(os.environ, KEEL_ROOT=os.path.join(d, 'k'))
-    out = subprocess.run(['bash', os.path.join(src, 'tests', 'harness', 'test-attacks.sh')], env=env, capture_output=True, text=True, timeout=900).stdout
-    open(os.path.join(HARNESS, 'logs', f'mutation-{mid}.log'), 'w').write(out)
-    res = dict(re.findall(r'^RESULT ([^:]+): (.*)$', out, re.M))
-    subprocess.run(['sudo', 'rm', '-rf', d])
-    red = sorted(k for k, v in res.items() if not GREEN.match(v))
-    return mid, what, exp, red, res
+    env = dict(os.environ, KEEL_ROOT=os.path.join(d, 'k'), KEEL_NS=mid)
+    try:
+        for o, n in edits:
+            if s.count(o) != 1:
+                return mid, what, exp, None, f'mutation did not apply ({s.count(o)} matches)'
+            s = s.replace(o, n)
+        open(p, 'w').write(s)
+        try:
+            out = subprocess.run(['bash', os.path.join(src, 'tests', 'harness', 'test-attacks.sh')], env=env, capture_output=True, text=True, timeout=900).stdout
+        except subprocess.TimeoutExpired:
+            return mid, what, exp, None, 'timeout'
+        open(os.path.join(HARNESS, 'logs', f'mutation-{mid}.log'), 'w').write(out)
+        res = dict(re.findall(r'^RESULT ([^:]+): (.*)$', out, re.M))
+        red = sorted(k for k, v in res.items() if not GREEN.match(v))
+        return mid, what, exp, red, res
+    finally:
+        cleanup_ns(mid)
+        subprocess.run(['sudo', 'rm', '-rf', d], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 if __name__ == '__main__':
     ids = sys.argv[1:] or sorted(M)

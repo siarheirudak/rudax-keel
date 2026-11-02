@@ -20,9 +20,13 @@ TS=$(date +%Y%m%d-%H%M%S)
 $DOCKER info >/dev/null 2>&1 || { echo "ERROR: $(docker_hint)" >&2; exit 5; }
 echo "== build image keel-git (native arch: $($DOCKER info --format '{{.Architecture}}'))"
 $DOCKER build -q -t keel-git -f "$SETUP/docker/keel-git.Dockerfile" "$SETUP/docker" >/dev/null || { echo "ERROR: image build failed" >&2; exit 1; }
+echo "== build image keel-proxy"
+$DOCKER build -q -t keel-proxy -f "$SETUP/docker/keel-proxy.Dockerfile" "$SETUP/docker" >/dev/null || { echo "ERROR: proxy image build failed" >&2; exit 1; }
 rc=0
 echo "== visibility self-test"
 python3 "$SETUP/lib/visibility.py" self-test || rc=1
+echo "== egress self-test"
+python3 "$SETUP/lib/egress.py" self-test || rc=1
 if [ "${KEEL_SKIP_SUITES:-}" != 1 ]; then
 echo "== happy path  -> logs/happy-$TS.log"
 "$HERE/test-happy.sh" > "$HERE/logs/happy-$TS.log" 2>&1 || rc=1
@@ -53,7 +57,7 @@ if mutate_plan >"$decision_file"; then
   case $decision in
     "RESULT mutate: run")
       echo "mutate: harness files changed; running the mutant set"
-      python3 "$HERE/mutate.py" M17 M27 M45 M46 M47 M48 M49 M50 M51 M52 || rc=1
+      python3 "$HERE/mutate.py" M03 M17 M27 M45 M46 M47 M48 M49 M50 M51 M52 M53 M54 M55 M56 M57 M58 M59 M60 M61 M62 M63 M64 M65 M66 M67 M68 || rc=1
       ;;
     "RESULT mutate: skipped (no harness files changed)")
       ;;

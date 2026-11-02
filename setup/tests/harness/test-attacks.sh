@@ -255,5 +255,6 @@ echo "### N2 host token does not leak into containers"; fresh
 out=$(GH_TOKEN=fake-doctor-canary GITHUB_TOKEN=fake-doctor-canary BOT_GH_TOKEN=fake-doctor-canary $K proto tok rw 'env | grep -cE "^(GH_|GITHUB_|BOT_GH_TOKEN)" ; grep -rl fake-doctor-canary /proc/1/environ 2>/dev/null | wc -l'); echo "$out"
 if [ "$(echo "$out" | sed -n 2p)" = 0 ] && [ "$(echo "$out" | sed -n 3p)" = 0 ]; then res N2 "BLOCKED (token vars set on host are absent in container)"; else res N2 "NOT BLOCKED"; fi
 
+bash "$HERE/test-egress.sh" || exit 1
 bash "$HERE/visibility-suite.sh" || exit 1
 $K cleanup >/dev/null; rm -rf "$P"; echo "### done"

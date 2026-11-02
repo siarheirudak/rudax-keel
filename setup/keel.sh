@@ -9,6 +9,8 @@ set -u
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 # shellcheck source=setup/lib/portable.sh
 . "$HERE/lib/portable.sh"
+# shellcheck source=setup/lib/egress.sh
+. "$HERE/lib/egress.sh"
 P=${KEEL_ROOT:-$HOME/keel-proto}; T=${TASK:-task-1}
 mkdir -p "$P"; P=$(abs_dir "$P")    # physical path: Docker Desktop shares /private/tmp, not /tmp
 R=$P/repo; W=$P/work/$T; S=$P/shadow/$T.git; B=$P/bundles; G=$P/gate/$T.git
@@ -90,9 +92,9 @@ run_policy() {
   # Whole-tree fallback is not used.
   :
   if [ "${#MNT[@]}" -eq 0 ]; then
-    crun -w /tmp "$IMG" sh -c "$*"
+    crun_for "$name" -w /tmp "$IMG" sh -c "$*"
   else
-    crun "${MNT[@]}" -w /work "$IMG" sh -c "$*"
+    crun_for "$name" "${MNT[@]}" -w /work "$IMG" sh -c "$*"
   fi
 }
 mode(){ cat "$P/$T.mode" 2>/dev/null || echo pointer; }
@@ -114,6 +116,7 @@ reset_shadow(){ # plain file ops only, never git on host against the shadow; nev
 tasks_active(){ ls -d "$P"/work/*/ >/dev/null 2>&1; }
 need_docker(){ $DOCKER info >/dev/null 2>&1 || { docker_hint >&2; exit 5; }; }
 case "${1:-}" in
+egress-up) need_docker; egress_proxy_up;;
 init-repo) mkdir -p "$R" "$P/.gatehome"; cd "$R" || exit 1; git init -q; git symbolic-ref HEAD refs/heads/main
   git config gc.auto 0; git config maintenance.auto false; git config gc.pruneExpire never; git config gc.reflogExpireUnreachable never
   printf '#!/bin/sh\nset -e\ngrep -q hello app.txt && echo TESTS-OK\n' > test.sh; echo hello > app.txt; mkdir -p .github; echo ci > .github/ci.yml; echo rules > AGENTS.md
@@ -145,7 +148,19 @@ mode) mode;;
 reset-shadow) reset_shadow; echo "shadow reset";;
 proto) shift; name=$1 m=$2; shift 2; reset_shadow
   echo "== role $name ($m) [shadow reset, mode=$(mode)]"; work_mounts "$m"
-  crun -v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c "$*";;
+  use_none=1  # proto-network-none
+  if [ "$use_none" = 1 ]; then
+    crun -v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c "$*"
+  else
+    skip=0
+    args=()
+    for a in "${HARDEN[@]}"; do
+      if [ "$skip" = 1 ]; then skip=0; continue; fi
+      if [ "$a" = "--network" ]; then skip=1; continue; fi
+      args+=("$a")
+    done
+    $DOCKER run "${args[@]}" "${GITENV[@]}" -v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c "$*"
+  fi;;
 proto-env) shift; WE=$P/work/$T-env; mkdir -p "$WE"; reset_shadow
   crun -e "GIT_DIR=/shadow/$T.git" -e GIT_WORK_TREE=/work -v "$R/.git/objects:/base/objects:ro" -v "$WE:/work" -v "$S:/shadow/$T.git" -w /work "$IMG" sh -c "$*";;
 role) shift; name=$1; shift
