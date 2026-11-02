@@ -68,16 +68,16 @@ The owner's answers (a D2 question, a skill, a split, an irreversible change, a 
 - **Does:** Mount only the folder roots in `setup/allow/<role>.paths`. `setup/deny/base` plus add-only `.keel/deny.local` withhold secrets, logs, runs, and `.keel/deny.local` itself. `.keel/decisions/<task-id>/` is for the orchestrator and the architect. The tester sees the commit recorded at setup. The developer’s `tests/` mount is read-only. Launch decisions are JSONL with typed redaction. Content fencing is not in this step. See [Roles and visibility](../roles.md).
 - **Depends on:** isolation (green), gate (green)
 - **Effort:** M
-- **Done when:** Developer can read tests but cannot write them (RO mount); orchestrator can read the D1 log and cannot see secrets/`deny.local` paths; auditor cannot see developer skills or D1 log before verdict; `deny.local` is flat and extend-only; secret-pattern base cannot be narrowed; docs state the matrix (no fence fixtures required here).
+- **Done when:** The developer can read `tests/` and cannot write it. The orchestrator can write `.keel/decisions/<task-id>/` and cannot see secret basenames or `.keel/deny.local`. The auditor cannot see `.agents/` or `.keel/decisions/`. `.keel/deny.local` is add-only, and a project line cannot remove a base deny. The matrix is in [Roles and visibility](../roles.md). Content fencing is not in this step.
 
 ### Step 2 — Egress allowlist proxy
-- **Does:** Harness proxy allowlist; developer has no network except model API (`network none` + proxy); other roles per design (researcher internet; QA only local app; critic no network).
+- **Does:** One explicit forward proxy on the internal network `keel-egress`. The developer reaches only the hosts in `setup/egress/developer.allow` (the CI mock). Critic, QA, researcher, proto, setup, export, the test re-run, and every other role stay on `--network none`. The long-term design rows for researcher internet and QA’s local app stay later, with the research step and the QA step. Other roles join the same proxy only when they need a model API.
 - **Depends on:** Step 1
 - **Effort:** M
-- **Done when:** Developer egress test shows only model API; unauthorized destinations blocked; proxy logs denials.
+- **Done when:** With the proxy variables unset, the developer still cannot reach a public host, a metadata address, or raw TCP off the internal network. A stopped proxy, a missing egress network, or a network that is not internal refuses the launch. A malformed allow file refuses the launch. Denials in `$KEEL_ROOT/.keel/logs/egress.jsonl` are a sanitized host:port and a reason, with no path, query, or userinfo. Critic, QA, researcher, and proto stay on `--network none`. Doctor checks EG-01, EG-02, and EG-03 are critical, and a critical failure or a missing attack result is not ready. The allowlist matches the normalized host exactly.
 
 ### Step 3 — Rootless hardening + startup verification (mandatory in v1)
-- **Does:** Make rootless Docker or Podman mandatory. Containers: `--cap-drop=ALL`, `no-new-privileges`, read-only rootfs + tmpfs, memory/cpu/pids limits, workdir quota; developer network none; secrets under a separate user. Startup verification script refuses to run if hardening is not in place. Chromium sandbox ON (no `--no-sandbox`); seccomp profile for Chrome; verify Playwright on the host first.
+- **Does:** Make rootless Docker or Podman mandatory. Containers: `--cap-drop=ALL`, `no-new-privileges`, read-only rootfs + tmpfs, memory/cpu/pids limits, workdir quota; the developer stays on the Step 2 proxy; secrets under a separate user. Startup verification script refuses to run if hardening is not in place. Chromium sandbox ON (no `--no-sandbox`); seccomp profile for Chrome; verify Playwright on the host first.
 - **Depends on:** Step 1, Step 2, isolation green
 - **Effort:** L
 - **Done when:** Doctor/startup script fails closed on rootful or missing caps/limits; Playwright host check documented; Chromium runs without `--no-sandbox` under rootless; fixture refuses weak config.
