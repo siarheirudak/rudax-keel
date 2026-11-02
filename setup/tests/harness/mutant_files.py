@@ -84,6 +84,7 @@ FILES = {
     "M76": ["setup/lib/egress.py"],
     "M77": ["setup/lib/egress.sh"],
     "M78": ["setup/tests/harness/attack-results.sh"],
+    "M79": ["setup/check.sh"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -125,6 +126,7 @@ CI_IDS = [
     "M76",
     "M77",
     "M78",
+    "M79",
 ]
 
 # A change to one of these files selects only the CI mutants mapped to it.

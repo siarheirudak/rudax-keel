@@ -87,6 +87,7 @@ M = {
  'M76': ('lib/egress.py', '            entries.append(item)\n    return entries  # allow-entries', '            entries.append(item)\n    entries.append(("example.com", None))  # allow-extra-host\n    return entries  # allow-entries', 'allowlist accepts example.com', ['E-A1']),
  'M77': ('lib/egress.sh', '$DOCKER run "${args[@]}" "${GITENV[@]}" "$@"  # role-env-explicit', '$DOCKER run "${args[@]}" "${GITENV[@]}" -e "GH_TOKEN=${GH_TOKEN:-}" -e "GITHUB_TOKEN=${GITHUB_TOKEN:-}" -e "KEEL_SECRET=${KEEL_SECRET:-}" "$@"  # role-env-explicit', 'role container receives secret names', ['S-H1']),
  'M78': ('tests/harness/attack-results.sh', 'NOT BLOCKED|', '', 'treat NOT BLOCKED as pass', ['CHK-1']),
+ 'M79': ('check.sh', 'mode_check=1 # script-mode', 'mode_check=0 # script-mode', 'script mode check disabled', ['MODE-A1']),
 }
 M['M15'] = (K, M['M13'][1], M['M13'][2], M['M15'][3], M['M15'][4])  # applied together with M14 below
 GREEN = re.compile(r'^(BLOCKED|CONTAINED|PARTIAL|N/A)')
@@ -103,6 +104,7 @@ def run(mid):
     src = os.path.join(d, 'p')
     os.makedirs(os.path.join(src, 'tests', 'harness'))
     shutil.copy2(os.path.join(SETUP, 'keel.sh'), os.path.join(src, 'keel.sh'))
+    shutil.copy2(os.path.join(SETUP, 'check.sh'), os.path.join(src, 'check.sh'))
     shutil.copy2(os.path.join(SETUP, 'gitleaks.toml'), os.path.join(src, 'gitleaks.toml'))
     shutil.copytree(os.path.join(SETUP, 'lib'), os.path.join(src, 'lib'))
     shutil.copytree(os.path.join(SETUP, 'allow'), os.path.join(src, 'allow'))
