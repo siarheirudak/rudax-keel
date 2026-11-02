@@ -61,10 +61,33 @@ SECRET_ENV = (
     "OPENAI_API_KEY",
     "KEEL_SECRET",
 )
+# Exact launch-time names. Not a prefix match. Env-value redaction stays on SECRET_ENV.
+MODEL_KEY_ENV = (
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "OPENROUTER_API_KEY",
+)
+LAUNCH_DENY_ENV = SECRET_ENV + tuple(name for name in MODEL_KEY_ENV if name not in SECRET_ENV)
+LOG_FIELDS = (
+    "ts",
+    "event",
+    "role",
+    "reason_code",
+    "file",
+    "line",
+    "detail",
+    "mounted_roots",
+    "denied_withheld",
+)
 
-TOKEN_RE = re.compile(r"(?:ghp_|github_pat_|gho_|ghu_|ghs_|ghr_|sk-|xox[baprs]-|AKIA)[A-Za-z0-9_\-]{20,}")
+TOKEN_RE = re.compile(
+    r"(?:github_pat_|ghp_|gho_|ghu_|ghs_|ghr_|sk-ant-|sk-|xox[baprs]-|AKIA)[A-Za-z0-9_\-]{20,}"
+)
 KEY_RE = re.compile(r"-----BEGIN [A-Z ]{0,40}KEY-----.*?-----END [A-Z ]{0,40}KEY-----", re.S)
-PASSWORD_RE = re.compile(r"(?i)(?:password|passwd|pwd)\s*[:=]\s*\S+")
+ASSIGN_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9_])(?:password|passwd|pwd|api_key|token)\s*[:=]\s*\S+"
+)
 UNKNOWN_RE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9+/_\-]{32,}={0,2}(?![A-Za-z0-9])")
 GLOB_CHARS = set("*?[]")
 PLACEHOLDER = "[REDACTED:{0}]"
@@ -323,6 +346,36 @@ def secret_values(env):
     return found
 
 
+def assignment_kind(text):
+    key = text.split("=", 1)[0].split(":", 1)[0].strip().lower()
+    if key in ("password", "passwd", "pwd"):
+        return "password"
+    if key == "api_key":
+        return "key"
+    return "token"
+
+
+def _scan_patterns(text):
+    found = []
+    if not isinstance(text, str) or text == "":
+        return found
+    for match in TOKEN_RE.finditer(text):
+        found.append((match.start(), match.end(), "token"))
+    for match in KEY_RE.finditer(text):
+        found.append((match.start(), match.end(), "key"))
+    for match in ASSIGN_RE.finditer(text):
+        found.append((match.start(), match.end(), assignment_kind(match.group(0))))
+    for match in UNKNOWN_RE.finditer(text):
+        if "REDACTED" in match.group(0):
+            continue
+        found.append((match.start(), match.end(), "unknown"))
+    return found
+
+
+def scan_patterns(text):
+    return _scan_patterns(text)  # pattern-scan
+
+
 def _replace_span(text, start, end, kind, count):
     return text[:start] + PLACEHOLDER.format(kind), text[end:], count + 1
 
@@ -360,18 +413,8 @@ def _redact_impl(text, env):
             at = pending.find(raw)
             if at >= 0:
                 consider(at, at + len(raw), kind)
-        match = TOKEN_RE.search(pending)
-        if match:
-            consider(match.start(), match.end(), "token")
-        match = KEY_RE.search(pending)
-        if match:
-            consider(match.start(), match.end(), "key")
-        match = PASSWORD_RE.search(pending)
-        if match:
-            consider(match.start(), match.end(), "password")
-        match = UNKNOWN_RE.search(pending)
-        if match and "REDACTED" not in match.group(0):
-            consider(match.start(), match.end(), "unknown")
+        for start, end, kind in scan_patterns(pending):
+            consider(start, end, kind)
         if best is None:
             done += pending
             break
@@ -427,14 +470,23 @@ def still_secret(line, env):
     for value, _kind in secret_values(env):
         if value in line:
             return True
-    if TOKEN_RE.search(line):
+    if scan_patterns(line):
         return True
     return False
+
+
+def project_log_fields(record):
+    projected = {}
+    for key in LOG_FIELDS:
+        if key in record:
+            projected[key] = record[key]
+    return projected
 
 
 def write_log(keel, record, env):
     """Append one JSONL record. This is the only log writer."""
     warn_once(keel)
+    record = project_log_fields(record)
     redacted, count = redact_obj(record, env)
     if isinstance(redacted, dict):
         redacted["redactions"] = count
@@ -700,6 +752,15 @@ def emit_mounts(args, env):
             return 1
         sys.stdout.write("REFUSE\t{0}\t{1}\t{2}\n".format(err.code, err.file, err.line))
         return 1
+    except Exception as err:  # mounts-internal-log
+        internal = PolicyError("mounts_internal", "emit_mounts", 0, type(err).__name__)
+        try:
+            log_refuse(args.keel, args.role, internal, env)
+        except PolicyError:
+            sys.stdout.write("REFUSE\tmounts_internal\temit_mounts\t0\n")
+            return 1
+        sys.stdout.write("REFUSE\tmounts_internal\temit_mounts\t0\n")
+        return 1
     for host, container, mode in mounts:
         sys.stdout.write("MOUNT\t{0}\t{1}\t{2}\n".format(host, container, mode))
     return 0
@@ -758,6 +819,25 @@ def self_test():
     both, n_both = apply_redaction(token + " " + env["KEEL_SECRET"], env)
     assert n_both == 2, n_both
     assert token not in both and env["KEEL_SECRET"] not in both
+    bare = {}
+    samples = [
+        "ghp_" + ("B" * 36),
+        "github_pat_" + ("c" * 22),
+        "gho_" + ("d" * 22),
+        "sk-" + ("e" * 24),
+        "sk-ant-" + ("f" * 24),
+        "password=hunter2hunter2hunter2",
+        "api_key=abc123abc123abc123abc123",
+        "token=abc123abc123abc123abc123",
+        "-----BEGIN PRIVATE KEY-----\nMII\n-----END PRIVATE KEY-----",
+    ]
+    for sample in samples:
+        red, count = apply_redaction(sample, bare)
+        assert count >= 1 and sample not in red, red
+        assert not still_secret(red, bare), red
+    assert still_secret("password=hunter2hunter2hunter2", bare)
+    kept = project_log_fields({"event": "launch_ok", "role": "developer", "extra_secret": "ghp_" + ("Z" * 36)})
+    assert "extra_secret" not in kept and kept["event"] == "launch_ok"
 
     # casefold and NFC
     assert fold_key("SRC/.ENV") == fold_key("src/.env")
@@ -939,6 +1019,18 @@ def main(argv):
         except PolicyError:
             return 1
         sys.stdout.write("REFUSE\t{0}\t{1}\t{2}\n".format(err.code, err.file, err.line))
+        return 1
+    if cmd == "secret-env":
+        names = [name for name in LAUNCH_DENY_ENV if name in os.environ]
+        if not names:
+            return 0
+        err = PolicyError("secret_env", "environment", 0, ",".join(names))
+        try:
+            log_refuse(args.keel, args.role, err, os.environ)
+        except PolicyError:
+            sys.stdout.write("REFUSE\tsecret_env\tenvironment\t0\n")
+            return 1
+        sys.stdout.write("REFUSE\tsecret_env\tenvironment\t0\n")
         return 1
     if cmd == "mounts":
         return emit_mounts(args, os.environ)
