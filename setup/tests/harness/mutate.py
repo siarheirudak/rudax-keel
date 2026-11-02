@@ -81,6 +81,7 @@ M = {
  'M70': ('lib/visibility.py', 'return _scan_patterns(text)  # pattern-scan', 'return []  # pattern-scan', 'drop format-pattern redaction', ['S-A2']),
  'M71': ('lib/visibility.py', 'except Exception as err:  # mounts-internal-log\n        internal = PolicyError("mounts_internal", "emit_mounts", 0, type(err).__name__)', 'except Exception:  # mounts-internal-log\n        return 0', 'swallow a mount error', ['S-A3']),
  'M72': ('lib/visibility.py', '    "KEEL_SECRET",\n)', '    "NOT_A_SECRET",\n)', 'drop KEEL_SECRET from the name denylist', ['S-A4']),
+ 'M73': (K, 'secret_scan=1  # secret-scan', 'secret_scan=0  # secret-scan', 'skip the secret scan', ['SEC-03']),
 }
 M['M15'] = (K, M['M13'][1], M['M13'][2], M['M15'][3], M['M15'][4])  # applied together with M14 below
 GREEN = re.compile(r'^(BLOCKED|CONTAINED|PARTIAL|N/A)')
@@ -97,6 +98,7 @@ def run(mid):
     src = os.path.join(d, 'p')
     os.makedirs(os.path.join(src, 'tests', 'harness'))
     shutil.copy2(os.path.join(SETUP, 'keel.sh'), os.path.join(src, 'keel.sh'))
+    shutil.copy2(os.path.join(SETUP, 'gitleaks.toml'), os.path.join(src, 'gitleaks.toml'))
     shutil.copytree(os.path.join(SETUP, 'lib'), os.path.join(src, 'lib'))
     shutil.copytree(os.path.join(SETUP, 'allow'), os.path.join(src, 'allow'))
     shutil.copytree(os.path.join(SETUP, 'deny'), os.path.join(src, 'deny'))

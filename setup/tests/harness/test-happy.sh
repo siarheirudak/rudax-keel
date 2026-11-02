@@ -10,7 +10,9 @@ echo "### owner check (expect none)"; find "$KEEL_ROOT" ! -user "$(id -u)" | hea
 echo "### host git in work dir (pointer to /shadow, absent on host)"; git -C "$KEEL_ROOT/work/task-1" status 2>&1 | head -2
 echo "### step3 export"; $K export && ls -l "$KEEL_ROOT/bundles"
 C0=$(git -C "$KEEL_ROOT/repo" count-objects -v | fingerprint)
-echo "### step4 gate (temp bare repo w/ alternates)"; $K gate; echo "gate rc=$?"
+echo "### step4 gate (temp bare repo w/ alternates)"
+out=$($K gate 2>&1); rc=$?; printf '%s\n' "$out"; echo "gate rc=$rc"
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -q 'GATE PASS'; then echo "RESULT SEC-H1: BLOCKED (clean bundle)"; else echo "RESULT SEC-H1: NOT BLOCKED"; exit 1; fi
 [ "$C0" = "$(git -C "$KEEL_ROOT/repo" count-objects -v | fingerprint)" ] && echo "real repo object store UNCHANGED by gate" || echo "real repo object store CHANGED"
 echo "### step5"; $K push-stub
 echo "### step1-alt GIT_DIR/GIT_WORK_TREE (no pointer file)"
