@@ -1212,7 +1212,7 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 
 **If it fails.** FAIL.
 
-**How to fix.** Keep the scan limited to files added or edited in the change. Do not scan history.
+**How to fix.** Keep the scan limited to files added or edited in the change. Do not scan history. A secret split across files, or encoded so the shape is gone, is not this check.
 
 <a id="atk-sec-03"></a>
 
@@ -1226,4 +1226,32 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 
 **If it fails.** FAIL.
 
-**How to fix.** Keep the gitleaks scan in `setup/keel.sh gate`. Install the pinned binary before the gate runs. The allowlist is only the harness fixture tokens.
+**How to fix.** Keep the gitleaks scan in `setup/keel.sh gate`. Pass `--ignore-gitleaks-allow`, `--config` for the harness config, and `--gitleaks-ignore-path` for the harness ignore file. Do not load a `.gitleaksignore` or `.gitleaks.toml` from the change. Install gitleaks 8.30.1 before the gate runs. A timeout or any other scanner error fails the gate. `GL-01` is the critical doctor check for that binary.
+
+<a id="atk-sec-04"></a>
+
+### ATK-SEC-04 inline allow comment
+
+**Level.** CRITICAL
+
+**Check.** A `ghp_` shape with a `gitleaks:allow` comment on the same line still fails the gate.
+
+**Why.** An inline comment must not suppress a finding in the change.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep `--ignore-gitleaks-allow` on the scan.
+
+<a id="atk-sec-05"></a>
+
+### ATK-SEC-05 product ignore file
+
+**Level.** CRITICAL
+
+**Check.** A change that adds both a `ghp_` shape and a `.gitleaksignore` naming that finding still fails the gate.
+
+**Why.** The product must not supply the ignore list or the scanner config.
+
+**If it fails.** FAIL.
+
+**How to fix.** Point `--gitleaks-ignore-path` at the harness ignore file, and do not copy `.gitleaksignore` or `.gitleaks.toml` into the scanned tree.
