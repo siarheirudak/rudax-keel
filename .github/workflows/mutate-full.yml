@@ -1,0 +1,66 @@
+name: mutate-full
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mutants:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: bash setup/gitleaks-install.sh
+      - name: Run the full mutant set
+        # The runner sets GITHUB_* names. keel-doctor treats any GH_* or GITHUB_* name as a token,
+        # so those names are not forwarded. KEEL_MUTATE_FORCE runs the full set on main,
+        # where a diff against origin/main is empty.
+        run: |
+          set -eu
+          clean=(
+            "HOME=$HOME"
+            "PATH=$PATH"
+            "USER=${USER:-runner}"
+            "LOGNAME=${LOGNAME:-${USER:-runner}}"
+            "SHELL=${SHELL:-/bin/bash}"
+            "LANG=${LANG:-C.UTF-8}"
+            "TMPDIR=${TMPDIR:-/tmp}"
+            "KEEL_MUTATE_FORCE=1"
+          )
+          if [ -n "${DOCKER_HOST:-}" ]; then
+            clean+=("DOCKER_HOST=$DOCKER_HOST")
+          fi
+          exec env -i "${clean[@]}" bash setup/tests/harness/run-tests.sh
+
+  report:
+    needs: mutants
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: File one issue when the full set fails
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 setup/tests/harness/mutate-issue.py

@@ -3,12 +3,16 @@
 # Creates a THROWAWAY repo under $KEEL_ROOT (wiped!). No network, no tokens, no GitHub.
 # env: DOCKER (default docker; Linux without docker group: DOCKER="sudo docker"), KEEL_ROOT (default ~/keel-proto),
 #      KEEL_MUTATE_BASE (commit to diff; otherwise GITHUB_BASE_REF or origin/main)
+#      KEEL_MUTATE_FORCE=1 runs the full CI mutant set and does not consult the diff
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 SETUP=$(cd "$HERE/../.." && pwd -P)
 # shellcheck source=setup/lib/portable.sh
 . "$SETUP/lib/portable.sh"
 DOCKER=${DOCKER:-docker}; export DOCKER
+echo "== mutant select"
+python3 "$HERE/test-mutant-select.py" || exit 1
+python3 "$HERE/mutate-issue.py" --self-test || exit 1
 echo "== mutate plan"
 "$HERE/test-mutate-plan.sh" || exit 1
 echo "== nested ro probe"
@@ -52,22 +56,50 @@ echo "== mutate"
 # shellcheck source=setup/tests/harness/mutate-plan.sh
 . "$HERE/mutate-plan.sh"
 decision_file=$(mktemp)
-if mutate_plan >"$decision_file"; then
+mutate_ok=1
+if [ "${KEEL_MUTATE_FORCE:-}" = 1 ]; then
+  printf '%s\n' "RESULT mutate: run" >"$decision_file"
+  mutate_ok=0
+elif mutate_plan >"$decision_file"; then
+  mutate_ok=0
+fi
+if [ "$mutate_ok" -eq 0 ]; then
   decision=$(cat "$decision_file")
   rm -f "$decision_file"
   printf '%s\n' "$decision"
+  ids=
   case $decision in
     "RESULT mutate: run")
-      echo "mutate: harness files changed; running the mutant set"
-      python3 "$HERE/mutate.py" M03 M17 M27 M45 M46 M47 M48 M49 M50 M51 M52 M53 M54 M55 M56 M57 M58 M59 M60 M61 M62 M63 M64 M65 M66 M67 M68 M69 M70 M71 M72 M73 M74 M75 || rc=1
+      ids=$(python3 "$HERE/mutant_files.py" --ci) || {
+        echo "ERROR: mutate: ci list failed" >&2
+        rc=1
+        ids=
+      }
       ;;
     "RESULT mutate: skipped (no harness files changed)")
+      ;;
+    "RESULT mutate: run "*)
+      ids=${decision#"RESULT mutate: run "}
       ;;
     *)
       echo "ERROR: mutate: unexpected decision" >&2
       rc=1
       ;;
   esac
+  if [ -n "$ids" ]; then
+    # shellcheck disable=SC2086
+    if ! python3 "$HERE/mutant_files.py" --check-ids $ids; then
+      echo "ERROR: mutate: id list rejected" >&2
+      rc=1
+    else
+      echo "mutate: running selected mutants"
+      mutate_start=$(date +%s)
+      # shellcheck disable=SC2086
+      python3 "$HERE/mutate.py" $ids || rc=1
+      mutate_end=$(date +%s)
+      echo "mutate: elapsed $((mutate_end - mutate_start))s"
+    fi
+  fi
 else
   rm -f "$decision_file"
   rc=1
