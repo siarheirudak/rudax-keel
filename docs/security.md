@@ -105,7 +105,11 @@ Each rule’s failure mode is in [why.md](why.md). On a personal repository, Git
 
 Roles do not hold secret values, and the harness does not pass the host environment into a role container. A key lives only in a dedicated broker: the future model mediator, or the owner push script. `role` and `role-env` refuse to start, with a non-zero exit and a refuse line that names the variable and not its value, when the launching environment contains any exact name on `LAUNCH_DENY_ENV` in `setup/lib/visibility.py`. That list is the existing `SECRET_ENV` names plus `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, and `OPENROUTER_API_KEY`. It is not a prefix match.
 
-A renamed variable is not on that list. Format-pattern redaction in the launch log is the backstop for token prefixes, `sk-` and `sk-ant-` keys, PEM private key blocks, and `password=`, `api_key=`, and `token=` assignments. A secret scanner is not part of this step. Text sent to an allowlisted model provider is an accepted residual: the proxy allows the connection, and this log does not see the body.
+A renamed variable is not on that list. Format-pattern redaction in the launch log is the backstop for token prefixes, `sk-` and `sk-ant-` keys, PEM private key blocks, and `password=`, `api_key=`, and `token=` assignments. The host gate scans the files added or edited in the change with gitleaks 8.30.1 and fails the bundle when one of those shapes is present. The binary is pinned by version and checksum and is installed before the gate runs; the gate itself does not download it. `GL-01` is critical: the binary must be present and report `8.30.1`.
+
+The scan passes `--config` and `--gitleaks-ignore-path` pointing at harness files, and `--ignore-gitleaks-allow`, so an inline `gitleaks:allow` comment does not suppress a finding. A `.gitleaksignore` or `.gitleaks.toml` added in the change is not loaded. The harness config also ignores the obvious fixture tokens used by the harness tests. That is not the only suppression control. A timeout, or any scanner exit other than a clean pass, fails the gate.
+
+The scan does not read git history. A secret split across files, or a secret that is encoded so it no longer matches these shapes, is not caught here. Text sent to an allowlisted model provider is an accepted residual: the proxy allows the connection, and this log does not see the body.
 
 The launch log does not read environment values. A denylisted name refuses the launch. Text that reaches the log is redacted only when it matches a format pattern.
 
