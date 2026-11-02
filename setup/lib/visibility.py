@@ -61,7 +61,7 @@ SECRET_ENV = (
     "OPENAI_API_KEY",
     "KEEL_SECRET",
 )
-# Exact launch-time names. Not a prefix match. Env-value redaction stays on SECRET_ENV.
+# Exact launch-time names. Not a prefix match. Values are not read.
 MODEL_KEY_ENV = (
     "ANTHROPIC_API_KEY",
     "GEMINI_API_KEY",
@@ -325,27 +325,6 @@ def is_denied(rel, role, rules):
     return False
 
 
-def env_type(name):
-    upper = name.upper()
-    if "PASSWORD" in upper or "PASSWD" in upper or upper == "PASSWORD":
-        return "password"
-    if "TOKEN" in upper:
-        return "token"
-    if "KEY" in upper:
-        return "key"
-    return "env"
-
-
-def secret_values(env):
-    found = []
-    for name in SECRET_ENV:
-        value = env.get(name, "")
-        if isinstance(value, str) and len(value) >= 12:
-            found.append((value, env_type(name)))
-    found.sort(key=lambda item: len(item[0]), reverse=True)
-    return found
-
-
 def assignment_kind(text):
     key = text.split("=", 1)[0].split(":", 1)[0].strip().lower()
     if key in ("password", "passwd", "pwd"):
@@ -381,20 +360,13 @@ def _replace_span(text, start, end, kind, count):
 
 
 def _redact_impl(text, env):
+    # env is accepted so callers stay stable. Values are not read.
+    del env
     if not isinstance(text, str) or text == "":
         return text, 0
     count = 0
     pending = text
     done = ""
-    values = secret_values(env)
-    encoded = []
-    for value, kind in values:
-        try:
-            raw = base64.b64encode(value.encode("utf-8")).decode("ascii")
-        except Exception:
-            continue
-        if len(raw) >= 16:
-            encoded.append((raw, kind))
     while pending:
         best = None  # start, end, kind
 
@@ -405,14 +377,6 @@ def _redact_impl(text, env):
             if best is None or start < best[0] or (start == best[0] and (end - start) > (best[1] - best[0])):
                 best = (start, end, kind)
 
-        for value, kind in values:
-            at = pending.find(value)
-            if at >= 0:
-                consider(at, at + len(value), kind)
-        for raw, kind in encoded:
-            at = pending.find(raw)
-            if at >= 0:
-                consider(at, at + len(raw), kind)
         for start, end, kind in scan_patterns(pending):
             consider(start, end, kind)
         if best is None:
@@ -467,9 +431,8 @@ def warn_once(keel):
 
 
 def still_secret(line, env):
-    for value, _kind in secret_values(env):
-        if value in line:
-            return True
+    # Names are refused at launch. This pass does not read env values.
+    del env
     if scan_patterns(line):
         return True
     return False
@@ -803,22 +766,24 @@ def self_test():
     assert n == 1
     assert token not in red
     assert not red.startswith("ghp_") and "AAAA" not in red
-    env_red, n_env = apply_redaction("value " + env["KEEL_SECRET"], env)
-    assert env_red == "value [REDACTED:env]", env_red
+    plain = env["KEEL_SECRET"]
+    env_red, n_env = apply_redaction("value " + plain, env)
+    assert env_red == "value " + plain and n_env == 0, env_red
+    assert not still_secret(env_red, env)
     pw, n_pw = apply_redaction("password=hunter2hunter2hunter2", env)
     assert pw == "[REDACTED:password]", pw
     unknown, n_u = apply_redaction("Zz9unknownSecretValue1234567890abcd", env)
     assert unknown == "[REDACTED:unknown]", unknown
     blob = base64.b64encode(token.encode("utf-8")).decode("ascii")
     b64, n_b = apply_redaction("blob " + blob, env)
-    assert blob not in b64 and "[REDACTED:token]" in b64, b64
+    assert blob not in b64 and "[REDACTED:unknown]" in b64, b64
     multi = "line-one\n" + token + "\nline-three"
     multi_red, _n = apply_redaction(multi, env)
     assert token not in multi_red and "[REDACTED:token]" in multi_red
     # count is replacement events
-    both, n_both = apply_redaction(token + " " + env["KEEL_SECRET"], env)
-    assert n_both == 2, n_both
-    assert token not in both and env["KEEL_SECRET"] not in both
+    both, n_both = apply_redaction(token + " " + plain, env)
+    assert n_both == 1, n_both
+    assert token not in both and plain in both
     bare = {}
     samples = [
         "ghp_" + ("B" * 36),
