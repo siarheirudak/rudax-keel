@@ -2,6 +2,24 @@
 # Happy path: steps 0-5,7. Run: DOCKER="sudo docker" ./test-happy.sh
 set -u; HERE=$(cd "$(dirname "$0")" && pwd -P); SETUP=$(cd "$HERE/../.." && pwd -P); K="$SETUP/keel.sh"; # shellcheck source=setup/lib/portable.sh
 . "$SETUP/lib/portable.sh"; export KEEL_ROOT=${KEEL_ROOT:-$HOME/keel-proto}
+echo "### script modes"
+if ! mode_out=$(bash "$SETUP/check.sh" 2>&1); then
+  printf '%s\n' "$mode_out" >&2
+  echo "RESULT MODE-H1: NOT BLOCKED"
+  exit 1
+fi
+mode_list=$(bash "$SETUP/check.sh" --list)
+if ! printf '%s\n' "$mode_list" | grep -qx 'setup/tests/harness/test-attack-results.sh'; then
+  echo "RESULT MODE-H1: NOT BLOCKED"
+  echo "direct script missing from the mode list" >&2
+  exit 1
+fi
+if printf '%s\n' "$mode_list" | grep -qx 'setup/tests/harness/h3-verdict.sh' || printf '%s\n' "$mode_list" | grep -qx 'setup/gitleaks-install.sh'; then
+  echo "RESULT MODE-H1: NOT BLOCKED"
+  echo "sourced or bash script was treated as directly executed" >&2
+  exit 1
+fi
+echo "RESULT MODE-H1: BLOCKED (directly executed scripts are 100755)"
 rm -rf "$KEEL_ROOT"; echo "### step0"; $K init-repo
 echo "### step1 setup"; $K setup; echo "pointer mode: $($K mode)"
 echo "### step2 role A (coder) commits"; $K proto coder rw 'echo feature > feature.txt && git add feature.txt && git commit -qm "A: feature" && git log --oneline -2'

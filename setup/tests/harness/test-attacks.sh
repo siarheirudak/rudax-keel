@@ -8,6 +8,23 @@ unset GH_TOKEN GITHUB_TOKEN BOT_GH_TOKEN GITHUB_PAT AWS_SECRET_ACCESS_KEY AWS_AC
 # shellcheck source=setup/tests/harness/h3-verdict.sh
 . "$HERE/h3-verdict.sh"
 res(){ echo "RESULT $1: $2"; }
+echo "### MODE-A1 directly executed script mode"
+mode_fix=$(mktemp -d)
+git -C "$mode_fix" init -q
+git -C "$mode_fix" config user.email t@x
+git -C "$mode_fix" config user.name t
+mkdir -p "$mode_fix/setup/tests/harness"
+printf '%s\n' '"$HERE/bad-mode.sh"' > "$mode_fix/setup/tests/harness/run-tests.sh"
+printf '%s\n' 'echo hi' > "$mode_fix/setup/tests/harness/bad-mode.sh"
+git -C "$mode_fix" add setup/tests/harness/run-tests.sh setup/tests/harness/bad-mode.sh
+mode_out=$(bash "$SETUP/check.sh" --repo "$mode_fix" 2>&1) || mode_ec=$?
+mode_ec=${mode_ec:-0}
+if [ "$mode_ec" -ne 0 ] && printf '%s\n' "$mode_out" | grep -qx 'ERROR: script mode: setup/tests/harness/bad-mode.sh is 100644, not 100755'; then
+  res MODE-A1 "BLOCKED (setup/tests/harness/bad-mode.sh)"
+else
+  res MODE-A1 "NOT BLOCKED"
+fi
+rm -rf "$mode_fix"
 fresh(){ rm -rf "$P"; $K init-repo >/dev/null; $K setup >/dev/null; }
 h3_diag(){
   echo "  H3 diag:"

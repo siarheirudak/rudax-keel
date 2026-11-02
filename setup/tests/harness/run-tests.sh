@@ -10,6 +10,8 @@ SETUP=$(cd "$HERE/../.." && pwd -P)
 # shellcheck source=setup/lib/portable.sh
 . "$SETUP/lib/portable.sh"
 DOCKER=${DOCKER:-docker}; export DOCKER
+echo "== script modes"
+bash "$SETUP/check.sh" || exit 1
 echo "== mutant select"
 python3 "$HERE/test-mutant-select.py" || exit 1
 python3 "$HERE/mutate-issue.py" --self-test || exit 1
