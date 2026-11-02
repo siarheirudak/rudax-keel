@@ -8,7 +8,9 @@ Read-only and read-write are fixed in `setup/lib/visibility.py`. `tests/` is rea
 
 `.keel/decisions/<task-id>/` is mounted for the orchestrator (read-write) and the architect (read-only). Every other role is withheld, including the developer, the tester, and the auditor. `.agents/` is withheld from every role except the skills auditor.
 
-Launch decisions are appended to `$KEEL_ROOT/.keel/logs/launch.jsonl` by one writer. Records are JSONL with `redactions` set to the number of replacements. Replacements use `[REDACTED:token]`, `[REDACTED:key]`, `[REDACTED:password]`, `[REDACTED:env]`, or `[REDACTED:unknown]`. The writer refuses the record if a secret would remain. Role stdout is not copied into the log.
+A role launch refuses, and does not start a container, when the launching environment has any name on the exact denylist in `setup/lib/visibility.py` (`LAUNCH_DENY_ENV`). The refuse line names that variable. It does not include the value. The container's environment is the explicit list in `setup/keel.sh`, not a copy of the host environment.
+
+Launch decisions are appended to `$KEEL_ROOT/.keel/logs/launch.jsonl` by one writer. A record keeps only the allowlisted fields. `redactions` is the number of replacements. Replacements use `[REDACTED:token]`, `[REDACTED:key]`, `[REDACTED:password]`, `[REDACTED:env]`, or `[REDACTED:unknown]`. Format patterns (token prefixes, `sk-` / `sk-ant-` keys, PEM private key blocks, and `password=`, `api_key=`, and `token=` assignments) are replaced, and so are exact values of the existing `SECRET_ENV` names. The writer refuses the record if one of those would remain. Role stdout is not copied into the log. A renamed variable is not on the denylist; the patterns above are the backstop. Text sent to an allowlisted model provider is outside this log.
 
 `$KEEL_ROOT/.keel/runs/` holds the tester snapshot and mount masks for one command and is removed when that command exits. The task deny snapshot is removed by `cleanup` and when `setup` fails. Logs are not removed by `cleanup`.
 

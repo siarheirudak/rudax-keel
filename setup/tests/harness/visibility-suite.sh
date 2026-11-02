@@ -12,6 +12,7 @@ export P=$KEEL_ROOT
 export W=$P/work/task-1
 export SETUP
 export DOCKER=${DOCKER:-docker}
+unset GH_TOKEN GITHUB_TOKEN BOT_GH_TOKEN GITHUB_PAT AWS_SECRET_ACCESS_KEY AWS_ACCESS_KEY_ID API_KEY API_TOKEN NPM_TOKEN PYPI_TOKEN PASSWORD OPENAI_API_KEY KEEL_SECRET ANTHROPIC_API_KEY GEMINI_API_KEY GOOGLE_API_KEY OPENROUTER_API_KEY || true
 trap 'rm -f "$P/.keel/redact-fixture"' EXIT
 res(){ echo "RESULT $1: $2"; }
 bad=0
@@ -97,9 +98,6 @@ echo CASESECRET > "$W/src/.ENV"
 echo cust > "$W/src/customer.txt"
 echo checklist > "$W/skill-review/list.txt"
 echo postbase > "$W/src/feature.txt"
-TOKEN='ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
-export GH_TOKEN="$TOKEN"
-export KEEL_SECRET='envonlysecretvalue123456'
 python3 - << 'PY'
 import os, unicodedata
 root = os.environ["W"]
@@ -109,6 +107,10 @@ open(os.path.join(root, "src", nfd), "w", encoding="utf-8").write("CAFESCRET\n")
 open(os.path.join(root, ".keel", "deny.local"), "w", encoding="utf-8").write("src/customer.txt\nsrc/" + nfc + "\n")
 open("/tmp/vis-nfd.txt", "w", encoding="utf-8").write(nfd)
 PY
+
+clean_out=$($K role developer 'echo CLEAN-OK; env | grep -c -E "^(GH_TOKEN|GITHUB_TOKEN|BOT_GH_TOKEN|ANTHROPIC_API_KEY|OPENAI_API_KEY|GEMINI_API_KEY|GOOGLE_API_KEY|OPENROUTER_API_KEY)=" || true')
+echo "clean: $clean_out"
+if echo "$clean_out" | grep -q CLEAN-OK && echo "$clean_out" | grep -qx 0; then mark S-H1 ok "clean env runs"; else mark S-H1 bad "clean env"; fi
 
 echo "### developer bundle"
 out=$($K role developer 'printf "tests=%s\n" "$(cat /work/tests/readme.txt)"; echo hack > /work/tests/hack.txt && echo WRITE-OK || echo WRITE-FAIL; printf "under=%s\n" "$(cat /work/src/.env 2>/dev/null)"; cat /work/.env >/dev/null 2>&1 && echo ROOT-OK || echo NOROOT; printf "case=%s\n" "$(cat /work/src/.ENV 2>/dev/null)"; printf "cust=%s\n" "$(cat /work/src/customer.txt 2>/dev/null)"; echo STDOUT-MARKER')
@@ -194,24 +196,87 @@ if ! echo "$out" | grep -q UNDERSECRET && echo "$out" | grep -q hardlink_withhel
 rm -f "$W/src/alias"
 
 export KEEL_REDACT_FIXTURE=1
+export GH_TOKEN='ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+export KEEL_SECRET='envonlysecretvalue123456'
 python3 - << 'PY'
-import base64, os
+import base64, os, sys
+sys.path.insert(0, os.path.join(os.environ["SETUP"], "lib"))
+import visibility
 token = os.environ["GH_TOKEN"]
 secret = os.environ["KEEL_SECRET"]
 blob = base64.b64encode(token.encode()).decode()
 text = token + "\n" + blob + "\n" + secret + "\npassword=hunter2hunter2hunter2\nZz9unknownSecretValue1234567890abcd\nFIXTURE-RECORD\n"
 os.makedirs(os.path.join(os.environ["P"], ".keel"), exist_ok=True)
 open(os.path.join(os.environ["P"], ".keel", "redact-fixture"), "w", encoding="utf-8").write(text)
+visibility.log_ok(os.environ["P"], "developer", ["src"], [], os.environ, "")
 PY
-fix_out=$("$K" role developer 'echo FIXTURE-LAUNCH')
-unset KEEL_REDACT_FIXTURE
+unset KEEL_REDACT_FIXTURE GH_TOKEN KEEL_SECRET
 rm -f "$P/.keel/redact-fixture"
-echo "fixture launch: $fix_out"
+echo "fixture launch: logged"
+
+sentinel=sentinelsecretvalue999
+secret_out=$(ANTHROPIC_API_KEY="$sentinel" "$K" role developer 'echo LAUNCH-OK' 2>&1 || true)
+echo "secret-env: $secret_out"
+if echo "$secret_out" | grep -q LAUNCH-OK || echo "$secret_out" | grep -q "$sentinel" || grep -q "$sentinel" "$(LOG)"; then
+  mark S-A1 bad "secret env launched"
+elif echo "$secret_out" | grep -q secret_env; then
+  mark S-A1 ok "secret env refused"
+else
+  mark S-A1 bad "no refuse"
+fi
+
+if python3 - << 'PY'
+import os, sys
+sys.path.insert(0, os.path.join(os.environ["SETUP"], "lib"))
+import visibility as v
+bare = {}
+samples = [
+    "ghp_" + ("B" * 36),
+    "github_pat_" + ("c" * 22),
+    "gho_" + ("d" * 22),
+    "sk-" + ("e" * 24),
+    "sk-ant-" + ("f" * 24),
+    "password=hunter2hunter2hunter2",
+    "api_key=abc123abc123abc123abc123",
+    "token=abc123abc123abc123abc123",
+    "-----BEGIN PRIVATE KEY-----\nMII\n-----END PRIVATE KEY-----",
+]
+bad = []
+for sample in samples:
+    red, count = v.apply_redaction(sample, bare)
+    if count < 1 or sample in red or v.still_secret(red, bare):
+        bad.append(sample.split("\n", 1)[0][:24])
+print("PATTERN", "ok" if not bad else "bad " + ",".join(bad))
+sys.exit(0 if not bad else 1)
+PY
+then mark S-A2 ok "patterns redacted"; else mark S-A2 bad "pattern left"; fi
+
+if python3 - << 'PY'
+import os, sys
+sys.path.insert(0, os.path.join(os.environ["SETUP"], "lib"))
+import visibility as v
+class Args(object):
+    pass
+args = Args()
+args.role = "developer"
+args.work = os.environ["W"]
+args.harness = os.environ["SETUP"]
+args.keel = os.environ["P"]
+args.task = "task-1"
+args.repo = os.path.join(os.environ["P"], "repo")
+def boom(*_a, **_k):
+    raise OSError(13)
+v.build_mounts = boom
+rc = v.emit_mounts(args, {})
+log = open(os.path.join(args.keel, ".keel", "logs", "launch.jsonl"), encoding="utf-8").read()
+sys.exit(0 if rc == 1 and "mounts_internal" in log and "OSError" in log else 1)
+PY
+then mark S-A3 ok "mount error logged"; else mark S-A3 bad "mount error"; fi
 if python3 - << 'PY'
 import json, os, sys
 p=os.environ["P"]+"/.keel/logs/launch.jsonl"
-token=os.environ["GH_TOKEN"]
-secret=os.environ["KEEL_SECRET"]
+token='ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+secret='envonlysecretvalue123456'
 blob=__import__("base64").b64encode(token.encode()).decode()
 text=open(p,encoding="utf-8").read()
 bad=[]

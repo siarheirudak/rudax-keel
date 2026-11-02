@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Turn an H3 probe into one result phrase.
 # Contained only after memory.max matched and the allocator itself was OOM-killed.
+# --memory-swap is set equal to --memory. memory.swap.max may still read "max"
+# on a cgroup v2 host that does not account swap; that reading is not the verdict.
 h3_mem_bytes() {
   local mem=$1 n
   case $mem in

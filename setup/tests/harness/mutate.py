@@ -77,6 +77,9 @@ M = {
  'M66': ('lib/egress.sh', 'egress_fail_closed=1  # egress-fail-closed', 'egress_fail_closed=0  # egress-fail-closed', 'launch when the proxy is down', ['E-A16']),
  'M67': (K, 'use_none=1  # proto-network-none', 'use_none=0  # proto-network-none', 'proto drops network none', ['N1']),
  'M68': ('lib/egress.py', 'return clean_host(host)  # egress-sanitize', 'return host  # egress-sanitize', 'log the raw host', ['E-A15']),
+ 'M69': (K, 'secret_env_gate=1  # secret-env-gate', 'secret_env_gate=0  # secret-env-gate', 'role starts with a denylisted name set', ['S-A1']),
+ 'M70': ('lib/visibility.py', 'return _scan_patterns(text)  # pattern-scan', 'return []  # pattern-scan', 'drop format-pattern redaction', ['S-A2']),
+ 'M71': ('lib/visibility.py', 'except Exception as err:  # mounts-internal-log\n        internal = PolicyError("mounts_internal", "emit_mounts", 0, type(err).__name__)', 'except Exception:  # mounts-internal-log\n        return 0', 'swallow a mount error', ['S-A3']),
 }
 M['M15'] = (K, M['M13'][1], M['M13'][2], M['M15'][3], M['M15'][4])  # applied together with M14 below
 GREEN = re.compile(r'^(BLOCKED|CONTAINED|PARTIAL|N/A)')

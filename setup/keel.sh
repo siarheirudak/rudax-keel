@@ -30,10 +30,14 @@ if ! path_is_shared "$P"; then
   echo "KEEL_ROOT $P is not under a Docker Desktop shared dir (/Users, /Volumes, /private, /tmp, /var/folders)." >&2
   echo "Use a path under \$HOME, or add it in Docker Desktop > Settings > Resources > File sharing." >&2; exit 4; fi
 # container hardening applied to EVERY container (agent, setup, export, test)
+# --memory-swap equals --memory so the cgroup cannot add swap on top of the limit.
+# Some cgroup v2 hosts still report memory.swap.max as "max" when swap accounting
+# is missing. That file alone is not proof the limit held.
 # shellcheck disable=SC2054  # commas belong to the --tmpfs option value, not array separators
 HARDEN=(--rm --network none --user "$UIDGID" --cap-drop ALL --security-opt no-new-privileges
-  --read-only --tmpfs /tmp:rw,size=64m --pids-limit "${PIDS:-128}" --memory "${MEM:-512m}" --cpus "${CPUS:-1}")
+  --read-only --tmpfs /tmp:rw,size=64m --pids-limit "${PIDS:-128}" --memory "${MEM:-512m}" --memory-swap "${MEM:-512m}" --cpus "${CPUS:-1}")
 case "$DOCKER" in *podman*) HARDEN+=(--userns=keep-id);; esac
+# Only these names are passed into a container. Host secret names are not copied.
 GITENV=(-e HOME=/tmp -e "GIT_CONFIG_PARAMETERS='core.hooksPath'='/dev/null' 'core.fsmonitor'='false'"
   -e GIT_AUTHOR_NAME=agent -e GIT_AUTHOR_EMAIL=a@x -e GIT_COMMITTER_NAME=agent -e GIT_COMMITTER_EMAIL=a@x)
 hgit(){ env -i PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin HOME="$P/.gatehome" GIT_CONFIG_NOSYSTEM=1 git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.pager=cat -c protocol.allow=never -c protocol.file.allow=always "$@"; }
@@ -83,6 +87,16 @@ role_mounts() {
   rm -f "$mf"
   [ "$bad" -eq 0 ] || return 1
   return 0
+}
+start_role() {
+  local name=$1
+  shift
+  secret_env_gate=1  # secret-env-gate
+  if [ "$secret_env_gate" = 1 ]; then
+    python3 "$HERE/lib/visibility.py" secret-env --role "$name" --work "$W" --harness "$HERE" --keel "$P" --task "$T" --repo "$R" || return $?
+  fi
+  reset_shadow
+  run_policy "$name" "$@"
 }
 run_policy() {
   local name=$1
@@ -165,16 +179,14 @@ proto-env) shift; WE=$P/work/$T-env; mkdir -p "$WE"; reset_shadow
   crun -e "GIT_DIR=/shadow/$T.git" -e GIT_WORK_TREE=/work -v "$R/.git/objects:/base/objects:ro" -v "$WE:/work" -v "$S:/shadow/$T.git" -w /work "$IMG" sh -c "$*";;
 role) shift; name=$1; shift
   if [ "${1:-}" = rw ] || [ "${1:-}" = ro ]; then shift; fi
-  reset_shadow
-  run_policy "$name" "$@" || exit $?;;
+  start_role "$name" "$@" || exit $?;;
 role-env) shift
   if [ "$#" -lt 2 ]; then
     python3 "$HERE/lib/visibility.py" refuse --code role_env_args --role "" --work "$W" --harness "$HERE" --keel "$P" --task "$T" --repo "$R" --file role-env --line 0
     exit 1
   fi
   name=$1; shift
-  reset_shadow
-  run_policy "$name" "$@" || exit $?;;
+  start_role "$name" "$@" || exit $?;;
 export) M=$(cat "$P/$T.base"); rm -f "$B/$T.bundle"; reset_shadow
   crun -v "$R/.git/objects:/base/objects:ro" -v "$S:/shadow/$T.git:ro" -v "$B:/bundles" "$IMG" \
     git --git-dir="/shadow/$T.git" bundle create "/bundles/$T.bundle" "refs/heads/$T" "^$M";;
