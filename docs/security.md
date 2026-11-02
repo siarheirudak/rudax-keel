@@ -93,7 +93,7 @@ These are implemented, and they are CRITICAL to the account split in the same pl
 - The default branch accepts changes only through a pull request, with one approval from a code owner, and stale approvals are dismissed. The owner can merge without a second reviewer. That bypass is pull requests only. It does not allow a direct push.
 - Tags cannot be created, moved, or deleted except by an admin. The bot is not an admin.
 - The default branch also requires the check-run names `keel-gate` and `keel-process-files-separate`, from GitHub Actions, on a branch that is up to date. A status posted with a user token does not satisfy the rule.
-- A pull request that edits a process file must contain only process files. Process files are `.github/`, `scripts/`, and `setup/` at the root (except the whole paths `setup/README.md` and `setup/TESTING.md`, any case), plus `.pi/` and `.agents/` at any depth, such as `pkg/.pi/` and `apps/.agents/`. These names are process files anywhere, ignoring case: `AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md` (the fallback context file Pi Agent loads), `CODEOWNERS`, and `.shellcheckrc`. The host gate also forbids `.gitmodules`.
+- A pull request that edits a process file must contain only process files. Process files are `.github/`, `scripts/`, and `setup/` at the root (except the whole paths `setup/README.md` and `setup/TESTING.md`, any case), plus `.pi/` and `.agents/` at any depth, such as `pkg/.pi/` and `apps/.agents/`. These names are process files anywhere, ignoring case: `AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md` (the fallback context file Pi Agent loads), `CODEOWNERS`, and `.shellcheckrc`. The host gate also forbids a path whose basename is `.gitmodules`, including `lib/.gitmodules`.
 - The default Actions token can read and cannot approve pull requests.
 - The bot is invited with write, not admin. Apply will not demote an account that already has admin. That step fails and leaves the role unchanged.
 
@@ -109,7 +109,7 @@ A renamed variable is not on that list. Format-pattern redaction in the launch l
 
 The scan passes `--config` and `--gitleaks-ignore-path` pointing at harness files, and `--ignore-gitleaks-allow`, so an inline `gitleaks:allow` comment does not suppress a finding. A `.gitleaksignore` or `.gitleaks.toml` added in the change is not loaded. The harness config also ignores the obvious fixture tokens used by the harness tests. That is not the only suppression control. A timeout, or any scanner exit other than a clean pass, fails the gate.
 
-The scan does not read git history. A secret split across files, or a secret that is encoded so it no longer matches these shapes, is not caught here. Text sent to an allowlisted model provider is an accepted residual: the proxy allows the connection, and this log does not see the body.
+The scan does not read git history. A secret that is encoded so it no longer matches these shapes is not caught. A secret split across files is not caught. Text sent to an allowlisted model provider is an accepted residual: the proxy allows the connection, and this log does not see the body.
 
 The launch log does not read environment values. A denylisted name refuses the launch. Text that reaches the log is redacted only when it matches a format pattern.
 
