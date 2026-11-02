@@ -6,11 +6,11 @@ This page separates checks that refuse to run from checks that warn, and it reco
 
 An agent is untrusted about its own work. A host script checks the work. A container limits what the agent can touch while it works. GitHub limits what the bot account can do with the result.
 
-Three layers carry that idea. Only the first two exist in the repository.
+Three layers carry that idea. The first two exist in the repository. The third is only partly built.
 
 1. **GitHub.** The bot can open a pull request. The owner merges. Tag rules stop the bot from publishing a release. This is implemented. [GitHub setup](github-setup.md).
 2. **The harness doctor and the host gate.** `setup/keel-doctor.sh` reports whether this machine can run the harness. `setup/keel.sh gate` rejects an exported bundle that breaks a path, history, or test rule. This is implemented.
-3. **The v1 pipeline guards.** Per-role folder mounts are implemented in the harness. An egress proxy, a startup check that refuses a rootful daemon, fenced data, and the gates L4, L6, and L7 are specified and not built.
+3. **The v1 pipeline guards.** Per-role folder mounts and the developer egress proxy are implemented in the harness. A startup check that refuses a rootful daemon, fenced data, and the gates L4, L6, and L7 are specified and not built.
 
 ## What a role can see
 
@@ -78,7 +78,7 @@ The table compares the v1 requirement with `setup/keel.sh`, which applies one ha
 | Read-only root filesystem and a tmpfs for temporary files | Applied. The tmpfs is `/tmp`, size 64m |
 | Memory, CPU, and process-count limits | Applied. Defaults are 512m, 1 CPU, and 128 processes, overridable with `MEM`, `CPUS`, and `PIDS` |
 | A quota on the work directory | Not applied. DISK-01 reports free disk only |
-| Developer network off, model API only through a proxy | Network is off for every container. There is no proxy and no model-API exception |
+| Developer network off, model API only through a proxy | The developer joins the internal network `keel-egress` and uses the forward proxy. Every other role, `proto`, setup, export, and the test re-run stay on `--network none`. The shipped allowlist names the CI mock, not a vendor model API |
 | Secrets live under a separate user | Not applied. The doctor instead fails when token variables are present in its own environment |
 | Chromium’s sandbox stays on. No `--no-sandbox`. A seccomp profile for Chrome. Playwright is checked on the host before a container runs it | Not in the repository. QA is not built |
 

@@ -101,7 +101,7 @@ Docker Desktop differences the harness handles:
 
 **Check.** Image `keel-git` exists locally and its architecture matches the daemon's (amd64 or arm64). `setup/docker/keel-git.Dockerfile` pins no platform, so `docker build` produces a native image.
 
-**Why.** Containers run with `--network none`, so they cannot pull an image or install git at runtime.
+**Why.** The image has to be present locally. A container is not given a path to a registry, so it cannot pull an image or install git at runtime.
 
 **If it fails.** Warning. If the image is missing, the first role fails to start. If the architecture does not match, everything runs under emulation and is slow.
 
@@ -219,6 +219,52 @@ Docker Desktop differences the harness handles:
 
 **How to fix.** Free space, or put `KEEL_ROOT` on its own filesystem or quota.
 
+## Egress checks
+
+These run on every doctor invocation, before `--attacks`. All three are CRITICAL. A failure means the verdict is not ready.
+
+<a id="eg-01"></a>
+
+### EG-01 Proxy image
+
+**Level.** CRITICAL
+
+**Check.** The local image `keel-proxy` is present.
+
+**Why.** The developer role cannot start its allowlisted path without that image. A missing image is not a successful dark launch.
+
+**If it fails.** FAIL. The verdict is NOT READY.
+
+**How to fix.** From the repository root: `docker build -t keel-proxy -f setup/docker/keel-proxy.Dockerfile setup/docker`.
+
+<a id="eg-02"></a>
+
+### EG-02 Egress network is internal
+
+**Level.** CRITICAL
+
+**Check.** The Docker network `keel-egress` exists and its internal flag is true.
+
+**Why.** A network that is not internal gives the developer a route past the proxy.
+
+**If it fails.** FAIL. The verdict is NOT READY. A missing network fails the same way.
+
+**How to fix.** Run `bash setup/keel.sh egress-up` on a Linux Docker host. If a network of that name already exists and is not internal, remove it and create it again with `egress-up`. Docker Desktop and Podman are not verified for this check and are unsupported for it for now.
+
+<a id="eg-03"></a>
+
+### EG-03 Forward port answers with a denial
+
+**Level.** CRITICAL
+
+**Check.** A container on `keel-egress` sends a cleartext request to the proxy’s forward port and the body contains `DENIED`.
+
+**Why.** The launch path needs a proxy that is up and refusing destinations that are not allowlisted. Silence is not a pass.
+
+**If it fails.** FAIL. The verdict is NOT READY.
+
+**How to fix.** Start the proxy with `bash setup/keel.sh egress-up`. On some hosts the packet filter drops traffic between containers on the same bridge. The probe then cannot reach the forward port. Allow that container-to-container traffic and rerun the doctor. Do not treat a failed probe as a ready machine.
+
 ## Attack checks (`--attacks`)
 
 `--attacks` runs `setup/tests/harness/test-attacks.sh` in a throwaway temp dir on this machine with real containers, and maps each `RESULT` line to `ATK-<id>`. All are CRITICAL except ATK-A10 (RECOMMENDED). `BLOCKED` or `CONTAINED` passes. `PARTIAL`, `RISK`, or `N/A` warns. Anything else fails, including `WRONG REASON`. A gate test passes only if the gate fails **for the rule under test**. If it fails for another reason, the result is `WRONG REASON`. `setup/tests/harness/mutate.py` removes one protection at a time and checks that the attack it guards stops reporting `BLOCKED` or `CONTAINED`. Some mutants stay green because another layer still catches the same attack. `N/A` means that test does not apply in this mode or on this OS (ATK-A2 in env mode, ATK-A11-detect on Darwin). The temp dir is created under `$HOME`, so Docker Desktop can mount it.
@@ -241,17 +287,339 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 
 <a id="atk-n1"></a>
 
-### ATK-N1 no network
+### ATK-N1 proto and the gate re-run have no network
 
 **Level.** CRITICAL
 
-**Check.** `--network none`: only `lo`, no HTTP, no DNS.
+**Check.** The `proto` container is started with `--network none`. It has no HTTP and no DNS. The gate’s test re-run uses that same flag.
 
-**Why.** Exfiltration of code or secrets; pulling malicious payloads.
+**Why.** Exfiltration of code or secrets, and pulling a payload, from the containers that are not the developer role.
 
 **If it fails.** FAIL (CRITICAL): the isolation property is not holding on this machine. Do not run agents.
 
-**How to fix.** Never pass `--network` other than none to agent containers.
+**How to fix.** Keep `--network none` on `proto`, on the gate re-run, and on every role except the developer. The developer path is the internal proxy, checked by the ATK-E lines below.
+
+<a id="atk-e-h1"></a>
+
+### ATK-E-H1 developer reaches the mock
+
+**Level.** CRITICAL
+
+**Check.** The developer, through the proxy, receives the mock body from the allowlisted host.
+
+**Why.** The allowlist has to let the one intended destination through. A total black hole would also look like “blocked” and would hide a broken proxy.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep `keel-mock` in `setup/egress/developer.allow`, and keep the proxy and the mock on `keel-egress`.
+
+<a id="atk-e-h2"></a>
+
+### ATK-E-H2 critic has no network
+
+**Level.** CRITICAL
+
+**Check.** The critic container starts, and it cannot fetch the mock or a public host, and it cannot resolve a public name.
+
+**Why.** The critic has no destination list. A network on that role is a new exfiltration path.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep the critic on `--network none`.
+
+<a id="atk-e-h3"></a>
+
+### ATK-E-H3 denial log is host and port
+
+**Level.** CRITICAL
+
+**Check.** A blocked developer request appends one record to `$KEEL_ROOT/.keel/logs/egress.jsonl`. The host field is the sanitized host and port. The reason is set. The path and the query are absent.
+
+**Why.** A log that stores the URL can keep secrets that were in the query, and a raw host can break the line.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep denial logging on, and keep the log formatter on host:port.
+
+<a id="atk-e-h4"></a>
+
+### ATK-E-H4 proto has no network
+
+**Level.** CRITICAL
+
+**Check.** `proto` starts and cannot fetch or resolve a public destination.
+
+**Why.** Same as [ATK-N1](#atk-n1), scored again on the egress suite so a developer-only network change cannot silently open `proto`.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep `proto` on `--network none`.
+
+<a id="atk-e-h5"></a>
+
+### ATK-E-H5 QA has no network
+
+**Level.** CRITICAL
+
+**Check.** QA starts, and it cannot fetch the mock or a public host, and it cannot resolve a public name.
+
+**Why.** The design’s “local app only” path is not built. QA must not gain a network early.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep QA on `--network none`.
+
+<a id="atk-e-h6"></a>
+
+### ATK-E-H6 researcher has no network
+
+**Level.** CRITICAL
+
+**Check.** The researcher starts, and it cannot fetch the mock or a public host, and it cannot resolve a public name.
+
+**Why.** The design’s research internet is not built. The researcher must not gain a network early.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep the researcher on `--network none`.
+
+<a id="atk-e-a1"></a>
+
+### ATK-E-A1 unauthorized host
+
+**Level.** CRITICAL
+
+**Check.** The developer is denied for a public name and for a public IP that are not on the allowlist. Both show up in the denial log as host:port with reason `not_allowlisted`.
+
+**Why.** The proxy is the allowlist, not a general web gateway.
+
+**If it fails.** FAIL.
+
+**How to fix.** Match hosts exactly after normalization. Do not treat a wider host check as success.
+
+<a id="atk-e-a2"></a>
+
+### ATK-E-A2 no route when the proxy is unset
+
+**Level.** CRITICAL
+
+**Check.** With the proxy variables unset, a raw request from the developer to a public IP fails because the network is unreachable.
+
+**Why.** Isolation has to be the network, not an environment variable the process can drop.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep `keel-egress` internal. Do not put the developer on the default bridge.
+
+<a id="atk-e-a3"></a>
+
+### ATK-E-A3 critic egress
+
+**Level.** CRITICAL
+
+**Check.** Same dark oracle as [ATK-E-H2](#atk-e-h2).
+
+**Why.** A second probe so a change that opens the critic is not hidden behind the happy-path id alone.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep the critic on `--network none`.
+
+<a id="atk-e-a4"></a>
+
+### ATK-E-A4 QA egress
+
+**Level.** CRITICAL
+
+**Check.** Same dark oracle as [ATK-E-H5](#atk-e-h5).
+
+**Why.** QA is still `--network none`.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep QA on `--network none`.
+
+<a id="atk-e-a5"></a>
+
+### ATK-E-A5 allow file is not mounted
+
+**Level.** CRITICAL
+
+**Check.** The developer container does not see `setup/egress/` or the allow file.
+
+**Why.** A role that can edit its own allowlist can approve its own destinations.
+
+**If it fails.** FAIL.
+
+**How to fix.** Do not mount `setup/egress/` into the role.
+
+<a id="atk-e-a6"></a>
+
+### ATK-E-A6 malformed allow file
+
+**Level.** CRITICAL
+
+**Check.** A glob in the developer allow file refuses the launch. The container does not start.
+
+**Why.** A bad pattern must not be read as “allow everything nearby”.
+
+**If it fails.** FAIL.
+
+**How to fix.** Refuse the launch when the profile does not parse.
+
+<a id="atk-e-a7"></a>
+
+### ATK-E-A7 researcher egress
+
+**Level.** CRITICAL
+
+**Check.** Same dark oracle as [ATK-E-H6](#atk-e-h6).
+
+**Why.** The researcher is still `--network none`.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep the researcher on `--network none`.
+
+<a id="atk-e-a8"></a>
+
+### ATK-E-A8 proxy admin port
+
+**Level.** CRITICAL
+
+**Check.** From the developer container, the proxy’s admin port does not return the admin banner.
+
+**Why.** An admin listener on the role network can change policy from inside the role.
+
+**If it fails.** FAIL.
+
+**How to fix.** Bind the admin port to `127.0.0.1` in the proxy’s own namespace.
+
+<a id="atk-e-a9"></a>
+
+### ATK-E-A9 embedded DNS does not forward
+
+**Level.** CRITICAL
+
+**Check.** A query for a public name to `127.0.0.11` from the developer does not return an answer.
+
+**Why.** DNS questions are a way out even when TCP to the internet is closed.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep the role network internal so the embedded resolver does not forward.
+
+<a id="atk-e-a10"></a>
+
+### ATK-E-A10 IPv6 is disabled in the role
+
+**Level.** CRITICAL
+
+**Check.** The suite reads `disable_ipv6` in the developer container and expects 1. The network is created with `--ipv6=false`. This is not a connection to a public IPv6 address.
+
+**Why.** An IPv6 route would bypass an IPv4-only story. This oracle checks the setting the harness applies, not a live path to the public IPv6 internet.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep the sysctl on the developer container and `--ipv6=false` on the network.
+
+<a id="atk-e-a11"></a>
+
+### ATK-E-A11 metadata address
+
+**Level.** CRITICAL
+
+**Check.** With the proxy variables unset, a request to the link-local metadata address is network-unreachable.
+
+**Why.** A cloud metadata address is a credential store. It must not be reachable from the role.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep the role network internal.
+
+<a id="atk-e-a12"></a>
+
+### ATK-E-A12 disallowed port
+
+**Level.** CRITICAL
+
+**Check.** CONNECT to the allowlisted host on a port that is not 443, and not listed, is denied and logged as `not_allowlisted`.
+
+**Why.** An allowlisted name is not permission for every port on that name.
+
+**If it fails.** FAIL.
+
+**How to fix.** Default CONNECT to port 443 only, unless the allow line names the port.
+
+<a id="atk-e-a13"></a>
+
+### ATK-E-A13 CONNECT target, not the Host header
+
+**Level.** CRITICAL
+
+**Check.** CONNECT to a denied host is refused even when the Host header names the allowlisted host. The proxy does not answer with a successful tunnel.
+
+**Why.** Authorizing the Host header instead of the CONNECT target would open a host the operator did not list.
+
+**If it fails.** FAIL.
+
+**How to fix.** Decide CONNECT from the CONNECT host and port. The proxy does not intercept TLS, so it still cannot read SNI inside a tunnel it has already allowed. That residual is accepted.
+
+<a id="atk-e-a14"></a>
+
+### ATK-E-A14 redirect is checked again
+
+**Level.** CRITICAL
+
+**Check.** A request to the allowlisted mock that redirects to a different host on the same network is denied on that second hop, and the denial names that host. The body of the second host is not returned.
+
+**Why.** The first hop being allowed must not carry the client to a peer that is not listed.
+
+**If it fails.** FAIL.
+
+**How to fix.** Do not follow the redirect inside the proxy without applying the allowlist again. The client’s own follow-up request is checked the same way.
+
+<a id="atk-e-a15"></a>
+
+### ATK-E-A15 denial line stays one record
+
+**Level.** CRITICAL
+
+**Check.** A CONNECT target that carries a line-break encoding does not add a second log line and does not leave that payload text in the log.
+
+**Why.** One request must not add an extra JSONL record or keep an unsanitized host.
+
+**If it fails.** FAIL.
+
+**How to fix.** Sanitize the host before writing the record. Reject a line break, a NUL, or a host longer than 253 characters.
+
+<a id="atk-e-a16"></a>
+
+### ATK-E-A16 proxy down refuses the launch
+
+**Level.** CRITICAL
+
+**Check.** After the proxy container is stopped, the developer launch is refused and does not print a successful start.
+
+**Why.** A dead proxy must not mean the role starts with whatever network is left behind.
+
+**If it fails.** FAIL.
+
+**How to fix.** If the proxy container exists and is not running, refuse. Do not start the role.
+
+<a id="atk-e-a17"></a>
+
+### ATK-E-A17 exact host match
+
+**Level.** CRITICAL
+
+**Check.** A name that merely contains the allowlisted host, a different spelling, a trailing-dot form of an unlisted name, and an unrelated punycode name are not served the mock body. The suffix form is logged as `not_allowlisted`.
+
+**Why.** Suffix and pattern matches turn one listed host into many.
+
+**If it fails.** FAIL.
+
+**How to fix.** Compare the normalized host for equality with the listed host. Do not use a suffix or a glob.
 
 <a id="atk-n2"></a>
 

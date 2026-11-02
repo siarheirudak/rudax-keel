@@ -47,17 +47,33 @@ Product tests live in `tests/` today. The developer can read that directory and 
 
 ## Network
 
-The design puts an allowlist proxy in front of outbound traffic. A destination not on the list is refused, and the refusal is logged.
+The harness runs one forward proxy and one internal Docker network, `keel-egress`. `setup/keel.sh egress-up` creates that network with `--internal` and `--ipv6=false`, starts the CI mock on it, and starts the proxy. The proxy is the only container also attached to a second network that can route outward. Roles do not get a route of their own.
 
-| Role | Network in the v1 design |
-|---|---|
-| Developer | No network, except the model API through the proxy |
-| Researcher | Internet, for published sources. No code and no tokens in that container |
-| Critic | No network |
-| QA | The local app only |
-| Other roles | The same allowlist proxy. The design does not give them a separate destination list |
+`setup/keel.sh role developer` joins `keel-egress`, points `HTTP_PROXY` and `HTTPS_PROXY` at the proxy’s forward port, and turns off IPv6 inside the container. The forward port is 3128. The proxy’s admin port listens on `127.0.0.1` inside the proxy’s own network namespace, not on the role network.
 
-The harness today passes `--network none` to every container, including setup, export, and the test re-run. There is no proxy, so there is also no path to a model API. That is stricter than the developer row above, and it is why the current harness cannot host Pi Agent. The proxy is specified in [Status](status.md) and is not built.
+Every other role stays on `--network none`: orchestrator, architect, critic, tester, auditor, skills auditor, design reviewer, verifier, QA, and researcher. So do `proto`, setup, export, and the test re-run. QA does not reach a local app yet. The researcher does not reach the internet yet. Those two rows in the design table below wait for the research step and the QA step. Other roles do not share the proxy until one of them needs a model API.
+
+| Role | Network in the v1 design | What the harness runs |
+|---|---|---|
+| Developer | No network, except the model API through the proxy | Internal network plus the proxy. The allowlist is the CI mock only |
+| Researcher | Internet, for published sources. No code and no tokens in that container | `--network none` |
+| Critic | No network | `--network none` |
+| QA | The local app only | `--network none` |
+| Other roles | The same allowlist proxy, once they need a model API | `--network none` |
+
+Allowlists live in `setup/egress/<role>.allow`, one destination per line, `host` or `host:port`. Blank lines and `#` comments are ignored. A glob, a suffix wildcard, or any other malformed token refuses the launch. Before a match, an ASCII host is lowercased, one trailing dot is removed, and an IDN is converted to punycode. An IP is allowed only when that literal is listed. A line without a port allows port 80 for cleartext HTTP and port 443 for CONNECT. Any other port must be written on the line. The grammar is also in [setup/egress/README.md](../setup/egress/README.md).
+
+HTTPS is decided from the CONNECT host and port. Cleartext HTTP is decided from the request target’s host and port. A redirect is checked again on the next request. The proxy does not intercept TLS, so it does not read SNI inside a tunnel it has already allowed.
+
+A missing profile, a malformed profile, a proxy container that exists but is not running, or an egress network whose internal flag is not the one the harness is built for refuses the launch. The harness does not restart a stopped proxy. That failure is logged.
+
+Denials are appended to `$KEEL_ROOT/.keel/logs/egress.jsonl`. A record has a timestamp, the role, the sanitized host and port, and a reason. The path, the query, and any userinfo are not written. A host that contains a line break, a NUL, or more than 253 characters is recorded as invalid so one request cannot add a second line.
+
+Peers on `keel-egress`, including the CI mock, are reachable from the developer container without using the proxy. The mock answers its own HTTP responses and does not dial out. Anything else placed on that network is reachable the same way, so it must not forward traffic off the network. Only the proxy is attached to the outward network.
+
+The IPv6 check in the suite reads the container’s `disable_ipv6` setting and relies on the network being created with `--ipv6=false`. It does not open a public IPv6 connection.
+
+On some hosts the packet filter drops traffic between containers. The doctor’s EG-03 check then fails, because the forward port does not answer, and the verdict is not ready. An operator has to allow that container-to-container traffic before the proxy path can work. Docker Desktop and Podman have not been verified for this network and are unsupported for it for now. Linux Docker is the path the checks cover. [Why each keel-doctor check exists](harness-checks-why.md#eg-01).
 
 ## Skills each role receives
 
