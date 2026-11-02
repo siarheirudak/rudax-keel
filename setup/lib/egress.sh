@@ -127,7 +127,7 @@ crun_for() {
     fi
     args+=(-e HTTP_PROXY=http://keel-proxy:3128 -e HTTPS_PROXY=http://keel-proxy:3128)
     args+=(-e http_proxy=http://keel-proxy:3128 -e https_proxy=http://keel-proxy:3128)
-    $DOCKER run "${args[@]}" "${GITENV[@]}" "$@"
+    $DOCKER run "${args[@]}" "${GITENV[@]}" "$@"  # role-env-explicit
     return $?
   fi
   # open: default bridge, no explicit network (mutant)

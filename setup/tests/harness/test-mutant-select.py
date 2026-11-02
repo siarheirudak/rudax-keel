@@ -56,6 +56,9 @@ def main():
     validate()
     keel = expect_some(["setup/keel.sh"], "M03", "M51")
     visibility = expect_some(["setup/lib/visibility.py"], "M51", "M03")
+    expect_some(["setup/lib/egress.py"], "M76", "M03")
+    expect_some(["setup/lib/egress.sh"], "M77", "M51")
+    expect_some(["setup/tests/harness/attack-results.sh"], "M78", "M03")
     if set(keel) & set(visibility):
         fail("keel.sh and visibility.py share a CI mutant")
     both = mf.check_selection(["setup/keel.sh", "setup/lib/visibility.py"])

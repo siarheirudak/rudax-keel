@@ -81,7 +81,7 @@ def parse_allow(text, filename):
         item = parse_destination(line, filename, lineno)
         if item is not None:
             entries.append(item)
-    return entries
+    return entries  # allow-entries
 
 
 def load_profile(path):
@@ -231,6 +231,9 @@ def self_test():
     assert destination_allowed(entries, "example.com", 22, "connect")
     assert not destination_allowed(entries, "evil.keel-mock", 80, "http")
     assert not destination_allowed(entries, "example.com", 80, "http")
+    plain = parse_allow("keel-mock\n", "developer.allow")
+    assert ("example.com", None) not in plain
+    assert not destination_allowed(plain, "example.com", 80, "http")
     assert normalize_host("Bücher.de.") == "xn--bcher-kva.de"
     assert sanitize_host("evil\r\nsecond") == "invalid"
     assert format_target("example.com", 80) == "example.com:80"

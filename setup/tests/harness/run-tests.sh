@@ -15,6 +15,8 @@ python3 "$HERE/test-mutant-select.py" || exit 1
 python3 "$HERE/mutate-issue.py" --self-test || exit 1
 echo "== mutate plan"
 "$HERE/test-mutate-plan.sh" || exit 1
+echo "== attack results"
+"$HERE/test-attack-results.sh" || exit 1
 echo "== nested ro probe"
 "$HERE/test-vis-ro.sh" || exit 1
 echo "== memory verdict"
@@ -40,7 +42,9 @@ grep -aE 'GATE PASS|RESULT|mode=' "$HERE/logs/happy-$TS.log"
 echo "== attacks     -> logs/attacks-$TS.log"
 "$HERE/test-attacks.sh" > "$HERE/logs/attacks-$TS.log" 2>&1 || rc=1
 grep -a '^RESULT ' "$HERE/logs/attacks-$TS.log"
-open_attacks=$(grep -aE '^RESULT .*(NOT BLOCKED|WRONG REASON|: ERROR)' "$HERE/logs/attacks-$TS.log" || true)
+# shellcheck source=setup/tests/harness/attack-results.sh
+. "$HERE/attack-results.sh"
+open_attacks=$(attack_results_open "$HERE/logs/attacks-$TS.log")
 if [ -n "$open_attacks" ]; then
   echo "ERROR: an attack printed NOT BLOCKED, WRONG REASON, or ERROR" >&2
   printf '%s\n' "$open_attacks" >&2
