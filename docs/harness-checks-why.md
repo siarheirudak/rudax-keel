@@ -1108,13 +1108,13 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 
 **Level.** CRITICAL
 
-**Check.** The suite reads 2000m from `/dev/zero` and expects the process to be OOM-killed (exit 137).
+**Check.** The container's `memory.max` matches the configured limit, and the allocator is OOM-killed (exit 137) or the container is OOM-killed. `--memory-swap` is set equal to `--memory`, so the limit is not raised by swap.
 
-**Why.** Host denial of service.
+**Why.** Host denial of service. Swap on top of the memory limit can let an over-limit allocation survive.
 
 **If it fails.** FAIL (CRITICAL): the isolation property is not holding on this machine. Do not run agents.
 
-**How to fix.** Keep `--memory`. The default in `setup/keel.sh` is `512m`.
+**How to fix.** Keep `--memory` and `--memory-swap` equal. The default in `setup/keel.sh` is `512m`. On some cgroup v2 hosts `memory.swap.max` still reads `max` because swap is not accounted. That reading is not the verdict; the OOM result is.
 
 <a id="atk-h4"></a>
 
@@ -1143,3 +1143,59 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 **If it fails.** FAIL (CRITICAL): the isolation property is not holding on this machine. Do not run agents.
 
 **How to fix.** Keep `--cpus`.
+
+<a id="atk-s-h1"></a>
+
+### ATK-S-H1 clean environment starts a role
+
+**Level.** CRITICAL
+
+**Check.** With no denylisted name set, a role starts and those names are absent inside the container.
+
+**Why.** A clean launch has to keep working. The container must not inherit the host environment.
+
+**If it fails.** FAIL.
+
+**How to fix.** Pass only the explicit environment list in `setup/keel.sh`.
+
+<a id="atk-s-a1"></a>
+
+### ATK-S-A1 denylisted name refuses the role
+
+**Level.** CRITICAL
+
+**Check.** Setting one exact denylisted name refuses the role. The value is not printed and is not in the launch log. The container does not start.
+
+**Why.** A secret in the launching environment must not ride into a role.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep the exact-name check in front of `role` and `role-env`.
+
+<a id="atk-s-a2"></a>
+
+### ATK-S-A2 format patterns are redacted
+
+**Level.** CRITICAL
+
+**Check.** Token prefixes, `sk-` and `sk-ant-` keys, a PEM private key block, and `password=`, `api_key=`, and `token=` assignments are replaced when they are not environment values.
+
+**Why.** A renamed variable bypasses the name list. The log still has to hide those shapes.
+
+**If it fails.** FAIL.
+
+**How to fix.** Keep the pattern scan in redaction and in the second pass.
+
+<a id="atk-s-a3"></a>
+
+### ATK-S-A3 mount error is logged
+
+**Level.** CRITICAL
+
+**Check.** An unexpected error while building mounts is written as `mounts_internal` with the exception type, and the command returns failure.
+
+**Why.** A traceback with no log line hides a refused launch.
+
+**If it fails.** FAIL.
+
+**How to fix.** Log that failure and return non-zero. Do not ignore it.
