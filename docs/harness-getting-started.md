@@ -1,6 +1,6 @@
 # Getting started
 
-The agent isolation harness (variant 2: a shadow `.git` with alternates, hardened containers, export by `git bundle`, a host gate with no token) lives in this repository under `setup/`. It runs on your machine, creates a **throwaway** git repo, uses no network inside containers, and never touches GitHub or any token.
+The agent isolation harness (variant 2: a shadow `.git` with alternates, hardened containers, export by `git bundle`, a host gate with no token) lives in this repository under `setup/`. It runs on your machine, creates a **throwaway** git repo, and never touches GitHub or any token. Every role except the developer has no network. The developer joins an internal network and an explicit forward proxy. [Roles and visibility](roles.md#network).
 
 Commands below are from the repository root.
 
@@ -13,7 +13,7 @@ Commands below are from the repository root.
 | Containers | `sudo apt install docker.io`, then `sudo usermod -aG docker $USER` and log in again (or use `DOCKER="sudo docker"`) | [Docker Desktop](https://www.docker.com/products/docker-desktop/), started, showing "Engine running" | |
 | Disk | 2 GiB free. `DISK-01` fails under 2 GiB, warns from 2 GiB through 9 GiB, and passes at 10 GiB or more | same | |
 
-`setup/keel.sh` says Linux is the tested host and that macOS with Docker Desktop has not been run. The `keel-git` image is built from `setup/docker/keel-git.Dockerfile` (Alpine and git, no platform pin), so `docker build` produces a native image. Set `DOCKER=podman` to use podman. `setup/keel.sh` adds `--userns=keep-id` in that case.
+`setup/keel.sh` says Linux is the tested host and that macOS with Docker Desktop has not been run. The `keel-git` image is built from `setup/docker/keel-git.Dockerfile` (Alpine and git, no platform pin), so `docker build` produces a native image. The script accepts `DOCKER=podman` and adds `--userns=keep-id` in that case. The egress network and the proxy have not been verified on Docker Desktop or Podman, and that path is unsupported for now.
 
 The v1 design requires a rootless runtime and will refuse to start without one. This doctor does not refuse yet: a rootful Linux daemon is a warning on ENV-05. [Security](security.md#rootless).
 
@@ -27,12 +27,16 @@ DOCKER="sudo docker" bash setup/tests/harness/run-tests.sh
 
 `setup/tests/harness/run-tests.sh` does the following:
 
-1. Builds the `keel-git` image from `setup/docker/keel-git.Dockerfile`.
-2. Runs the allowlist and redaction self-test.
-3. Runs `setup/tests/harness/test-happy.sh`: init-repo, setup, the gate-suite containers, export, gate, push-stub, cleanup, then the visibility checks.
-4. Runs `setup/tests/harness/test-attacks.sh`. Each attack prints a `RESULT` line. The visibility checks run at the end.
-5. Runs `setup/keel-doctor.sh` without `--attacks`, and prints that verdict last. If `KEEL_REPO` is unset, it runs `setup/keel.sh init-repo` first, because the suites delete their throwaway repo.
-6. If harness files changed against the base, runs the visibility mutation set. If none changed, it logs `RESULT mutate: skipped (no harness files changed)` and does not run the mutants.
+1. Runs `setup/tests/harness/test-mutate-plan.sh`. A missing base commit must fail. The old “no changed files, so pass” result must not come back.
+2. Runs `setup/tests/harness/test-vis-ro.sh`. A container command that cannot reach a daemon is an error, not `NOT BLOCKED`.
+3. Runs `setup/tests/harness/test-h3-verdict.sh`. An unrelated exit 137 must not count as the memory limit containing the allocator.
+4. Builds `keel-git` from `setup/docker/keel-git.Dockerfile` and `keel-proxy` from `setup/docker/keel-proxy.Dockerfile`.
+5. Runs the visibility self-test and the egress self-test.
+6. Runs `setup/tests/harness/test-happy.sh`: init-repo, setup, the gate-suite containers, export, gate, push-stub, cleanup, then the egress checks and the visibility checks.
+7. Runs `setup/tests/harness/test-attacks.sh`. Each attack prints a `RESULT` line. The egress checks and the visibility checks run at the end.
+8. Runs `setup/keel-doctor.sh` without `--attacks`. If `KEEL_REPO` is unset, it runs `setup/keel.sh init-repo` first, because the suites delete their throwaway repo.
+9. Runs `setup/tests/harness/test-doctor-ids.sh`. A result id the doctor requires, if it is absent from the scored log, makes the verdict NOT READY.
+10. If harness files changed against the base, runs the mutant set. If none changed, it logs `RESULT mutate: skipped (no harness files changed)` and does not run the mutants.
 
 The suites delete `KEEL_ROOT` (default `~/keel-proto`). That directory is throwaway data, not a checkout of this repository. On macOS, `KEEL_ROOT` must sit under a directory Docker Desktop shares. The defaults in `setup/lib/portable.sh` are `/Users`, `/Volumes`, `/private`, `/tmp`, and `/var/folders`. A home directory under `/Users` qualifies. Otherwise `setup/keel.sh` stops with exit code 4 and tells you so.
 
@@ -83,6 +87,8 @@ When reporting a problem, send the full terminal output of `bash setup/tests/har
 
 ## 5. Known limits
 
-- `setup/keel.sh` says the harness was tested on Linux, and that macOS with Docker Desktop has not been run. Windows is untested. On any OS other than Linux the doctor prints a warning, `untested OS`, and that is a warning, not a refusal. The scripts target bash 3.2 or newer.
+- `setup/keel.sh` says the harness was tested on Linux, and that macOS with Docker Desktop has not been run. Windows is untested. On any OS other than Linux the doctor prints a warning, `untested OS`, and that is a warning, not a refusal. The scripts target bash 3.2 or newer. Docker Desktop and Podman are not verified for the egress network and are unsupported for that path for now.
+- The proxy does not read SNI inside a tunnel it has already allowed. Peers on `keel-egress`, including the CI mock, are reachable without the proxy and must not forward. The IPv6 attack checks `disable_ipv6` and the network’s `--ipv6=false`. It does not open a public IPv6 connection.
+- Some hosts drop traffic between containers. EG-03 then fails, and the doctor is not ready, until an operator allows that traffic. [EG-03](harness-checks-why.md#eg-03).
 - Rootless Docker or Podman is a mandatory requirement of the v1 pipeline. The doctor still classifies that boundary as RECOMMENDED (ENV-05). A rootful daemon warns. It does not make the verdict NOT READY. [Security](security.md#rootless).
 - On macOS, file ownership is mapped by Docker Desktop, so the gate's foreign-owner check is only a warning there. See [harness-checks-why.md](harness-checks-why.md#supported-os).

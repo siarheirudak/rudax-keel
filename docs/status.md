@@ -50,16 +50,27 @@ The path checks in this gate are the behaviour the design wants L4, L6, L7, and 
 
 `role` and `role-env` mount per-role folder roots from `setup/allow/`, then apply `setup/deny/base` and `.keel/deny.local`. The developer’s `tests/` mount is read-only. The tester is mounted from the commit recorded at setup. Launch decisions are appended under `$KEEL_ROOT/.keel/logs/`. The matrix is in [Roles and visibility](roles.md).
 
+### Developer egress
+
+Implemented in `setup/lib/egress.sh`, `setup/lib/egress.py`, `setup/lib/egress_proxy.py`, `setup/docker/keel-proxy.Dockerfile`, and `setup/egress/`.
+
+The developer joins the internal network `keel-egress` and uses an explicit forward proxy. The allowlist shipped here is the CI mock only. Critic, QA, researcher, proto, setup, export, the test re-run, and every other role stay on `--network none`. QA still has no path to a local app. The researcher still has no path to the internet. Those stay in the design until the research step and the QA step.
+
+A stopped proxy, a network that is not internal, or a malformed allow file refuses the launch. Denials append one record to `$KEEL_ROOT/.keel/logs/egress.jsonl` (time, role, sanitized host:port, reason). The doctor checks EG-01, EG-02, and EG-03 are critical: the proxy image, the internal network, and a denial from the forward port. A critical failure is not ready.
+
+The proxy does not intercept TLS, so it does not read SNI inside an allowed tunnel. Peers on the internal network, including the CI mock, are reachable without the proxy and must not forward. The IPv6 suite checks the `disable_ipv6` setting and `--ipv6=false` on the network. It does not open a public IPv6 connection. If the host drops traffic between containers, EG-03 fails and the doctor is not ready until an operator allows that traffic. Docker Desktop and Podman are not verified for this path and are unsupported for it for now.
+
+How the roles differ, and the allowlist grammar, are in [Roles and visibility](roles.md#network).
+
 ## Specified and not built
 
-The v1 build is a sequence of steps. Each one is intended to land as its own pull request, opened by the bot, and merged by the owner. Process-file and skill changes land as separate pull requests labelled `process-files`, after the owner approves them. Step 1’s folder mounts are in the harness. The later steps below are not started. The Step 7 design (dispatcher and warm orchestrator) is in [Harness design](harness/README.md).
+The v1 build is a sequence of steps. Each one is intended to land as its own pull request, opened by the bot, and merged by the owner. Process-file and skill changes land as separate pull requests labelled `process-files`, after the owner approves them. Step 1’s folder mounts and Step 2’s developer egress proxy are in the harness. The later steps below are not started. The Step 7 design (dispatcher and warm orchestrator) is in [Harness design](harness/README.md).
 
 The order is the dependency order from the v1 plan. Steps later in the list need earlier ones. Parallel reading is fine. Parallel merging still has to respect the dependencies.
 
 | Step | What it adds | Depends on |
 |---|---|---|
 | 1 | Folder allowlists, unified deny, tester pinned to the setup commit, launch JSONL. Content fencing stays on the backlog | The harness that exists |
-| 2 | An egress allowlist proxy | Step 1 |
 | 3 | Rootless as a hard startup failure, plus the rest of the v1 container limits, including a work-directory quota and a separate user for secrets. Playwright checked on the host. Chromium’s sandbox left on | Steps 1 and 2 |
 | 4 | L1 context packaging | Step 1 |
 | 5 | The discoveries store and the accept-or-discard filter | Step 4 |
@@ -104,7 +115,6 @@ These are project settings. Where the design names a starting number, that numbe
 | Second and third models | A different model for reviewers than for the developer, and a third for the verifier when one exists | Which pairs are available. One model falls back to a different prompt and checklist, recorded in the envelope |
 | Feature flags | Optional, the architect opts in | Whether a new project starts with flags off, or with a project-level default |
 | Skill pull requests before a real push | Unsettled | Whether step 10 waits for step 19 |
-| Egress proxy shape | An allowlist | One shared proxy, or a profile per role, and how allowlist edits are reviewed |
 | Skill A/B trials | Only for a major stack skill | How the split is measured |
 | macOS | Untested | The doctor warns. It does not refuse. Wording beyond “untested” is still open |
 | Red-team recommendation | The envelope may recommend a pass when authentication, payments, or user data change | Whether that is only a recommendation, or also an item the owner ticks |
