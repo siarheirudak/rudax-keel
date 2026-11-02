@@ -76,10 +76,52 @@ printf 'b\n' >"$changed/setup/keel.sh"
 git -C "$changed" add setup/keel.sh
 git -C "$changed" commit -qm change
 out=$(env -u GITHUB_BASE_REF KEEL_MUTATE_BASE=origin/main KEEL_MUTATE_REPO="$changed" bash "$PLAN")
-if [ "$out" != "RESULT mutate: run" ]; then
-  echo "expected run, got: $out" >&2
+case $out in
+  "RESULT mutate: run "*) ;;
+  *)
+    echo "expected selective run, got: $out" >&2
+    exit 1
+    ;;
+esac
+if ! printf '%s\n' "$out" | grep -Eq '(^| )M03( |$)'; then
+  echo "keel.sh selection dropped M03: $out" >&2
   exit 1
 fi
+if printf '%s\n' "$out" | grep -Eq '(^| )M51( |$)'; then
+  echo "keel.sh selection included M51: $out" >&2
+  exit 1
+fi
+
+expect_full() {
+  local file=$1 repo
+  repo=$root/case-$(printf '%s' "$file" | tr '/' '-')
+  mkdir -p "$repo/$(dirname "$file")"
+  git_repo "$repo"
+  printf 'a\n' >"$repo/$file"
+  git -C "$repo" add -- "$file"
+  git -C "$repo" commit -qm base
+  git -C "$repo" branch -M main
+  git -C "$repo" update-ref refs/remotes/origin/main HEAD
+  git -C "$repo" checkout -q -b feature
+  printf 'b\n' >"$repo/$file"
+  git -C "$repo" add -- "$file"
+  git -C "$repo" commit -qm change
+  out=$(env -u GITHUB_BASE_REF KEEL_MUTATE_BASE=origin/main KEEL_MUTATE_REPO="$repo" bash "$PLAN")
+  if [ "$out" != "RESULT mutate: run" ]; then
+    echo "expected full run for $file, got: $out" >&2
+    exit 1
+  fi
+}
+
+expect_full setup/tests/harness/mutate.py
+expect_full .github/workflows/checks.yml
+expect_full setup/keel-doctor.sh
+expect_full setup/tests/harness/test-attacks.sh
+expect_full setup/tests/harness/mutate-plan.sh
+expect_full setup/docker/keel-git.Dockerfile
+expect_full setup/allow/developer.paths
+expect_full .github/workflows/mutate-full.yml
+expect_full setup/not-a-mapped-target
 
 bogus=$root/bogus
 mkdir -p "$bogus"
