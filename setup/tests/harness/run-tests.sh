@@ -17,6 +17,8 @@ python3 "$HERE/test-mutant-select.py" || exit 1
 python3 "$HERE/mutate-issue.py" --self-test || exit 1
 echo "== mutate plan"
 "$HERE/test-mutate-plan.sh" || exit 1
+echo "== mutant result binding"
+bash "$HERE/test-mutant-result.sh" || exit 1
 echo "== attack results"
 "$HERE/test-attack-results.sh" || exit 1
 echo "== nested ro probe"
@@ -102,7 +104,9 @@ if [ "$mutate_ok" -eq 0 ]; then
       rc=1
       ;;
   esac
-  if [ -n "$ids" ]; then
+  if [ -n "$ids" ] && [ "${KEEL_MUTATE_DEFER:-}" = 1 ]; then
+    echo "RESULT mutate: deferred"
+  elif [ -n "$ids" ]; then
     # shellcheck disable=SC2086
     if ! python3 "$HERE/mutant_files.py" --check-ids $ids; then
       echo "ERROR: mutate: id list rejected" >&2

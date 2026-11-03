@@ -131,6 +131,9 @@ jobs:
           if [ -n "${DOCKER_HOST:-}" ]; then
             clean+=("DOCKER_HOST=$DOCKER_HOST")
           fi
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            clean+=("KEEL_MUTATE_DEFER=1")
+          fi
           exec env -i "${clean[@]}" bash setup/tests/harness/run-tests.sh
 
   keel-gate:
@@ -139,10 +142,14 @@ jobs:
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Gate
         env:
           R_ACTIONLINT: ${{ needs.actionlint.result }}
@@ -153,6 +160,13 @@ jobs:
           R_FAKE_GH: ${{ needs.fake-gh.result }}
           R_PROJECT: ${{ needs.project.result }}
           R_HARNESS: ${{ needs.harness.result }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          KEEL_MUTATE_BASE: ${{ github.event.pull_request.base.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: bash scripts/check-gate.sh
 
   # Not an input to keel-gate. A permissions failure is a notice, and the

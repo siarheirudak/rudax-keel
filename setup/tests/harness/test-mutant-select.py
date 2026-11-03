@@ -41,8 +41,8 @@ def validate():
         fail("target-only file is not a mutant target")
     if "setup/check.sh" not in mapped or "setup/check.sh" in mf.TARGET_ONLY:
         fail("check.sh must be a mapped oracle")
-    if "M79" not in mf.CI_IDS or "M80" not in mf.CI_IDS or "M90" not in mf.CI_IDS:
-        fail("M79, M80, or M90 is not in the CI set")
+    if "M79" not in mf.CI_IDS or "M80" not in mf.CI_IDS or "M90" not in mf.CI_IDS or "M92" not in mf.CI_IDS:
+        fail("M79, M80, M90, or M92 is not in the CI set")
     for path in mf.ORACLE_FILES:
         if path in mf.TARGET_ONLY:
             fail("oracle listed as a selective target " + path)
@@ -105,6 +105,7 @@ def main():
         "setup/tests/harness/mutate-plan.sh",
         "setup/not-a-mapped-target",
         ".github/workflows/mutate-full.yml",
+        ".github/workflows/mutate-pr.yml",
         ".github/unknown.yml",
     ]
     root = os.path.abspath(os.path.join(HERE, os.pardir, os.pardir, os.pardir))

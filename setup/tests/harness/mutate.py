@@ -100,6 +100,7 @@ M = {
  'M89': ('keel-doctor.sh', 'env05_level=CRITICAL # env05-level', 'env05_level=RECOMMENDED # env05-level', 'downgrade the isolation check', ['R-A1']),
  'M90': ('tests/harness/doctor-score.sh', 'score_exact=1 # doctor-score-exact', 'score_exact=0 # doctor-score-exact', 'accept any not-ready doctor', ['R-A8']),
  'M91': (K, 'launch_guard(){ keel_require_runtime || exit $?; } # launch-guard', 'launch_guard(){ return 0; } # launch-guard', 'drop the launch runtime check', ['R-A9']),
+ 'M92': ('tests/harness/mutant-result.py', 'sha_bind = 1  # mutant-sha-bind', 'sha_bind = 0  # mutant-sha-bind', 'accept a mutant run for a different sha', ['M-A1']),
 }
 M['M15'] = (K, M['M13'][1], M['M13'][2], M['M15'][3], M['M15'][4])  # applied together with M14 below
 GREEN = re.compile(r'^(BLOCKED|CONTAINED|PARTIAL|N/A)')
@@ -132,6 +133,9 @@ def run(mid):
     shutil.copy2(os.path.join(HARNESS, 'runtime-stub.sh'), os.path.join(src, 'tests', 'harness', 'runtime-stub.sh'))
     shutil.copy2(os.path.join(HARNESS, 'harness-keel.sh'), os.path.join(src, 'tests', 'harness', 'harness-keel.sh'))
     shutil.copy2(os.path.join(HARNESS, 'doctor-score.sh'), os.path.join(src, 'tests', 'harness', 'doctor-score.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'mutant-result.py'), os.path.join(src, 'tests', 'harness', 'mutant-result.py'))
+    shutil.copy2(os.path.join(HARNESS, 'mutant_files.py'), os.path.join(src, 'tests', 'harness', 'mutant_files.py'))
+    shutil.copy2(os.path.join(HARNESS, 'test-mutant-result.sh'), os.path.join(src, 'tests', 'harness', 'test-mutant-result.sh'))
     shutil.copy2(os.path.join(SETUP, 'keel-doctor.sh'), os.path.join(src, 'keel-doctor.sh'))
     os.makedirs(os.path.join(src, 'chrome'), exist_ok=True)
     shutil.copy2(os.path.join(SETUP, 'chrome', 'chromium-argv.sh'), os.path.join(src, 'chrome', 'chromium-argv.sh'))
@@ -148,6 +152,8 @@ def run(mid):
         try:
             if mid == 'M78':
                 script = 'test-attack-results.sh'
+            elif mid == 'M92':
+                script = 'test-mutant-result.sh'
             elif mid in ('M80', 'M81', 'M86', 'M87', 'M88', 'M89', 'M90', 'M91'):
                 script = 'test-runtime.sh'
             else:
