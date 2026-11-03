@@ -103,7 +103,7 @@ Docker Desktop differences the harness handles:
 
 **Why.** With a rootful daemon, a container escape gives root on the host. Rootless shrinks that blast radius. It does not fix a kernel bug. See [Security](security.md#rootless).
 
-**If it fails.** FAIL. The verdict is not ready. A hosted CI runner is often rootful; the harness there accepts the doctor only when this is the only critical failure. There is no environment switch that turns the failure into a pass.
+**If it fails.** FAIL. The verdict is not ready, and `role`, `proto`, `export`, and the other commands that start a container refuse. There is no environment switch that turns the failure into a pass.
 
 **How to fix.** Install rootless Docker (`dockerd-rootless-setuptool.sh install`) or rootless Podman. On a systemd host, enable cgroup delegation so `--pids-limit`, `--memory`, and `--cpus` work.
 
@@ -133,7 +133,7 @@ Docker Desktop differences the harness handles:
 
 **If it fails.** FAIL. The harness would refuse to start, or run weaker containers.
 
-**How to fix.** Enable cgroup v2 delegation (systemd), or use rootful Docker and accept ENV-05.
+**How to fix.** Enable cgroup v2 delegation (systemd) on a rootless daemon. A rootful daemon fails ENV-05.
 
 <a id="env-08"></a>
 

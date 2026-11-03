@@ -46,13 +46,12 @@ The RECOMMENDED checks today are:
 
 | Id | What it watches | What a problem means |
 |---|---|---|
-| ENV-05 | Whether the container runtime is rootless, or is Docker Desktop’s virtual machine | A rootful daemon on Linux warns. An escape from a container would be root on the host. The harness still starts |
 | ENV-06 | The local `keel-git` image exists and matches the machine’s architecture | Missing or emulated. The first role will fail or run slowly |
 | REPO-04 | The base repo is on `main` | The gate compares the bundle with `main`. A warning, not a stop |
 | DISK-01 | Free space under the harness root | Under 10 GiB warns. Under 2 GiB fails this line. The level is still RECOMMENDED, so the verdict can remain READY WITH WARNINGS. Writable mounts have no quota |
 | ATK-A10 | Garbage collection while a task is active | A partial result is expected. The other attack checks are CRITICAL |
 
-Every other ENV, SEC, REPO, and attack check is CRITICAL when it fails. The full list, including what to do when a line fails, is [harness-checks-why.md](harness-checks-why.md).
+ENV-05 is CRITICAL. A rootful Linux daemon fails it, and the verdict is not ready. Every other ENV, SEC, REPO, and attack check is CRITICAL when it fails. The full list, including what to do when a line fails, is [harness-checks-why.md](harness-checks-why.md).
 
 Attack checks run only with `bash setup/keel-doctor.sh --attacks`. If a CRITICAL environment check has already failed, the suite is skipped and ATK-00 fails instead.
 
@@ -60,11 +59,11 @@ Attack checks run only with `bash setup/keel-doctor.sh --attacks`. If a CRITICAL
 
 <a id="rootless"></a>
 
-**Rootless** means the container daemon runs as an ordinary user. A bug that escapes the container does not become root on the host. Docker Desktop on macOS is a different boundary: containers run in a Linux virtual machine, and an escape lands in that virtual machine. The doctor accepts that boundary and says so on ENV-05.
+**Rootless** means the container daemon runs as an ordinary user. A bug that escapes the container does not become root on the host. Docker Desktop on macOS is a different boundary: containers run in a Linux virtual machine, and an escape lands in that virtual machine. ENV-05 records that as an isolation pass. It does not mean egress works there.
 
-In the v1 design, rootless Docker or rootless Podman is mandatory. A startup script refuses to run when the runtime is not rootless. That refusal is not what the doctor does today. ENV-05 is RECOMMENDED. A rootful Linux daemon warns, and the harness still runs.
+ENV-05 is CRITICAL. On Linux the daemon passes only when `SecurityOptions` contains `rootless`, or when Podman is rootless. A rootful Linux daemon fails the check. `role`, `proto`, `export`, and the other commands that start a container then refuse. The socket path is not the signal. There is no environment switch that turns the failure into a pass.
 
-The v1 startup check is one of the unbuilt steps in [Status](status.md). Until it exists, follow ENV-05’s own advice on a Linux host: install rootless Docker or Podman. The scripts were tested on Linux. macOS with Docker Desktop has not been run. On any other OS the doctor warns and does not refuse.
+Install rootless Docker or rootless Podman on a Linux host. The scripts were tested on Linux. macOS with Docker Desktop has not been run end to end. On any other OS the doctor warns about the OS and does not treat that OS line as a rootless pass.
 
 ## Hardening the v1 design requires
 

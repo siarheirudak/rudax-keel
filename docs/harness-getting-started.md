@@ -15,7 +15,7 @@ Commands below are from the repository root.
 
 `setup/keel.sh` says Linux is the tested host and that macOS with Docker Desktop has not been run. The `keel-git` image is built from `setup/docker/keel-git.Dockerfile` (Alpine and git, no platform pin), so `docker build` produces a native image. The script accepts `DOCKER=podman` and adds `--userns=keep-id` in that case. The egress network and the proxy have not been verified on Docker Desktop or Podman, and that path is unsupported for now.
 
-ENV-05 is critical. On Linux the daemon passes only when `docker info` reports `rootless` in `SecurityOptions`, or when Podman is rootless. Install rootless Docker with `dockerd-rootless-setuptool.sh install`, or use rootless Podman. A rootful Linux daemon makes the doctor not ready. Docker Desktop on a Mac can pass that isolation line because containers run in its Linux VM; that pass does not mean the egress network works there, and Docker Desktop and Podman stay unsupported for egress. A hosted CI machine is often rootful. The harness there still runs the suites, and it accepts the doctor only when ENV-05 is the only critical failure. [Security](security.md#rootless).
+ENV-05 is critical. On Linux the daemon passes only when `docker info` reports `rootless` in `SecurityOptions`, or when Podman is rootless. Install rootless Docker with `dockerd-rootless-setuptool.sh install`, or use rootless Podman. A rootful Linux daemon makes the doctor not ready. Docker Desktop on a Mac can pass that isolation line because containers run in its Linux VM; that pass does not mean the egress network works there, and Docker Desktop and Podman stay unsupported for egress. A hosted CI machine is often rootful. ENV-05 fails there, and the commands that start a container refuse. [Security](security.md#rootless).
 
 ## 2. Run it
 
@@ -61,7 +61,7 @@ Each doctor line looks like this:
 ```
 
 - ✅ means the check passed.
-- ⚠️ means a warning. The harness is usable, but read the detail. Examples: `untested OS` on anything other than Linux, the rootful daemon on Linux (ENV-05), `env` fallback mode (ENV-08), ATK-A10 PARTIAL (by design), and `N/A` attacks that do not apply on this OS or in this mode.
+- ⚠️ means a warning. The harness is usable, but read the detail. Examples: `untested OS` on anything other than Linux, `env` fallback mode (ENV-08), ATK-A10 PARTIAL (by design), and `N/A` attacks that do not apply on this OS or in this mode. A rootful Linux daemon is not one of these warnings: ENV-05 fails and the verdict is not ready.
 - ❌ means the check failed. If the level is **CRITICAL**, the verdict is NOT READY.
 
 Every ID the doctor prints has a "why / if it fails / how to fix" section in [harness-checks-why.md](harness-checks-why.md). The fragment is the ID in lower case (`#env-08`, `#atk-a2`, ...).
@@ -92,5 +92,5 @@ When reporting a problem, send the full terminal output of `bash setup/tests/har
 - `setup/keel.sh` says the harness was tested on Linux, and that macOS with Docker Desktop has not been run. Windows is untested. On any OS other than Linux the doctor prints a warning, `untested OS`, and that is a warning, not a refusal. The scripts target bash 3.2 or newer. Docker Desktop and Podman are not verified for the egress network and are unsupported for that path for now.
 - The proxy does not read SNI inside a tunnel it has already allowed. Peers on `keel-egress`, including the CI mock, are reachable without the proxy and must not forward. The IPv6 attack checks `disable_ipv6` and the network’s `--ipv6=false`. It does not open a public IPv6 connection.
 - Some hosts drop traffic between containers. EG-03 then fails, and the doctor is not ready, until an operator allows that traffic. [EG-03](harness-checks-why.md#eg-03).
-- Rootless Docker or Podman is a mandatory requirement of the v1 pipeline. The doctor still classifies that boundary as RECOMMENDED (ENV-05). A rootful daemon warns. It does not make the verdict NOT READY. [Security](security.md#rootless).
+- A rootful Linux daemon fails ENV-05. `role`, `proto`, and `export` refuse. Docker Desktop on a Mac can pass the isolation line and still has no supported egress path. [Security](security.md#rootless).
 - On macOS, file ownership is mapped by Docker Desktop, so the gate's foreign-owner check is only a warning there. See [harness-checks-why.md](harness-checks-why.md#supported-os).

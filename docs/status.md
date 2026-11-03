@@ -44,7 +44,7 @@ The host gate rejects a bundle that:
 - carries a commit identity other than the configured agent identity
 - fails the test entry taken from the default branch, not from the files in the bundle
 
-The doctor’s levels, and the fact that rootless is still a warning, are in [Security](security.md). How to run it: [Getting started](harness-getting-started.md).
+The doctor’s levels are in [Security](security.md). ENV-05 is critical. How to run it: [Getting started](harness-getting-started.md).
 
 The path checks in this gate are the behaviour the design wants L4, L6, L7, and L10 to share. They live inside `setup/keel.sh` today. They are not a library those links call, because those links do not exist.
 
@@ -68,7 +68,7 @@ Implemented in `setup/lib/runtime.sh`, `setup/keel-doctor.sh`, and `setup/chrome
 
 ENV-05 is critical. Linux passes when `SecurityOptions` contains `rootless`, or when Podman reports rootless. Docker Desktop on Darwin is an isolation pass only. Egress on Docker Desktop and Podman stays unsupported. A rootful Linux daemon is not ready. The socket path is not the signal. User-namespace remapping without `rootless` does not pass.
 
-A hosted CI runner is often rootful. That job still runs the container suites. It accepts the live doctor only when ENV-05 is the only critical failure. The refuse and pass paths for that classification are proven with fixture files through `setup/tests/harness/runtime-stub.sh`. The doctor and `setup/keel.sh` do not read a fixture from the environment.
+A hosted CI runner is often rootful. On that machine ENV-05 fails and `role`, `proto`, and `export` refuse, so the job is not a rootless proof. The doctor and `setup/keel.sh` classify the real CLI. Fixture files are used only by `setup/tests/harness/runtime-stub.sh`.
 
 DISK-02 is the soft free-space check. Hard filesystem quotas are optional on the host. There is no separate OS account for secrets in this step. The Chromium helper refuses sandbox-off flags and does not start a browser.
 

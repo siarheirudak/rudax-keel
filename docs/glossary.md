@@ -123,7 +123,7 @@ Short definitions for this repository. The first time a longer page needs a word
 
 **Push stub.** `setup/keel.sh push-stub`. It prints the push it would perform and does not push. It has no token.
 
-**Rootless.** A container runtime that runs as a normal user. Mandatory in the v1 design. A warning, not a refusal, in today’s doctor (ENV-05).
+**Rootless.** A container runtime that runs as a normal user. ENV-05 is critical: a rootful Linux daemon is not ready, and commands that start a container refuse.
 
 ## Related
 
