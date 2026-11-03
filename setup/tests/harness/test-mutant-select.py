@@ -22,7 +22,8 @@ def validate():
     for mid, paths in mf.FILES.items():
         if not paths:
             fail("empty map " + mid)
-        expect = ["setup/" + mutate.M[mid][0]]
+        rel = mutate.M[mid][0]
+        expect = [rel] if rel.startswith("scripts/") else ["setup/" + rel]
         if paths != expect:
             fail("%s map %s != %s" % (mid, paths, expect))
         for path in paths:
@@ -41,8 +42,8 @@ def validate():
         fail("target-only file is not a mutant target")
     if "setup/check.sh" not in mapped or "setup/check.sh" in mf.TARGET_ONLY:
         fail("check.sh must be a mapped oracle")
-    if "M79" not in mf.CI_IDS or "M80" not in mf.CI_IDS or "M90" not in mf.CI_IDS:
-        fail("M79, M80, or M90 is not in the CI set")
+    if "M79" not in mf.CI_IDS or "M80" not in mf.CI_IDS or "M90" not in mf.CI_IDS or "M92" not in mf.CI_IDS or "M93" not in mf.CI_IDS:
+        fail("M79, M80, M90, M92, or M93 is not in the CI set")
     for path in mf.ORACLE_FILES:
         if path in mf.TARGET_ONLY:
             fail("oracle listed as a selective target " + path)
@@ -105,6 +106,7 @@ def main():
         "setup/tests/harness/mutate-plan.sh",
         "setup/not-a-mapped-target",
         ".github/workflows/mutate-full.yml",
+        ".github/workflows/mutate-pr.yml",
         ".github/unknown.yml",
     ]
     root = os.path.abspath(os.path.join(HERE, os.pardir, os.pardir, os.pardir))
@@ -125,6 +127,12 @@ def main():
     outside = mf.check_selection(["scripts/check.sh"])
     if outside != ("skip", []):
         fail("a file outside setup/ and .github/ should skip")
+    for path in mf.FULL_PATHS:
+        if not os.path.isfile(os.path.join(root, path)):
+            fail("missing gate path " + path)
+        got = mf.select_mutants([path])
+        if got != ("full", list(mf.CI_IDS)):
+            fail("gate path %s -> %s" % (path, got))
     skipped = mf.check_selection(["docs/security.md"])
     if skipped != ("skip", []):
         fail("docs should skip")

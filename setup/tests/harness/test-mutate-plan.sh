@@ -122,6 +122,28 @@ expect_full setup/docker/keel-git.Dockerfile
 expect_full setup/allow/developer.paths
 expect_full .github/workflows/mutate-full.yml
 expect_full setup/not-a-mapped-target
+# A scripts-only edit of the gate is not a skip. Other scripts files still are.
+expect_full scripts/check-gate.sh
+expect_full scripts/gate-jobs.txt
+expect_full scripts/tests/test_gate_jobs.py
+
+other=$root/scripts-other
+mkdir -p "$other/scripts"
+git_repo "$other"
+printf 'a\n' >"$other/scripts/check.sh"
+git -C "$other" add scripts/check.sh
+git -C "$other" commit -qm base
+git -C "$other" branch -M main
+git -C "$other" update-ref refs/remotes/origin/main HEAD
+git -C "$other" checkout -q -b feature
+printf 'b\n' >"$other/scripts/check.sh"
+git -C "$other" add scripts/check.sh
+git -C "$other" commit -qm change
+out=$(env -u GITHUB_BASE_REF KEEL_MUTATE_BASE=origin/main KEEL_MUTATE_REPO="$other" bash "$PLAN")
+if [ "$out" != "RESULT mutate: skipped (no harness files changed)" ]; then
+  echo "scripts/check.sh was not a skip, got: $out" >&2
+  exit 1
+fi
 
 bogus=$root/bogus
 mkdir -p "$bogus"

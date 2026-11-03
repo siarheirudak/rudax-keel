@@ -97,6 +97,8 @@ FILES = {
     "M89": ["setup/keel-doctor.sh"],
     "M90": ["setup/tests/harness/doctor-score.sh"],
     "M91": ["setup/keel.sh"],
+    "M92": ["setup/tests/harness/mutant-result.py"],
+    "M93": ["scripts/check-gate.sh"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -151,6 +153,8 @@ CI_IDS = [
     "M89",
     "M90",
     "M91",
+    "M92",
+    "M93",
 ]
 
 # A change to one of these files selects only the CI mutants mapped to it.
@@ -164,6 +168,7 @@ TARGET_ONLY = frozenset((
     "setup/tests/harness/attack-results.sh",
     "setup/lib/runtime.sh",
     "setup/tests/harness/doctor-score.sh",
+    "setup/tests/harness/mutant-result.py",
 ))
 
 # Fixture files and the oracles for R-H1, R-A1, and R-A8.
@@ -175,7 +180,15 @@ ORACLE_FILES = (
     "setup/tests/harness/test-runtime.sh",
     "setup/tests/harness/runtime-stub.sh",
     "setup/tests/harness/harness-keel.sh",
+    "setup/tests/harness/test-mutant-result.sh",
 )
+
+# Gate and binder paths outside setup/ and .github/. A change here is not a skip.
+FULL_PATHS = frozenset((
+    "scripts/check-gate.sh",
+    "scripts/gate-jobs.txt",
+    "scripts/tests/test_gate_jobs.py",
+))
 
 # Selector files. Covered by the setup/ and .github/ rule; kept so a test can name them.
 TRIGGERS = [
@@ -194,10 +207,16 @@ class SelectionError(Exception):
 
 
 def needs_full_set(changed):
-    """True when a changed path is under setup/ or .github/ and is not a mapped target."""
+    """True when a changed path is under setup/ or .github/ and is not a mapped target.
+
+    Gate and binder paths outside those trees are included too. A pull request
+    that only edits one of them is not a skip.
+    """
     for path in changed:
         if path in TARGET_ONLY:
             continue
+        if path in FULL_PATHS:
+            return True
         if path.startswith("setup/") or path.startswith(".github/"):
             return True
     return False
