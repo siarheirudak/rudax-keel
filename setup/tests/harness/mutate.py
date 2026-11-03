@@ -130,6 +130,7 @@ def run(mid):
     shutil.copy2(os.path.join(HARNESS, 'test-attack-results.sh'), os.path.join(src, 'tests', 'harness', 'test-attack-results.sh'))
     shutil.copy2(os.path.join(HARNESS, 'test-runtime.sh'), os.path.join(src, 'tests', 'harness', 'test-runtime.sh'))
     shutil.copy2(os.path.join(HARNESS, 'runtime-stub.sh'), os.path.join(src, 'tests', 'harness', 'runtime-stub.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'harness-keel.sh'), os.path.join(src, 'tests', 'harness', 'harness-keel.sh'))
     shutil.copy2(os.path.join(HARNESS, 'doctor-score.sh'), os.path.join(src, 'tests', 'harness', 'doctor-score.sh'))
     shutil.copy2(os.path.join(SETUP, 'keel-doctor.sh'), os.path.join(src, 'keel-doctor.sh'))
     os.makedirs(os.path.join(src, 'chrome'), exist_ok=True)

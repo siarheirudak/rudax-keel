@@ -54,6 +54,12 @@ if [ -n "$open_attacks" ]; then
 fi
 echo "== keel-doctor (verdict last; on a fresh throwaway repo, the suites wiped theirs)"
 [ -n "${KEEL_REPO:-}" ] || "$SETUP/keel.sh" init-repo >/dev/null
+# The live daemon stays rootful. Bring egress up through the test entrypoint
+# so the doctor can score every other critical check.
+if ! "$HERE/harness-keel.sh" egress-up >/dev/null; then
+  echo "ERROR: egress-up failed before the doctor" >&2
+  rc=1
+fi
 doc_log=$(mktemp)
 "$SETUP/keel-doctor.sh" >"$doc_log" 2>&1 || true
 cat "$doc_log"

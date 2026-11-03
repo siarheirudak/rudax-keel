@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Happy path: steps 0-5,7. Run: DOCKER="sudo docker" ./test-happy.sh
-set -u; HERE=$(cd "$(dirname "$0")" && pwd -P); SETUP=$(cd "$HERE/../.." && pwd -P); K="$SETUP/keel.sh"; # shellcheck source=setup/lib/portable.sh
+set -u; HERE=$(cd "$(dirname "$0")" && pwd -P); SETUP=$(cd "$HERE/../.." && pwd -P); K="$HERE/harness-keel.sh"; # shellcheck source=setup/lib/portable.sh
 . "$SETUP/lib/portable.sh"; export KEEL_ROOT=${KEEL_ROOT:-$HOME/keel-proto}
 echo "### script modes"
 if ! mode_out=$(bash "$SETUP/check.sh" 2>&1); then

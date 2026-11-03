@@ -32,7 +32,7 @@ EOF
 export KEEL_ROOT=$tmp/root
 export KEEL_REPO=$KEEL_ROOT/repo
 "$SETUP/keel.sh" init-repo >/dev/null
-"$SETUP/keel.sh" egress-up >/dev/null
+"$HERE/harness-keel.sh" egress-up >/dev/null
 miss_out=$tmp/miss.out
 full_out=$tmp/full.out
 set +e

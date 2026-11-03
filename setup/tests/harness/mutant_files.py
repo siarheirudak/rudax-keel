@@ -174,6 +174,7 @@ ORACLE_FILES = (
     "setup/tests/harness/fixtures/runtime-userns.info",
     "setup/tests/harness/test-runtime.sh",
     "setup/tests/harness/runtime-stub.sh",
+    "setup/tests/harness/harness-keel.sh",
 )
 
 # Selector files. Covered by the setup/ and .github/ rule; kept so a test can name them.

@@ -104,6 +104,16 @@ for spec in \
 done
 unset KEEL_WORK_MIN_FREE
 rm -rf "$root"
+if ! grep -Fqx 'launch_guard(){ keel_require_runtime || exit $?; } # launch-guard' "$K"; then
+  miss="$miss production-guard"
+fi
+exec_root=$(mktemp -d)
+ec=0
+out=$(KEEL_ROOT=$exec_root DOCKER=false bash "$STUB" --exec -- proto t rw true 2>&1) || ec=$?
+if printf '%s\n' "$out" | grep -q 'REFUSE	runtime	rootful' || printf '%s\n' "$out" | grep -q '^stub:'; then
+  miss="$miss exec-rootful"
+fi
+rm -rf "$exec_root"
 if [ -z "$miss" ]; then
   res R-A9 "BLOCKED (role proto export setup and the other launch paths refuse)"
 else
