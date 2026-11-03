@@ -25,6 +25,7 @@ How to apply them: [GitHub setup](github-setup.md). Why each rule exists: [why.m
 Implemented in `.github/workflows/checks.yml`, `.github/workflows/scope.yml`, and `scripts/`.
 
 - `keel-gate` fails if any other job in the checks workflow failed, was cancelled, or was skipped. The workflow also runs when a pull request is edited, so a base change runs the gate again.
+- A pull request runs the fast harness and does not run mutants. When the diff selects mutants, the gate also fails until a maintainer has a successful `mutate-pr` dispatch on the default branch for that head SHA. A new commit needs a new run. A diff that selects no mutants does not need one. The daily full run on the default branch is separate.
 - This repository’s own project checks belong in `project_checks()` inside `scripts/check.sh`. Until some are added, that function prints `no project checks yet` and passes. `bash scripts/check.sh` runs the same checks locally.
 - `scope` fails when a pull request mixes process files with other files, and when the base is not the default branch. The job does not check out the pull request. Its token can only read.
 
