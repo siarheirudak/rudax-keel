@@ -161,7 +161,6 @@ jobs:
           R_PROJECT: ${{ needs.project.result }}
           R_HARNESS: ${{ needs.harness.result }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_SHA: ${{ github.event.pull_request.head.sha }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_BASE_REF: ${{ github.base_ref }}
           KEEL_MUTATE_BASE: ${{ github.event.pull_request.base.sha }}

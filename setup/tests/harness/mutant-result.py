@@ -28,6 +28,24 @@ def title_for(sha):
     return "mutants " + sha
 
 
+def pr_number(ref):
+    """Pull request number from the runner ref. Other refs are not a pull request."""
+    match = re.fullmatch(r"refs/pull/([0-9]+)/merge", ref or "")
+    if not match:
+        return None
+    return match.group(1)
+
+
+def pull_head_sha(pull):
+    """Head SHA from the pull request record. The merge commit is not the head."""
+    if not isinstance(pull, dict):
+        return ""
+    sha = ((pull.get("head") or {}).get("sha") or "").strip()
+    if not SHA_RE.fullmatch(sha):
+        return ""
+    return sha
+
+
 def run_matches(head_sha, run, default_branch):
     """True when this workflow run is the trusted result for head_sha."""
     if not isinstance(run, dict):
@@ -99,7 +117,13 @@ def self_test():
 
     bound = live_decision("pull_request", sha, harness, good)
     skipped = live_decision("pull_request", sha, docs, [])
-    res("M-H1", bound == "bound" and skipped == "skip", "head sha bound; docs diff needs no run")
+    ref_ok = pr_number("refs/pull/35/merge") == "35" and pr_number("refs/heads/main") is None
+    head_ok = pull_head_sha({"head": {"sha": sha}, "merge_commit_sha": old}) == sha
+    res(
+        "M-H1",
+        bound == "bound" and skipped == "skip" and ref_ok and head_ok,
+        "head sha bound; docs diff needs no run",
+    )
 
     stale = live_decision("pull_request", sha, harness, [_sample(old)])
     res("M-A1", stale == "missing", "stale sha stays red")
@@ -144,36 +168,44 @@ def _plan_line():
     return line[-1] if line else ""
 
 
-def _fetch_runs(repo, token, default_branch):
+def _fetch_json(repo, token, path, missing_ok=False):
     if not REPO_RE.fullmatch(repo or ""):
         raise RuntimeError("bad repository")
     if not token:
         raise RuntimeError("token missing")
+    if not path.startswith("/"):
+        raise RuntimeError("bad path")
+    req = urllib.request.Request(
+        "https://api.github.com/repos/" + repo + path,
+        headers={
+            "Authorization": "Bearer " + token,
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "rudax-keel-mutants",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.load(resp)
+    except urllib.error.HTTPError as err:
+        if missing_ok and err.code == 404:
+            return None
+        raise RuntimeError("github lookup failed (%s)" % err.code)
+    except urllib.error.URLError:
+        raise RuntimeError("github lookup failed")
+
+
+def _fetch_runs(repo, token, default_branch):
     runs = []
     for page in range(1, 6):
-        url = (
-            "https://api.github.com/repos/%s/actions/workflows/mutate-pr.yml/runs"
+        path = (
+            "/actions/workflows/mutate-pr.yml/runs"
             "?event=workflow_dispatch&status=success&branch=%s&per_page=100&page=%d"
-            % (repo, default_branch, page)
+            % (default_branch, page)
         )
-        req = urllib.request.Request(
-            url,
-            headers={
-                "Authorization": "Bearer " + token,
-                "Accept": "application/vnd.github+json",
-                "User-Agent": "rudax-keel-mutants",
-            },
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                payload = json.load(resp)
-        except urllib.error.HTTPError as err:
-            # The workflow file is not on the default branch yet, so there is no run.
-            if err.code == 404:
-                return []
-            raise RuntimeError("workflow run lookup failed (%s)" % err.code)
-        except urllib.error.URLError:
-            raise RuntimeError("workflow run lookup failed")
+        # No workflow file on the default branch yet means there is no run.
+        payload = _fetch_json(repo, token, path, missing_ok=True)
+        if payload is None:
+            return []
         batch = payload.get("workflow_runs") or []
         runs.extend(batch)
         if len(batch) < 100:
@@ -196,13 +228,22 @@ def main(argv=None):
     if line == mf.SKIP_LINE:
         print("mutants: not required")
         return 0
-    sha = os.environ.get("GITHUB_SHA", "")
-    if not SHA_RE.fullmatch(sha):
-        print("mutants: head sha missing", file=sys.stderr)
+    number = pr_number(os.environ.get("GITHUB_REF", ""))
+    if not number:
+        print("mutants: pull request ref missing", file=sys.stderr)
         return 1
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
     default_branch = os.environ.get("DEFAULT_BRANCH") or "main"
+    try:
+        pull = _fetch_json(repo, token, "/pulls/" + number)
+    except RuntimeError as err:
+        print("mutants: %s" % err, file=sys.stderr)
+        return 1
+    sha = pull_head_sha(pull)
+    if not sha:
+        print("mutants: head sha missing", file=sys.stderr)
+        return 1
     try:
         runs = _fetch_runs(repo, token, default_branch)
     except RuntimeError as err:

@@ -15,7 +15,14 @@ need() {
   fi
 }
 need .github/workflows/checks.yml 'KEEL_MUTATE_DEFER=1'
-need .github/workflows/checks.yml 'github.event.pull_request.head.sha'
+if grep -q 'github.event.pull_request.head.sha' "$ROOT/.github/workflows/checks.yml"; then
+  echo "gate sha is taken from the workflow expression" >&2
+  fail=1
+fi
+if grep -q 'GITHUB_SHA' "$HERE/mutant-result.py"; then
+  echo "binder reads GITHUB_SHA" >&2
+  fail=1
+fi
 # shellcheck disable=SC2016
 need .github/workflows/mutate-pr.yml 'run-name: mutants ${{ inputs.sha }}'
 need .github/workflows/mutate-pr.yml 'github.event.repository.default_branch'
