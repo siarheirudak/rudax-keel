@@ -6,8 +6,8 @@
 #   RESULT mutate: run <ids>
 # "run" with no ids is the full CI set. A missing base, or a git diff that
 # fails, exits 1 with ERROR: mutate: on stderr.
-# The diff is setup/ and .github/. A mapped target selects its mutants.
-# Any other file under those trees selects the full set.
+# The diff is setup/, .github/, and the gate paths outside those trees.
+# A mapped target selects its mutants. Any other file in the diff selects the full set.
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 SETUP=$(cd "$HERE/../.." && pwd -P)
@@ -55,7 +55,7 @@ mutate_plan() {
     mutate_fail "base ref missing" # missing-base-fails
   fi
   shallow=$(git -C "$repo" rev-parse --is-shallow-repository 2>/dev/null || printf '%s' false)
-  set -- setup .github
+  set -- setup .github scripts/check-gate.sh scripts/gate-jobs.txt scripts/tests/test_gate_jobs.py
   if ! git -C "$repo" diff --name-only "$base"...HEAD -- "$@" >"$namesf" 2>"$errf"; then
     if [ "$shallow" = true ] && git -C "$repo" remote get-url origin >/dev/null 2>&1; then
       GIT_TERMINAL_PROMPT=0 git -C "$repo" fetch -q --deepen=200 --no-tags origin >&2 \
