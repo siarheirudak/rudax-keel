@@ -11,11 +11,11 @@ Commands below are from the repository root.
 | Shell | bash 3.2+ | built-in `/bin/bash` 3.2 is what `setup/lib/portable.sh` targets | untested (WSL2 is the likely path) |
 | git | `sudo apt install git` | `xcode-select --install` (Xcode Command Line Tools), or `brew install git` | |
 | Containers | `sudo apt install docker.io`, then `sudo usermod -aG docker $USER` and log in again (or use `DOCKER="sudo docker"`) | [Docker Desktop](https://www.docker.com/products/docker-desktop/), started, showing "Engine running" | |
-| Disk | 2 GiB free. `DISK-01` fails under 2 GiB, warns from 2 GiB through 9 GiB, and passes at 10 GiB or more | same | |
+| Disk | 2 GiB free for the DISK-01 warning band. `DISK-02` is critical and uses `KEEL_WORK_MIN_FREE` (512 MiB unless you set it). Hard filesystem quotas are optional host setup | same | |
 
 `setup/keel.sh` says Linux is the tested host and that macOS with Docker Desktop has not been run. The `keel-git` image is built from `setup/docker/keel-git.Dockerfile` (Alpine and git, no platform pin), so `docker build` produces a native image. The script accepts `DOCKER=podman` and adds `--userns=keep-id` in that case. The egress network and the proxy have not been verified on Docker Desktop or Podman, and that path is unsupported for now.
 
-The v1 design requires a rootless runtime and will refuse to start without one. This doctor does not refuse yet: a rootful Linux daemon is a warning on ENV-05. [Security](security.md#rootless).
+ENV-05 is critical. On Linux the daemon passes only when `docker info` reports `rootless` in `SecurityOptions`, or when Podman is rootless. Install rootless Docker with `dockerd-rootless-setuptool.sh install`, or use rootless Podman. A rootful Linux daemon makes the doctor not ready. Docker Desktop on a Mac can pass that isolation line because containers run in its Linux VM; that pass does not mean the egress network works there, and Docker Desktop and Podman stay unsupported for egress. A hosted CI machine is often rootful. The harness there still runs the suites, and it accepts the doctor only when ENV-05 is the only critical failure. [Security](security.md#rootless).
 
 ## 2. Run it
 

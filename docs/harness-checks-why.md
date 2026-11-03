@@ -97,15 +97,15 @@ Docker Desktop differences the harness handles:
 
 ### ENV-05 Isolation boundary
 
-**Level.** RECOMMENDED
+**Level.** CRITICAL
 
-**Check.** Where does a container escape land? Rootless Docker or rootless podman: pass. Docker Desktop on macOS or Windows (`OperatingSystem` contains "Docker Desktop"): pass, reported as `Docker Desktop VM`. An escape lands in Docker's Linux VM, not on the host. A rootful daemon on a Linux host: warning.
+**Check.** Where does a container escape land? Docker on Linux passes only when `SecurityOptions` contains the option `rootless`. Podman passes only when `Host.Security.Rootless` is true. Docker Desktop on Darwin passes as an isolation boundary: an escape lands in the Desktop VM, not on the Mac. That pass does not mean egress or the rest of the harness works there. Docker Desktop on Linux stays a warning. A rootful Linux daemon fails. The socket path is not used. User-namespace remapping without `rootless` fails. `DOCKER_HOST` and the docker context are chosen by the owner; a stand-in daemon that prints `rootless` is an owner mistake, not something a role can set.
 
-**Why.** With a rootful daemon, a container escape gives root on the host. This is the most serious residual risk. The v1 design makes rootless Docker or rootless Podman mandatory: a startup check will refuse to run when it is missing. That check is not in this doctor. Today this line stays RECOMMENDED, so a rootful Linux daemon warns and the harness still starts. See [Security](security.md#rootless).
+**Why.** With a rootful daemon, a container escape gives root on the host. Rootless shrinks that blast radius. It does not fix a kernel bug. See [Security](security.md#rootless).
 
-**If it fails.** Warning. The harness still works, but a kernel or runtime bug becomes a host-root bug.
+**If it fails.** FAIL. The verdict is not ready. A hosted CI runner is often rootful; the harness there accepts the doctor only when this is the only critical failure. There is no environment switch that turns the failure into a pass.
 
-**How to fix.** Install rootless Docker (`dockerd-rootless-setuptool.sh install`) or podman. On a systemd host, enable cgroup delegation so `--pids-limit`, `--memory`, and `--cpus` work.
+**How to fix.** Install rootless Docker (`dockerd-rootless-setuptool.sh install`) or rootless Podman. On a systemd host, enable cgroup delegation so `--pids-limit`, `--memory`, and `--cpus` work.
 
 <a id="env-06"></a>
 
@@ -232,6 +232,34 @@ Docker Desktop differences the harness handles:
 **If it fails.** Warn or fail (not critical, so the verdict can still be READY WITH WARNINGS).
 
 **How to fix.** Free space, or put `KEEL_ROOT` on its own filesystem or quota.
+
+<a id="disk-02"></a>
+
+### DISK-02 Work free space
+
+**Level.** CRITICAL
+
+**Check.** Free bytes under `KEEL_ROOT` are at least `KEEL_WORK_MIN_FREE` (512 MiB unless that name is set). This is separate from DISK-01. A warning on DISK-01 does not fail this line, and this line does not repeat DISK-01's 2 GiB and 10 GiB bands.
+
+**Why.** Writable mounts have no hard project quota. The soft check is the refuse path the CI host can actually run. An XFS project quota or a ZFS dataset is optional host setup, not something this repository requires.
+
+**If it fails.** FAIL. `setup` and `role` also refuse.
+
+**How to fix.** Free space under `KEEL_ROOT`, or lower `KEEL_WORK_MIN_FREE` only if you accept the smaller margin.
+
+<a id="chr-01"></a>
+
+### CHR-01 Chromium sandbox argv
+
+**Level.** CRITICAL when Playwright or a Chromium binary is installed, otherwise recommended.
+
+**Check.** `setup/chrome/chromium-argv.sh` refuses `--no-sandbox` and `--disable-setuid-sandbox`. No browser is started. If those tools are absent, the line passes and says they are required before the QA browser step.
+
+**Why.** Those flags turn the sandbox off. A real Chromium run under rootless, including a seccomp profile, is the QA step, not this check.
+
+**If it fails.** FAIL when the tool is installed. Otherwise a warning only if the helper itself accepts a disable flag.
+
+**How to fix.** Keep the refuse in `setup/chrome/chromium-argv.sh`.
 
 ## Egress checks
 

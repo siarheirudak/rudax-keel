@@ -62,16 +62,26 @@ The proxy does not intercept TLS, so it does not read SNI inside an allowed tunn
 
 How the roles differ, and the allowlist grammar, are in [Roles and visibility](roles.md#network).
 
+### Runtime boundary
+
+Implemented in `setup/lib/runtime.sh`, `setup/keel-doctor.sh`, and `setup/chrome/`.
+
+ENV-05 is critical. Linux passes when `SecurityOptions` contains `rootless`, or when Podman reports rootless. Docker Desktop on Darwin is an isolation pass only. Egress on Docker Desktop and Podman stays unsupported. A rootful Linux daemon is not ready. The socket path is not the signal. User-namespace remapping without `rootless` does not pass.
+
+A hosted CI runner is often rootful. That job still runs the container suites. It accepts the live doctor only when ENV-05 is the only critical failure. The refuse and pass paths for that classification are proven with fixture files through `setup/tests/harness/runtime-stub.sh`. The doctor and `setup/keel.sh` do not read a fixture from the environment.
+
+DISK-02 is the soft free-space check. Hard filesystem quotas are optional on the host. There is no separate OS account for secrets in this step. The Chromium helper refuses sandbox-off flags and does not start a browser.
+
 ## Specified and not built
 
-The v1 build is a sequence of steps. Each one is intended to land as its own pull request, opened by the bot, and merged by the owner. Process-file and skill changes land as separate pull requests labelled `process-files`, after the owner approves them. Step 1’s folder mounts and Step 2’s developer egress proxy are in the harness. The later steps below are not started. The Step 7 design (dispatcher and warm orchestrator) is in [Harness design](harness/README.md).
+The v1 build is a sequence of steps. Each one is intended to land as its own pull request, opened by the bot, and merged by the owner. Process-file and skill changes land as separate pull requests labelled `process-files`, after the owner approves them. Step 1’s folder mounts, Step 2’s developer egress proxy, and the runtime boundary below are in the harness. The later steps in the table are not started. The Step 7 design (dispatcher and warm orchestrator) is in [Harness design](harness/README.md).
 
 The order is the dependency order from the v1 plan. Steps later in the list need earlier ones. Parallel reading is fine. Parallel merging still has to respect the dependencies.
 
 | Step | What it adds | Depends on |
 |---|---|---|
 | 1 | Folder allowlists, unified deny, tester pinned to the setup commit, launch JSONL. Content fencing stays on the backlog | The harness that exists |
-| 3 | Rootless as a hard startup failure, plus the rest of the v1 container limits, including a work-directory quota and a separate user for secrets. Playwright checked on the host. Chromium’s sandbox left on | Steps 1 and 2 |
+| 3 remainder | A separate OS account for secret files, and a Chromium process running under rootless | The runtime boundary above; the QA step for the browser |
 | 4 | L1 context packaging | Step 1 |
 | 5 | The discoveries store and the accept-or-discard filter | Step 4 |
 | 6 | `standards/rules.md` and the generator for per-role views | The rule text, which is an input, not code in this repo |
