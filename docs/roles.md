@@ -47,7 +47,7 @@ Product tests live in `tests/` today. The developer can read that directory and 
 
 ## Network
 
-A role is not started when the launching environment contains a denylisted secret name. The container does not receive the host environment. See [Tokens](security.md#tokens).
+A role is not started when the launching environment contains a denylisted secret name, or when free space under `KEEL_ROOT` is below `KEEL_WORK_MIN_FREE`. The container does not receive the host environment. The same runtime check applies to every role. See [Tokens](security.md#tokens).
 
 The harness runs one forward proxy and one internal Docker network, `keel-egress`. `setup/keel.sh egress-up` creates that network with `--internal` and `--ipv6=false`, starts the CI mock on it, and starts the proxy. The proxy is the only container also attached to a second network that can route outward. Roles do not get a route of their own.
 
