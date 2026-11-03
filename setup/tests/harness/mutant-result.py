@@ -168,6 +168,9 @@ def _fetch_runs(repo, token, default_branch):
             with urllib.request.urlopen(req, timeout=30) as resp:
                 payload = json.load(resp)
         except urllib.error.HTTPError as err:
+            # The workflow file is not on the default branch yet, so there is no run.
+            if err.code == 404:
+                return []
             raise RuntimeError("workflow run lookup failed (%s)" % err.code)
         except urllib.error.URLError:
             raise RuntimeError("workflow run lookup failed")
