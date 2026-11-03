@@ -4,7 +4,7 @@
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 SETUP=$(cd "$HERE/../.." && pwd -P)
-K=$SETUP/keel.sh
+K=$HERE/harness-keel.sh
 # shellcheck source=setup/lib/portable.sh
 . "$SETUP/lib/portable.sh"
 export KEEL_ROOT=${KEEL_ROOT:-$HOME/keel-proto}

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016  # agent commands are single-quoted on purpose: they expand inside the container, not on the host
 # Attack tests. Run: DOCKER="sudo docker" ./test-attacks.sh
-set -u; HERE=$(cd "$(dirname "$0")" && pwd -P); SETUP=$(cd "$HERE/../.." && pwd -P); K="$SETUP/keel.sh"; # shellcheck source=setup/lib/portable.sh
+set -u; HERE=$(cd "$(dirname "$0")" && pwd -P); SETUP=$(cd "$HERE/../.." && pwd -P); K="$HERE/harness-keel.sh"; # shellcheck source=setup/lib/portable.sh
 . "$SETUP/lib/portable.sh"; export KEEL_ROOT=${KEEL_ROOT:-$HOME/keel-proto}; P=$KEEL_ROOT
 R=$P/repo W=$P/work/task-1 S=$P/shadow/task-1.git; D=${DOCKER:-docker}
 unset GH_TOKEN GITHUB_TOKEN BOT_GH_TOKEN GITHUB_PAT AWS_SECRET_ACCESS_KEY AWS_ACCESS_KEY_ID API_KEY API_TOKEN NPM_TOKEN PYPI_TOKEN PASSWORD OPENAI_API_KEY KEEL_SECRET ANTHROPIC_API_KEY GEMINI_API_KEY GOOGLE_API_KEY OPENROUTER_API_KEY || true
@@ -25,6 +25,7 @@ else
   res MODE-A1 "NOT BLOCKED"
 fi
 rm -rf "$mode_fix"
+bash "$HERE/test-runtime.sh" || true
 fresh(){ rm -rf "$P"; $K init-repo >/dev/null; $K setup >/dev/null; }
 h3_diag(){
   echo "  H3 diag:"
@@ -59,15 +60,20 @@ EOF
   rc=$?
   set +e
   oom=unknown
+  swap_pin=unknown
   if [ -s "$cidf" ]; then
     cid=$(cat "$cidf")
     oom=$($D inspect -f '{{.State.OOMKilled}}' "$cid" 2>/dev/null || echo gone)
+    mem=$($D inspect -f '{{.HostConfig.Memory}}' "$cid" 2>/dev/null || echo 0)
+    swp=$($D inspect -f '{{.HostConfig.MemorySwap}}' "$cid" 2>/dev/null || echo 0)
+    if [ "$mem" -gt 0 ] 2>/dev/null && [ "$swp" = "$mem" ]; then swap_pin=present; else swap_pin=absent; fi
     $D rm -f "$cid" >/dev/null 2>&1 || true
   fi
   rm -f "$cidf" "$W/h3-alloc.sh"
   echo "  docker-rc=$rc oom=$oom"
   echo "$out"
-  verdict=$(h3_verdict "$out" "$rc" "$oom" "$bytes")
+  verdict=$(h3_verdict "$out
+swap-pin=$swap_pin" "$rc" "$oom" "$bytes")
   res H3 "$verdict"
   case $verdict in
     CONTAINED*) return 0;;

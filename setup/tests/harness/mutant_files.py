@@ -85,6 +85,18 @@ FILES = {
     "M77": ["setup/lib/egress.sh"],
     "M78": ["setup/tests/harness/attack-results.sh"],
     "M79": ["setup/check.sh"],
+    "M80": ["setup/lib/runtime.sh"],
+    "M81": ["setup/lib/runtime.sh"],
+    "M82": ["setup/keel.sh"],
+    "M83": ["setup/keel.sh"],
+    "M84": ["setup/keel.sh"],
+    "M85": ["setup/keel.sh"],
+    "M86": ["setup/lib/runtime.sh"],
+    "M87": ["setup/lib/runtime.sh"],
+    "M88": ["setup/lib/runtime.sh"],
+    "M89": ["setup/keel-doctor.sh"],
+    "M90": ["setup/tests/harness/doctor-score.sh"],
+    "M91": ["setup/keel.sh"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -127,6 +139,18 @@ CI_IDS = [
     "M77",
     "M78",
     "M79",
+    "M80",
+    "M81",
+    "M82",
+    "M83",
+    "M84",
+    "M85",
+    "M86",
+    "M87",
+    "M88",
+    "M89",
+    "M90",
+    "M91",
 ]
 
 # A change to one of these files selects only the CI mutants mapped to it.
@@ -138,7 +162,20 @@ TARGET_ONLY = frozenset((
     "setup/lib/egress.py",
     "setup/lib/egress_proxy.py",
     "setup/tests/harness/attack-results.sh",
+    "setup/lib/runtime.sh",
+    "setup/tests/harness/doctor-score.sh",
 ))
+
+# Fixture files and the oracles for R-H1, R-A1, and R-A8.
+# A change here runs the full CI set.
+ORACLE_FILES = (
+    "setup/tests/harness/fixtures/runtime-rootless.info",
+    "setup/tests/harness/fixtures/runtime-rootful.info",
+    "setup/tests/harness/fixtures/runtime-userns.info",
+    "setup/tests/harness/test-runtime.sh",
+    "setup/tests/harness/runtime-stub.sh",
+    "setup/tests/harness/harness-keel.sh",
+)
 
 # Selector files. Covered by the setup/ and .github/ rule; kept so a test can name them.
 TRIGGERS = [

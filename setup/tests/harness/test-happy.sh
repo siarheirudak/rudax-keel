@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Happy path: steps 0-5,7. Run: DOCKER="sudo docker" ./test-happy.sh
-set -u; HERE=$(cd "$(dirname "$0")" && pwd -P); SETUP=$(cd "$HERE/../.." && pwd -P); K="$SETUP/keel.sh"; # shellcheck source=setup/lib/portable.sh
+set -u; HERE=$(cd "$(dirname "$0")" && pwd -P); SETUP=$(cd "$HERE/../.." && pwd -P); K="$HERE/harness-keel.sh"; # shellcheck source=setup/lib/portable.sh
 . "$SETUP/lib/portable.sh"; export KEEL_ROOT=${KEEL_ROOT:-$HOME/keel-proto}
 echo "### script modes"
 if ! mode_out=$(bash "$SETUP/check.sh" 2>&1); then
@@ -20,6 +20,7 @@ if printf '%s\n' "$mode_list" | grep -qx 'setup/tests/harness/h3-verdict.sh' || 
   exit 1
 fi
 echo "RESULT MODE-H1: BLOCKED (directly executed scripts are 100755)"
+bash "$HERE/test-runtime.sh" --happy || exit 1
 rm -rf "$KEEL_ROOT"; echo "### step0"; $K init-repo
 echo "### step1 setup"; $K setup; echo "pointer mode: $($K mode)"
 echo "### step2 role A (coder) commits"; $K proto coder rw 'echo feature > feature.txt && git add feature.txt && git commit -qm "A: feature" && git log --oneline -2'

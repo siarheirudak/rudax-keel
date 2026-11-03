@@ -41,7 +41,10 @@ case "$DOCKER" in *podman*) HARDEN+=(--userns=keep-id);; esac
 GITENV=(-e HOME=/tmp -e "GIT_CONFIG_PARAMETERS='core.hooksPath'='/dev/null' 'core.fsmonitor'='false'"
   -e GIT_AUTHOR_NAME=agent -e GIT_AUTHOR_EMAIL=a@x -e GIT_COMMITTER_NAME=agent -e GIT_COMMITTER_EMAIL=a@x)
 hgit(){ env -i PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin HOME="$P/.gatehome" GIT_CONFIG_NOSYSTEM=1 git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.pager=cat -c protocol.allow=never -c protocol.file.allow=always "$@"; }
+# shellcheck disable=SC2119
+launch_guard(){ keel_require_runtime || exit $?; } # launch-guard
 crun(){
+  launch_guard
   local a harden=()
   if [ -n "${KEEL_CIDFILE:-}" ]; then
     for a in "${HARDEN[@]}"; do
@@ -128,9 +131,11 @@ reset_shadow(){ # plain file ops only, never git on host against the shadow; nev
     printf '[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n' > "$S/config" &&
     echo /base/objects > "$S/objects/info/alternates" ) || { echo "REFUSED: could not rewrite shadow control files" >&2; exit 8; }; }
 tasks_active(){ ls -d "$P"/work/*/ >/dev/null 2>&1; }
-need_docker(){ $DOCKER info >/dev/null 2>&1 || { docker_hint >&2; exit 5; }; }
+# shellcheck source=setup/lib/runtime.sh
+. "$HERE/lib/runtime.sh"
+need_docker(){ $DOCKER info >/dev/null 2>&1 || { docker_hint >&2; exit 5; }; keel_disk_ok "$P" || { printf 'REFUSE\truntime\tdisk\t0\n' >&2; exit 1; }; }
 case "${1:-}" in
-egress-up) need_docker; egress_proxy_up;;
+egress-up) launch_guard; need_docker; egress_proxy_up;;
 init-repo) mkdir -p "$R" "$P/.gatehome"; cd "$R" || exit 1; git init -q; git symbolic-ref HEAD refs/heads/main
   git config gc.auto 0; git config maintenance.auto false; git config gc.pruneExpire never; git config gc.reflogExpireUnreachable never
   printf '#!/bin/sh\nset -e\ngrep -q hello app.txt && echo TESTS-OK\n' > test.sh; echo hello > app.txt; mkdir -p .github; echo ci > .github/ci.yml; echo rules > AGENTS.md
@@ -143,7 +148,7 @@ init-repo) mkdir -p "$R" "$P/.gatehome"; cd "$R" || exit 1; git init -q; git sym
     : > "$rel/.keep"
   done
   git add -A; git -c user.name=h -c user.email=h@x commit -qm init; echo "repo main=$(git rev-parse main) gc.auto=$(git config gc.auto) gc.pruneExpire=$(git config gc.pruneExpire)";;
-setup) need_docker; M=$(git -C "$R" rev-parse main); mkdir -p "$W" "$B" "$(dirname "$S")"
+setup) launch_guard; need_docker; M=$(git -C "$R" rev-parse main); mkdir -p "$W" "$B" "$(dirname "$S")"
   git init -q --bare "$S"; reset_shadow; echo "$M" > "$P/$T.base"
   printf 'gitdir: /shadow/%s.git\n' "$T" > "$W/.git"
   want=${KEEL_POINTER_MODE:-auto}; md='env'
@@ -160,7 +165,7 @@ setup) need_docker; M=$(git -C "$R" rev-parse main); mkdir -p "$W" "$B" "$(dirna
   echo "mode=$md";;
 mode) mode;;
 reset-shadow) reset_shadow; echo "shadow reset";;
-proto) shift; name=$1 m=$2; shift 2; reset_shadow
+proto) launch_guard; shift; name=$1 m=$2; shift 2; reset_shadow
   echo "== role $name ($m) [shadow reset, mode=$(mode)]"; work_mounts "$m"
   use_none=1  # proto-network-none
   if [ "$use_none" = 1 ]; then
@@ -173,24 +178,25 @@ proto) shift; name=$1 m=$2; shift 2; reset_shadow
       if [ "$a" = "--network" ]; then skip=1; continue; fi
       args+=("$a")
     done
+    launch_guard
     $DOCKER run "${args[@]}" "${GITENV[@]}" -v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c "$*"
   fi;;
-proto-env) shift; WE=$P/work/$T-env; mkdir -p "$WE"; reset_shadow
+proto-env) launch_guard; shift; WE=$P/work/$T-env; mkdir -p "$WE"; reset_shadow
   crun -e "GIT_DIR=/shadow/$T.git" -e GIT_WORK_TREE=/work -v "$R/.git/objects:/base/objects:ro" -v "$WE:/work" -v "$S:/shadow/$T.git" -w /work "$IMG" sh -c "$*";;
-role) shift; name=$1; shift
+role) launch_guard; shift; name=$1; shift
   if [ "${1:-}" = rw ] || [ "${1:-}" = ro ]; then shift; fi
   start_role "$name" "$@" || exit $?;;
-role-env) shift
+role-env) launch_guard; shift
   if [ "$#" -lt 2 ]; then
     python3 "$HERE/lib/visibility.py" refuse --code role_env_args --role "" --work "$W" --harness "$HERE" --keel "$P" --task "$T" --repo "$R" --file role-env --line 0
     exit 1
   fi
   name=$1; shift
   start_role "$name" "$@" || exit $?;;
-export) M=$(cat "$P/$T.base"); rm -f "$B/$T.bundle"; reset_shadow
+export) launch_guard; M=$(cat "$P/$T.base"); rm -f "$B/$T.bundle"; reset_shadow
   crun -v "$R/.git/objects:/base/objects:ro" -v "$S:/shadow/$T.git:ro" -v "$B:/bundles" "$IMG" \
     git --git-dir="/shadow/$T.git" bundle create "/bundles/$T.bundle" "refs/heads/$T" "^$M";;
-gate) F=$B/$T.bundle; M=$(git -C "$R" rev-parse main); I=refs/keel/incoming/$T
+gate) launch_guard; F=$B/$T.bundle; M=$(git -C "$R" rev-parse main); I=refs/keel/incoming/$T
   fail(){ echo "GATE FAIL: $*"; rm -rf "$G"; exit 1; }
   mkdir -p "$P/.gatehome" "$P/gate"; [ -f "$F" ] || fail "no bundle"
   bad=$(find "$P/work" "$P/shadow" "$B" ! -user "$(id -u)" 2>/dev/null | head -3)
@@ -261,6 +267,7 @@ gate) F=$B/$T.bundle; M=$(git -C "$R" rev-parse main); I=refs/keel/incoming/$T
   TD=$(mktemp -d "$P/.gatehome/src.XXXXXX"); TE=$(mktemp -d "$P/.gatehome/entry.XXXXXX")
   hgit -C "$G" archive "$I" | tar -x --no-same-owner -C "$TD"
   hgit -C "$G" show "main:$TEST_ENTRY" > "$TE/entry.sh" || { rm -rf "$TD" "$TE"; fail "no $TEST_ENTRY on main"; }
+  launch_guard
   $DOCKER run "${HARDEN[@]}" -e HOME=/tmp -v "$TD:/src:ro" -v "$TE:/keel-entry:ro" -w /src "$IMG" sh /keel-entry/entry.sh || { rm -rf "$TD" "$TE"; fail "tests (main:$TEST_ENTRY)"; }
   rm -rf "$TD" "$TE"; echo "GATE PASS: $(hgit -C "$G" rev-parse "$I") files=$nf lines=$lines (objects held in $G)";;
 push-stub) I=$(hgit -C "$G" rev-parse "refs/keel/incoming/$T") || exit 1

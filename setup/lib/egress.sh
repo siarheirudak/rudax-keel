@@ -68,6 +68,7 @@ egress_proxy_up() {
     egress_network_create "$EGRESS_OUT" false || { egress_refuse developer "" 0 egress_network; return 1; }
   fi
   mkdir -p "$P/.keel/logs"
+  launch_guard
   if [ "$($DOCKER inspect -f '{{.State.Running}}' "$MOCK_NAME" 2>/dev/null || echo false)" != true ]; then
     $DOCKER rm -f "$MOCK_NAME" >/dev/null 2>&1 || true
     $DOCKER run -d --name "$MOCK_NAME" --network "$EGRESS_NET" --network-alias keel-mock --network-alias keel-secret \
@@ -127,6 +128,7 @@ crun_for() {
     fi
     args+=(-e HTTP_PROXY=http://keel-proxy:3128 -e HTTPS_PROXY=http://keel-proxy:3128)
     args+=(-e http_proxy=http://keel-proxy:3128 -e https_proxy=http://keel-proxy:3128)
+    launch_guard
     $DOCKER run "${args[@]}" "${GITENV[@]}" "$@"  # role-env-explicit
     return $?
   fi
@@ -137,5 +139,6 @@ crun_for() {
     if [ "$a" = "--network" ]; then skip=1; continue; fi
     args+=("$a")
   done
+  launch_guard
   $DOCKER run "${args[@]}" "${GITENV[@]}" "$@"
 }

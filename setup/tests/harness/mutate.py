@@ -88,6 +88,18 @@ M = {
  'M77': ('lib/egress.sh', '$DOCKER run "${args[@]}" "${GITENV[@]}" "$@"  # role-env-explicit', '$DOCKER run "${args[@]}" "${GITENV[@]}" -e "GH_TOKEN=${GH_TOKEN:-}" -e "GITHUB_TOKEN=${GITHUB_TOKEN:-}" -e "KEEL_SECRET=${KEEL_SECRET:-}" "$@"  # role-env-explicit', 'role container receives secret names', ['S-H1']),
  'M78': ('tests/harness/attack-results.sh', 'NOT BLOCKED|', '', 'treat NOT BLOCKED as pass', ['CHK-1']),
  'M79': ('check.sh', 'mode_check=1 # script-mode', 'mode_check=0 # script-mode', 'script mode check disabled', ['MODE-A1']),
+ 'M80': ('lib/runtime.sh', 'rootless_token=0 # rootless-token', 'rootless_token=1 # rootless-token', 'classify every daemon as rootless', ['R-A1']),
+ 'M81': ('lib/runtime.sh', 'launch_refuse=1 # runtime-refuse', 'launch_refuse=0 # runtime-refuse', 'skip the rootful launch refuse', ['R-A1']),
+ 'M82': (K, '--cap-drop ALL ', '', 'drop cap-drop ALL', ['H1']),
+ 'M83': (K, '--security-opt no-new-privileges\n', '\n', 'drop no-new-privileges', ['H1']),
+ 'M84': (K, '  --read-only --tmpfs', '  --tmpfs', 'drop read-only', ['H4']),
+ 'M85': (K, '--memory-swap "${MEM:-512m}" ', '', 'drop the swap pin', ['H3']),
+ 'M86': ('lib/runtime.sh', 'disk_gate=1 # disk-gate', 'disk_gate=0 # disk-gate', 'skip the free-space gate', ['R-A4']),
+ 'M87': ('lib/runtime.sh', 'sandbox_flags=1 # chromium-sandbox', 'sandbox_flags=0 # chromium-sandbox', 'allow sandbox-off chromium argv', ['R-A5']),
+ 'M88': ('lib/runtime.sh', 'userns_is_rootless=0 # userns-not-rootless', 'userns_is_rootless=1 # userns-not-rootless', 'treat userns remap as rootless', ['R-A7']),
+ 'M89': ('keel-doctor.sh', 'env05_level=CRITICAL # env05-level', 'env05_level=RECOMMENDED # env05-level', 'downgrade the isolation check', ['R-A1']),
+ 'M90': ('tests/harness/doctor-score.sh', 'score_exact=1 # doctor-score-exact', 'score_exact=0 # doctor-score-exact', 'accept any not-ready doctor', ['R-A8']),
+ 'M91': (K, 'launch_guard(){ keel_require_runtime || exit $?; } # launch-guard', 'launch_guard(){ return 0; } # launch-guard', 'drop the launch runtime check', ['R-A9']),
 }
 M['M15'] = (K, M['M13'][1], M['M13'][2], M['M15'][3], M['M15'][4])  # applied together with M14 below
 GREEN = re.compile(r'^(BLOCKED|CONTAINED|PARTIAL|N/A)')
@@ -116,6 +128,14 @@ def run(mid):
     shutil.copy2(os.path.join(HARNESS, 'visibility-suite.sh'), os.path.join(src, 'tests', 'harness', 'visibility-suite.sh'))
     shutil.copy2(os.path.join(HARNESS, 'attack-results.sh'), os.path.join(src, 'tests', 'harness', 'attack-results.sh'))
     shutil.copy2(os.path.join(HARNESS, 'test-attack-results.sh'), os.path.join(src, 'tests', 'harness', 'test-attack-results.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'test-runtime.sh'), os.path.join(src, 'tests', 'harness', 'test-runtime.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'runtime-stub.sh'), os.path.join(src, 'tests', 'harness', 'runtime-stub.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'harness-keel.sh'), os.path.join(src, 'tests', 'harness', 'harness-keel.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'doctor-score.sh'), os.path.join(src, 'tests', 'harness', 'doctor-score.sh'))
+    shutil.copy2(os.path.join(SETUP, 'keel-doctor.sh'), os.path.join(src, 'keel-doctor.sh'))
+    os.makedirs(os.path.join(src, 'chrome'), exist_ok=True)
+    shutil.copy2(os.path.join(SETUP, 'chrome', 'chromium-argv.sh'), os.path.join(src, 'chrome', 'chromium-argv.sh'))
+    shutil.copytree(os.path.join(HARNESS, 'fixtures'), os.path.join(src, 'tests', 'harness', 'fixtures'))
     p = os.path.join(src, f); s = open(p).read()
     edits = [(old, new)] + list(M[mid][5] if len(M[mid]) > 5 else []) + ([(M['M14'][1], M['M14'][2])] if mid == 'M15' else [])
     env = dict(os.environ, KEEL_ROOT=os.path.join(d, 'k'), KEEL_NS=mid)
@@ -126,7 +146,12 @@ def run(mid):
             s = s.replace(o, n)
         open(p, 'w').write(s)
         try:
-            script = 'test-attack-results.sh' if mid == 'M78' else 'test-attacks.sh'
+            if mid == 'M78':
+                script = 'test-attack-results.sh'
+            elif mid in ('M80', 'M81', 'M86', 'M87', 'M88', 'M89', 'M90', 'M91'):
+                script = 'test-runtime.sh'
+            else:
+                script = 'test-attacks.sh'
             out = subprocess.run(['bash', os.path.join(src, 'tests', 'harness', script)], env=env, capture_output=True, text=True, timeout=900).stdout
         except subprocess.TimeoutExpired:
             return mid, what, exp, None, 'timeout'
