@@ -128,7 +128,9 @@ reset_shadow(){ # plain file ops only, never git on host against the shadow; nev
     printf '[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n' > "$S/config" &&
     echo /base/objects > "$S/objects/info/alternates" ) || { echo "REFUSED: could not rewrite shadow control files" >&2; exit 8; }; }
 tasks_active(){ ls -d "$P"/work/*/ >/dev/null 2>&1; }
-need_docker(){ $DOCKER info >/dev/null 2>&1 || { docker_hint >&2; exit 5; }; }
+# shellcheck source=setup/lib/runtime.sh
+. "$HERE/lib/runtime.sh"
+need_docker(){ $DOCKER info >/dev/null 2>&1 || { docker_hint >&2; exit 5; }; keel_disk_ok "$P" || { printf 'REFUSE\truntime\tdisk\t0\n' >&2; exit 1; }; }
 case "${1:-}" in
 egress-up) need_docker; egress_proxy_up;;
 init-repo) mkdir -p "$R" "$P/.gatehome"; cd "$R" || exit 1; git init -q; git symbolic-ref HEAD refs/heads/main

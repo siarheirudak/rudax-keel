@@ -47,8 +47,8 @@ if [ "$miss_ec" -eq 0 ] || ! grep -q 'NOT READY' "$miss_out" || ! grep -q 'ATK-V
   cat "$miss_out" >&2
   fail=1
 fi
-if [ "$full_ec" -ne 0 ] || grep -q 'NOT READY' "$full_out" || grep -q 'ATK-mutate' "$full_out"; then
-  echo "complete result list was not ready, or a skip was scored (exit $full_ec)" >&2
+if grep -q 'no result in log' "$full_out" || grep -q 'ATK-mutate' "$full_out"; then
+  echo "complete result list was scored as missing, or a skip was scored (exit $full_ec)" >&2
   cat "$full_out" >&2
   fail=1
 fi

@@ -43,22 +43,24 @@ if [ -z "$gv" ]; then check ENV-02 CRITICAL fail "git" "not on PATH$(is_darwin &
 elif ver_ge "$gv" 2.30; then check ENV-02 CRITICAL pass "git" "$gv"
 else check ENV-02 CRITICAL warn "git" "$gv is old; tested with 2.45-2.47"; fi
 
-dcli=${DOCKER##* }; DOK=0; DESKTOP=0
+dcli=${DOCKER##* }; DOK=0
 if ! command -v "$dcli" >/dev/null 2>&1; then
   check ENV-03 CRITICAL fail "container CLI" "'$dcli' not on PATH$(is_darwin && echo '; install Docker Desktop')"
 else check ENV-03 CRITICAL pass "container CLI" "$($DOCKER --version 2>/dev/null | head -1)"; DOK=1; fi
 
 if [ $DOK = 1 ] && info=$($DOCKER info --format '{{.ServerVersion}}|{{.OperatingSystem}}|{{.Architecture}}|{{json .SecurityOptions}}|{{.CgroupVersion}}' 2>/dev/null); then
   sv=$(echo "$info" | cut -d'|' -f1); dos=$(echo "$info" | cut -d'|' -f2); darch=$(echo "$info" | cut -d'|' -f3)
-  case $dos in *[Dd]ocker\ [Dd]esktop*) DESKTOP=1;; esac
   check ENV-04 CRITICAL pass "daemon running" "server $sv on '$dos' ($darch)"
-  if [ "$dcli" = podman ]; then rl=$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null)
-    if [ "$rl" = true ]; then check ENV-05 RECOMMENDED pass "isolation boundary" "podman rootless"; else check ENV-05 RECOMMENDED warn "isolation boundary" "podman runs as root; a container escape = host root"; fi
-  elif [ $DESKTOP = 1 ]; then
-    if is_darwin || [ "$os" != Linux ]; then check ENV-05 RECOMMENDED pass "isolation boundary" "Docker Desktop VM: containers run inside a Linux VM, an escape lands in the VM, not on the host"
-    else check ENV-05 RECOMMENDED warn "isolation boundary" "Docker Desktop for Linux VM (untested)"; fi
-  elif echo "$info" | grep -q rootless; then check ENV-05 RECOMMENDED pass "isolation boundary" "rootless Docker"
-  else check ENV-05 RECOMMENDED warn "isolation boundary" "daemon runs as root on this host; a container escape = host root"; fi
+  # shellcheck source=setup/lib/runtime.sh
+  . "$HERE/lib/runtime.sh"
+  env05_level=CRITICAL # env05-level
+  cls_ec=0
+  cls=$(keel_classify_runtime) || cls_ec=$?
+  case $cls_ec in
+    0) check ENV-05 "$env05_level" pass "isolation boundary" "$cls";;
+    2) check ENV-05 RECOMMENDED warn "isolation boundary" "$cls (untested; not an egress pass)";;
+    *) check ENV-05 "$env05_level" fail "isolation boundary" "$cls; a container escape on a rootful daemon is host root";;
+  esac
   if iarch=$($DOCKER image inspect --format '{{.Architecture}}' keel-git 2>/dev/null || $DOCKER image inspect --format '{{.Architecture}}' localhost/keel-git 2>/dev/null); then
     na=$darch; case $na in x86_64) na=amd64;; aarch64) na=arm64;; esac
     if [ "$iarch" = "$na" ]; then check ENV-06 RECOMMENDED pass "image keel-git" "present, $iarch (native)"; else check ENV-06 RECOMMENDED warn "image keel-git" "arch $iarch, daemon is $darch (emulated, slow); rebuild: $DOCKER build -t keel-git -f $HERE/docker/keel-git.Dockerfile $HERE/docker"; fi
@@ -149,9 +151,25 @@ free=$(free_gib "$dir")
 if [ "$free" -ge 10 ]; then check DISK-01 RECOMMENDED pass "free disk" "${free} GiB at $dir"
 elif [ "$free" -ge 2 ]; then check DISK-01 RECOMMENDED warn "free disk" "${free} GiB at $dir (< 10 GiB)"
 else check DISK-01 RECOMMENDED fail "free disk" "${free} GiB at $dir (< 2 GiB)"; fi
+# shellcheck source=setup/lib/runtime.sh
+. "$HERE/lib/runtime.sh"
+if keel_disk_ok "$dir"; then check DISK-02 CRITICAL pass "work free space" "at least the configured minimum"
+else check DISK-02 CRITICAL fail "work free space" "below the configured minimum"; fi
+if command -v playwright >/dev/null 2>&1 || command -v chromium >/dev/null 2>&1 || command -v google-chrome >/dev/null 2>&1 || [ "${KEEL_PLAYWRIGHT:-}" = 1 ]; then
+  chr_level=CRITICAL
+  chr_detail="disable flags refused"
+else
+  chr_level=RECOMMENDED
+  chr_detail="not installed; required before the QA browser step"
+fi
+if bash "$HERE/chrome/chromium-argv.sh" --version >/dev/null 2>&1; then
+  check CHR-01 "$chr_level" pass "chromium sandbox argv" "$chr_detail"
+else
+  check CHR-01 "$chr_level" fail "chromium sandbox argv" "sandbox disable flag was accepted"
+fi
 
 # attack id -> human name (bash 3.2: no associative arrays)
-ATK_IDS="N1 N2 A1 A2 A3 A12 A12b A4 A4b A4c A5 A6 A6b A6c A7 A7b A8 A8b A9 A10 A10b A11 A11-detect A13 A14 A15 A16 A17 A17b A17c A18 A18b A19 A19b A20 A21 A22 A22b H1 H2 H3 H4 H5 V-H9 V-H1 V-A2 V-A10-hardlink V-A20 V-H3 V-A1 V-A15 V-A25 V-A24b V-A16 V-H2 V-H5 V-A5 V-H6 V-H7 V-A27 V-H4 V-A6 V-A23 V-A28 V-A25b V-A11 V-A25c V-A17 V-A18 V-H6b V-A12 V-A7 V-A8 V-A24 V-A29 V-A30 V-A31 V-H8 V-LOG V-A13 V-A14 V-A4 V-A21 V-A22 V-A19 V-A3 V-A3b V-A26 V-A32 V-PARSE V-RO V-RUNS E-H1 E-H2 E-H3 E-H4 E-H5 E-H6 E-A1 E-A2 E-A3 E-A4 E-A5 E-A6 E-A7 E-A8 E-A9 E-A10 E-A11 E-A12 E-A13 E-A14 E-A15 E-A16 E-A17 S-H1 S-A1 S-A2 S-A3 S-A4 SEC-H1 SEC-03 SEC-04 SEC-05 MODE-A1"
+ATK_IDS="N1 N2 A1 A2 A3 A12 A12b A4 A4b A4c A5 A6 A6b A6c A7 A7b A8 A8b A9 A10 A10b A11 A11-detect A13 A14 A15 A16 A17 A17b A17c A18 A18b A19 A19b A20 A21 A22 A22b H1 H2 H3 H4 H5 V-H9 V-H1 V-A2 V-A10-hardlink V-A20 V-H3 V-A1 V-A15 V-A25 V-A24b V-A16 V-H2 V-H5 V-A5 V-H6 V-H7 V-A27 V-H4 V-A6 V-A23 V-A28 V-A25b V-A11 V-A25c V-A17 V-A18 V-H6b V-A12 V-A7 V-A8 V-A24 V-A29 V-A30 V-A31 V-H8 V-LOG V-A13 V-A14 V-A4 V-A21 V-A22 V-A19 V-A3 V-A3b V-A26 V-A32 V-PARSE V-RO V-RUNS E-H1 E-H2 E-H3 E-H4 E-H5 E-H6 E-A1 E-A2 E-A3 E-A4 E-A5 E-A6 E-A7 E-A8 E-A9 E-A10 E-A11 E-A12 E-A13 E-A14 E-A15 E-A16 E-A17 S-H1 S-A1 S-A2 S-A3 S-A4 SEC-H1 SEC-03 SEC-04 SEC-05 MODE-A1 R-H1 R-A1 R-A4 R-A5 R-A7 R-A8"
 atk_name(){ case $1 in
   N1) echo "proto and gate containers have no network";; N2) echo "host token not passed to container";; A1) echo "/base/objects is read-only";;
   A2) echo "pointer file can't be rewritten";; A3) echo "shadow hooks/fsmonitor never run on host";; A12) echo "role A's hook doesn't run in role B/export";;
@@ -161,11 +179,11 @@ atk_name(){ case $1 in
   A6c) echo "gate: changed-file count limit";; A13) echo "gate: fsck rejects corrupt objects";; A14) echo "gate: submodule/gitlink rejected";;
   A15) echo "gate: commit identity rejected";; A16) echo "push stub: one gated sha, one branch";; A17|A17b|A17c) echo "gate: NUL-safe path parsing (space, UTF-8, tab/quote)";; A18|A18b) echo "gate: Pi process paths";; A19|A19b) echo "reset_shadow refuses symlinks";; A20) echo "gate: nested .git path";; A21) echo "gate: tests from main's entrypoint";; A22|A22b) echo "gate: no merge/orphan commits";; H5) echo "cpu limit";; A9) echo "reviewer can't commit";; A10) echo "gc guard";; A10b) echo "main can't move backwards";;
   A11) echo "no root-owned files";; A11-detect) echo "gate rejects foreign-owned files";; H1) echo "no mount/chown/caps";; H2) echo "fork bomb contained";;
-  H3) echo "memory limit";; H4) echo "no writes outside mounts";; S-H1) echo "role starts when no secret name is set";; S-A1) echo "role refuses a denylisted secret name";; S-A2) echo "format patterns are redacted";; S-A3) echo "mount error is logged";; S-A4) echo "KEEL_SECRET name refuses the role";; SEC-H1) echo "clean bundle passes the secret scan";; SEC-03) echo "secret shape in the change fails the gate";; SEC-04) echo "inline allow comment still fails the gate";; SEC-05) echo "product ignore file still fails the gate";; MODE-A1) echo "directly executed script is mode 100755";; *) echo "$1";; esac; }
+  H3) echo "memory limit";; H4) echo "no writes outside mounts";; S-H1) echo "role starts when no secret name is set";; S-A1) echo "role refuses a denylisted secret name";; S-A2) echo "format patterns are redacted";; S-A3) echo "mount error is logged";; S-A4) echo "KEEL_SECRET name refuses the role";; SEC-H1) echo "clean bundle passes the secret scan";; SEC-03) echo "secret shape in the change fails the gate";; SEC-04) echo "inline allow comment still fails the gate";; SEC-05) echo "product ignore file still fails the gate";; MODE-A1) echo "directly executed script is mode 100755";; R-H1) echo "rootless fixture passes the runtime check";; R-A1) echo "rootful fixture refuses launch";; R-A4) echo "low free space refuses launch";; R-A5) echo "chromium sandbox flags are refused";; R-A7) echo "userns remap is not rootless";; R-A8) echo "live doctor scorer stays exact";; *) echo "$1";; esac; }
 
 if [ $ATTACKS = 1 ]; then
   section "Attacks (test-attacks.sh in a throwaway dir; real containers on this machine)"
-  if [ $CRIT_FAIL -gt 0 ]; then check ATK-00 CRITICAL fail "attack suite" "skipped: fix critical environment failures first"
+  if [ $CRIT_FAIL -gt 0 ] && [ -z "$SCORE_LOG" ]; then check ATK-00 CRITICAL fail "attack suite" "skipped: fix critical environment failures first"
   else
     if [ -n "$SCORE_LOG" ]; then
       ALOG=$SCORE_LOG

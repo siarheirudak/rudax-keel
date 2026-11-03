@@ -54,7 +54,11 @@ if [ -n "$open_attacks" ]; then
 fi
 echo "== keel-doctor (verdict last; on a fresh throwaway repo, the suites wiped theirs)"
 [ -n "${KEEL_REPO:-}" ] || "$SETUP/keel.sh" init-repo >/dev/null
-"$SETUP/keel-doctor.sh" || rc=1
+doc_log=$(mktemp)
+"$SETUP/keel-doctor.sh" >"$doc_log" 2>&1 || true
+cat "$doc_log"
+bash "$HERE/doctor-score.sh" "$doc_log" || rc=1
+rm -f "$doc_log"
 fi
 echo "== doctor result ids"
 "$HERE/test-doctor-ids.sh" || rc=1

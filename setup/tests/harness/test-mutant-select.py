@@ -41,8 +41,16 @@ def validate():
         fail("target-only file is not a mutant target")
     if "setup/check.sh" not in mapped or "setup/check.sh" in mf.TARGET_ONLY:
         fail("check.sh must be a mapped oracle")
-    if "M79" not in mf.CI_IDS:
-        fail("M79 is not in the CI set")
+    if "M79" not in mf.CI_IDS or "M80" not in mf.CI_IDS or "M90" not in mf.CI_IDS:
+        fail("M79, M80, or M90 is not in the CI set")
+    for path in mf.ORACLE_FILES:
+        if path in mf.TARGET_ONLY:
+            fail("oracle listed as a selective target " + path)
+        if not os.path.isfile(os.path.join(root, path)):
+            fail("missing oracle " + path)
+        got = mf.select_mutants([path])
+        if got[0] != "full" or "M80" not in got[1] or "M90" not in got[1]:
+            fail("oracle %s did not select the full set" % path)
     for path in mf.TARGET_ONLY:
         if path.startswith("setup/") or path.startswith(".github/"):
             continue
