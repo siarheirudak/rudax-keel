@@ -96,6 +96,7 @@ FILES = {
     "M88": ["setup/lib/runtime.sh"],
     "M89": ["setup/keel-doctor.sh"],
     "M90": ["setup/tests/harness/doctor-score.sh"],
+    "M91": ["setup/keel.sh"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -149,6 +150,7 @@ CI_IDS = [
     "M88",
     "M89",
     "M90",
+    "M91",
 ]
 
 # A change to one of these files selects only the CI mutants mapped to it.

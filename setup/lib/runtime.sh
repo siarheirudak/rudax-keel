@@ -88,13 +88,16 @@ keel_disk_ok() {
 
 keel_require_runtime() {
   local cls ec=0
-  cls=$(keel_classify_runtime "$@") || ec=$?
-  if [ "$launch_refuse" = 1 ] && [ "$ec" -eq 1 ]; then
-    printf 'REFUSE\truntime\t%s\t0\n' "$cls"
-    return 1
-  fi
   if ! keel_disk_ok "${KEEL_ROOT:-$HOME}"; then
     printf 'REFUSE\truntime\tdisk\t0\n'
+    return 1
+  fi
+  if [ "$launch_refuse" != 1 ]; then
+    return 0
+  fi
+  cls=$(keel_classify_runtime "$@") || ec=$?
+  if [ "$ec" -eq 1 ]; then
+    printf 'REFUSE\truntime\t%s\t0\n' "$cls"
     return 1
   fi
   return 0

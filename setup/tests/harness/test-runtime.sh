@@ -61,6 +61,55 @@ else
   res R-A7 "NOT BLOCKED"
 fi
 
+K=$SETUP/keel.sh
+root=$(mktemp -d)
+export KEEL_ROOT=$root
+miss=
+for spec in \
+  "proto proto t rw true" \
+  "role role developer true" \
+  "role-env role-env developer true" \
+  "export export" \
+  "setup setup" \
+  "proto-env proto-env true" \
+  "egress-up egress-up" \
+  "gate gate"
+ do
+  # shellcheck disable=SC2086
+  set -- $spec
+  name=$1
+  shift
+  ec=0
+  out=$("$K" "$@" 2>&1) || ec=$?
+  if [ "$ec" -eq 0 ] || ! printf '%s\n' "$out" | grep -q 'REFUSE	runtime	rootful'; then
+    miss="$miss $name"
+  fi
+done
+export KEEL_WORK_MIN_FREE=999999999999999
+for spec in \
+  "proto proto t rw true" \
+  "role role developer true" \
+  "export export" \
+  "setup setup"
+ do
+  # shellcheck disable=SC2086
+  set -- $spec
+  name=$1
+  shift
+  ec=0
+  out=$("$K" "$@" 2>&1) || ec=$?
+  if [ "$ec" -eq 0 ] || ! printf '%s\n' "$out" | grep -q 'REFUSE	runtime	disk'; then
+    miss="$miss disk-$name"
+  fi
+done
+unset KEEL_WORK_MIN_FREE
+rm -rf "$root"
+if [ -z "$miss" ]; then
+  res R-A9 "BLOCKED (role proto export setup and the other launch paths refuse)"
+else
+  res R-A9 "NOT BLOCKED ($miss)"
+fi
+
 score_fix=$(mktemp)
 cat > "$score_fix" << 'EOF'
 ❌ ENV-05  CRITICAL     isolation boundary: rootful

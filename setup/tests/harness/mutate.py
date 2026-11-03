@@ -99,6 +99,7 @@ M = {
  'M88': ('lib/runtime.sh', 'userns_is_rootless=0 # userns-not-rootless', 'userns_is_rootless=1 # userns-not-rootless', 'treat userns remap as rootless', ['R-A7']),
  'M89': ('keel-doctor.sh', 'env05_level=CRITICAL # env05-level', 'env05_level=RECOMMENDED # env05-level', 'downgrade the isolation check', ['R-A1']),
  'M90': ('tests/harness/doctor-score.sh', 'score_exact=1 # doctor-score-exact', 'score_exact=0 # doctor-score-exact', 'accept any not-ready doctor', ['R-A8']),
+ 'M91': (K, 'launch_guard(){ keel_require_runtime || exit $?; } # launch-guard', 'launch_guard(){ return 0; } # launch-guard', 'drop the launch runtime check', ['R-A9']),
 }
 M['M15'] = (K, M['M13'][1], M['M13'][2], M['M15'][3], M['M15'][4])  # applied together with M14 below
 GREEN = re.compile(r'^(BLOCKED|CONTAINED|PARTIAL|N/A)')
@@ -146,7 +147,7 @@ def run(mid):
         try:
             if mid == 'M78':
                 script = 'test-attack-results.sh'
-            elif mid in ('M80', 'M81', 'M86', 'M87', 'M88', 'M89', 'M90'):
+            elif mid in ('M80', 'M81', 'M86', 'M87', 'M88', 'M89', 'M90', 'M91'):
                 script = 'test-runtime.sh'
             else:
                 script = 'test-attacks.sh'
