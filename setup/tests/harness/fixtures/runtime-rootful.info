@@ -1,0 +1,3 @@
+security_options=name=seccomp,profile=builtin name=cgroupns
+operating_system=linux
+podman_rootless=

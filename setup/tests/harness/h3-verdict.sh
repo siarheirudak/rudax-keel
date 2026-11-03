@@ -20,6 +20,11 @@ h3_verdict() {
     printf '%s\n' "ERROR memory limit not applied"
     return 0
   fi
+  # memory.swap.max=max is not proof the swap pin held. The docker host config is.
+  if printf '%s\n' "$out" | grep -qx 'swap-pin=absent'; then
+    printf '%s\n' "NOT BLOCKED"
+    return 0
+  fi
   arc=$(printf '%s\n' "$out" | sed -n 's/^alloc-rc=//p' | tail -1)
   if [ "$arc" = 137 ]; then
     printf '%s\n' "CONTAINED (allocator exit 137)"
