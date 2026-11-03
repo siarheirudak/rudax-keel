@@ -42,6 +42,13 @@ printf '%s\n' "$lines"
 if [[ -n $summary ]]; then
   printf '%s\n' "$lines" >>"$summary"
 fi
+bind_mutants=1 # mutant-result-bind
+if [[ ${GITHUB_EVENT_NAME:-} == pull_request && "$bind_mutants" = 1 ]]; then
+  if ! python3 "$ROOT/setup/tests/harness/mutant-result.py"; then
+    fail=1
+    bad="${bad}mutants "
+  fi
+fi
 if [[ $fail -ne 0 ]]; then
   printf 'how to fix: these jobs are not success: %s\n' "${bad% }" >&2
   exit 1
