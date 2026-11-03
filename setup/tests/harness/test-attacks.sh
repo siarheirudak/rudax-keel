@@ -26,6 +26,7 @@ else
 fi
 rm -rf "$mode_fix"
 bash "$HERE/test-runtime.sh" || true
+bash "$HERE/test-mutant-result.sh" || true
 fresh(){ rm -rf "$P"; $K init-repo >/dev/null; $K setup >/dev/null; }
 h3_diag(){
   echo "  H3 diag:"

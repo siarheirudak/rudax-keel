@@ -1,0 +1,140 @@
+name: mutate-pr
+
+# Maintainer trigger for the per-PR mutant set.
+# Run this from the default branch and pass the pull request's head SHA.
+# A pull request number is optional; when the SHA is omitted, this workflow
+# dispatches itself with the pull request's current head and does not record
+# a result. The result is this run's success on the default branch, titled
+# "mutants <sha>". A label on the pull request is not a trigger: that event
+# would execute the workflow file from the head, which a fork can replace.
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Head SHA to test
+        required: false
+        default: ""
+        type: string
+      pr:
+        description: Pull request number
+        required: false
+        default: ""
+        type: string
+
+run-name: mutants ${{ inputs.sha }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutate-pr-${{ inputs.sha || inputs.pr }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.sha == ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Resolve the pull request head
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr }}
+          SHA: ${{ inputs.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python3 setup/tests/harness/resolve-mutant-target.py
+      - name: Dispatch the sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ steps.target.outputs.sha }}
+          PR: ${{ inputs.pr }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -eu
+          printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s' "$DEFAULT_BRANCH" | grep -Eq '^[A-Za-z0-9._/-]+$'
+          if [ -n "$PR" ]; then
+            printf '%s' "$PR" | grep -Eq '^[0-9]+$'
+          fi
+          payload=$(printf '{"ref":"%s","inputs":{"sha":"%s","pr":"%s"}}' "$DEFAULT_BRANCH" "$SHA" "$PR")
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "User-Agent: rudax-keel-mutants" \
+            -d "$payload" \
+            "https://api.github.com/repos/${REPO}/actions/workflows/mutate-pr.yml/dispatches"
+
+  mutants:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.sha != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Resolve the commit
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr }}
+          SHA: ${{ inputs.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python3 setup/tests/harness/resolve-mutant-target.py
+      - name: Check out that commit
+        env:
+          SHA: ${{ steps.target.outputs.sha }}
+          BASE: ${{ steps.target.outputs.base }}
+          PR: ${{ inputs.pr }}
+        run: |
+          set -eu
+          printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s' "$BASE" | grep -Eq '^[A-Za-z0-9._/-]+$'
+          git fetch --no-tags origin "$SHA"
+          if [ -n "$PR" ]; then
+            printf '%s' "$PR" | grep -Eq '^[0-9]+$'
+            git fetch --no-tags origin "refs/pull/${PR}/head:refs/keel/pr-head"
+            got=$(git rev-parse refs/keel/pr-head)
+            if [ "$got" != "$SHA" ]; then
+              echo "mutants: pull head does not match the sha" >&2
+              exit 1
+            fi
+          fi
+          git checkout --detach "$SHA"
+          git fetch --no-tags origin "refs/heads/${BASE}:refs/remotes/origin/${BASE}"
+      - name: Run the selected mutants
+        env:
+          SHA: ${{ steps.target.outputs.sha }}
+          BASE: ${{ steps.target.outputs.base }}
+        run: |
+          set -eu
+          printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s' "$BASE" | grep -Eq '^[A-Za-z0-9._/-]+$'
+          clean=(
+            "HOME=$HOME"
+            "PATH=$PATH"
+            "USER=${USER:-runner}"
+            "LOGNAME=${LOGNAME:-${USER:-runner}}"
+            "SHELL=${SHELL:-/bin/bash}"
+            "LANG=${LANG:-C.UTF-8}"
+            "TMPDIR=${TMPDIR:-/tmp}"
+            "KEEL_MUTATE_BASE=origin/${BASE}"
+          )
+          if [ -n "${DOCKER_HOST:-}" ]; then
+            clean+=("DOCKER_HOST=$DOCKER_HOST")
+          fi
+          exec env -i "${clean[@]}" bash setup/tests/harness/run-tests.sh
