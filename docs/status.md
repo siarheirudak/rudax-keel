@@ -2,7 +2,7 @@
 
 This page is the line between what the repository does and what the v1 design specifies. When another page describes a link, a role mount, or a log, the behaviour is planned unless this page lists it under [Shipped](#shipped).
 
-Nothing in the L0–L11 chain runs. There is no Pi Agent integration, no `standards/rules.md`, no committed task decisions, no `.agents/skills/` directory, and no envelope. The harness creates `.keel/logs/` and `.keel/runs/` at runtime. The bot is a real GitHub account used with the rules below. The pipeline’s “bot opens the pull request” step is still the push stub.
+Nothing in the L0–L11 chain runs. There is no `standards/rules.md`, no committed task decisions, no `.agents/skills/` directory, and no envelope. The harness creates `.keel/logs/` and `.keel/runs/` at runtime. The bot is a real GitHub account used with the rules below. The pipeline’s “bot opens the pull request” step is still the push stub.
 
 ## Shipped
 
@@ -83,7 +83,7 @@ The order is the dependency order from the v1 plan. Steps later in the list need
 |---|---|---|
 | 1 | Folder allowlists, unified deny, tester pinned to the setup commit, launch JSONL. Content fencing stays on the backlog | The harness that exists |
 | 3 remainder | A separate OS account for secret files, and a Chromium process running under rootless | The runtime boundary above; the QA step for the browser |
-| 4 | L1 context packaging | Step 1 |
+| 4 | What a role sees at launch | Step 1 |
 | 5 | The discoveries store and the accept-or-discard filter | Step 4 |
 | 6 | `standards/rules.md` and the generator for per-role views | The rule text, which is an input, not code in this repo |
 | 7 | The host dispatcher and the warm Pi orchestrator (task state, transitions, `keel_request`). A process-files pull request. Grilling behaviour is Step 8 | Step 1, and Step 2 when the orchestrator container needs the model API |
