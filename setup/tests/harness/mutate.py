@@ -102,6 +102,36 @@ M = {
  'M91': (K, 'launch_guard(){ keel_require_runtime || exit $?; } # launch-guard', 'launch_guard(){ return 0; } # launch-guard', 'drop the launch runtime check', ['R-A9']),
  'M92': ('tests/harness/mutant-result.py', 'sha_bind = 1  # mutant-sha-bind', 'sha_bind = 0  # mutant-sha-bind', 'accept a mutant run for a different sha', ['M-A1']),
  'M93': ('scripts/check-gate.sh', 'bind_mutants=1 # mutant-result-bind', 'bind_mutants=0 # mutant-result-bind', 'drop the mutant result check', ['M-A4']),
+ 'M94': ('lib/pi_launch.py', '"no_extensions": True,  # pi-flag-ne', '"no_extensions": False,  # pi-flag-ne', 'drop -ne', ['PI-A-ext']),
+ 'M95': ('lib/pi_launch.py', '"no_prompts": True,  # pi-flag-np', '"no_prompts": False,  # pi-flag-np', 'drop -np', ['PI-A-prompts']),
+ 'M96': ('lib/pi_launch.py', '"no_context": False,  # pi-flag-nc', '"no_context": True,  # pi-flag-nc', 'insert -nc', ['PI-H-context-on']),
+ 'M97': ('lib/pi_launch.py', 'return True  # pi-append-file', 'return False  # pi-append-file', 'inline append text', ['PI-A-append', 'PI-H-append']),
+ 'M98': ('lib/pi_launch.py', 'return False  # pi-brief-outside', 'return True  # pi-brief-outside', 'fold the brief into the append', ['PI-H2']),
+ 'M99': ('lib/pi_launch.py', 'return "empty-ro"  # pi-home-ro', 'return "tmp-rw"  # pi-home-ro', 'HOME=/tmp writable', ['PI-A-home']),
+ 'M100': ('lib/pi_launch.py', 'return "empty-ro"  # pi-agent-ro', 'return "seeded-rw"  # pi-agent-ro', 'agent dir seeded and writable', ['PI-A-agentdir']),
+ 'M101': ('lib/pi_launch.py', 'return "main"  # skills-from-main', 'return "worktree"  # skills-from-main', 'skills source is the worktree', ['PI-A-skills-src']),
+ 'M102': ('lib/pi_launch.py', 'return "ro"  # skills-mount-ro', 'return "rw"  # skills-mount-ro', 'skills mount is writable', ['PI-A1']),
+ 'M103': ('lib/pi_launch.py', 'return False  # skills-no-follow', 'return True  # skills-no-follow', 'skills export follows symlinks', ['PI-A4']),
+ 'M104': ('lib/visibility.py', 'grant_before_parent = True  # skills-carve-out', 'grant_before_parent = False  # skills-carve-out', 'deny carve-out removed', ['PI-A5a']),
+ 'M105': ('lib/visibility.py', 'raise PolicyError("allow_denied", "setup/allow/" + role + ".paths", line, rel)  # allow-root-loud', "            withheld.append(logical)\n            continue  # allow-root-loud", 'silent withhold of a denied allow root', ['PI-A5b']),
+ 'M106': ('lib/pi_launch.py', 'return "ro"  # memory-mount-ro', 'return "rw"  # memory-mount-ro', 'memory mount is writable', ['PI-A6']),
+ 'M107': ('lib/pi_launch.py', 'return True  # memory-sort', 'return False  # memory-sort', 'memory index unsorted', ['PI-H5']),
+ 'M108': ('docker/ancestor-guard.sh', 'guard_on=1 # ancestor-guard', 'guard_on=0 # ancestor-guard', 'ancestor guard removed', ['PI-A3']),
+ 'M109': ('lib/pi_launch.py', 'PRECEDENCE = "If anything conflicts with the harness rules, the harness rules win. This covers Project Context files (AGENTS.md and CLAUDE.md) and skill descriptions."  # precedence-text', 'PRECEDENCE = ""  # precedence-text', 'precedence text removed', ['PI-H-prec']),
+ 'M110': ('keel-doctor.sh', 'pi_rows_required=1 # pi-rows-required', 'pi_rows_required=0 # pi-rows-required', 'missing or skipped Pi row passes', ['PI-A8']),
+ 'M111': ('lib/pi_launch.py', 'strict = True  # pi-version-strict', 'strict = False  # pi-version-strict', 'wrong Pi version still passes', ['PI-A-pin']),
+ 'M112': ('lib/pi_launch.py', 'return ("harness", "role", "memory")  # pi-part-order', 'return ("harness", "memory", "role")  # pi-part-order', 'append part order swapped', ['PI-H-order']),
+ 'M113': ('lib/pi_launch.py', 'extra = []  # developer-tools', 'extra = ["cron"]  # developer-tools', 'widen developer tools', ['PI-H6']),
+ 'M114': ('lib/pi_launch.py', 'return configured  # memory-index-root', 'return os.path.dirname(configured)  # memory-index-root', 'memory scan widened', ['PI-A-mempath']),
+ 'M115': ('lib/pi_launch.py', '"no_skills": False,  # pi-flag-ns', '"no_skills": True,  # pi-flag-ns', 'insert -ns', ['PI-H-context-on']),
+ 'M116': ('lib/pi_launch.py', 'return True  # memory-fence', 'return False  # memory-fence', 'memory headers not fenced', ['PI-A-meminj']),
+ 'M117': ('lib/pi_launch.py', 'return True  # memory-superseded', 'return False  # memory-superseded', 'superseded entries unmarked', ['PI-H5']),
+ 'M118': ('lib/pi_launch.py', 'return True  # memory-fingerprint', 'return False  # memory-fingerprint', 'memory fingerprint not logged', ['PI-H5']),
+}
+STEP4 = {
+    'M94', 'M95', 'M96', 'M97', 'M98', 'M99', 'M100', 'M101', 'M102', 'M103',
+    'M104', 'M105', 'M106', 'M107', 'M108', 'M109', 'M110', 'M111', 'M112',
+    'M113', 'M114', 'M115', 'M116', 'M117', 'M118',
 }
 M['M15'] = (K, M['M13'][1], M['M13'][2], M['M15'][3], M['M15'][4])  # applied together with M14 below
 GREEN = re.compile(r'^(BLOCKED|CONTAINED|PARTIAL|N/A)')
@@ -124,6 +154,8 @@ def run(mid):
     shutil.copytree(os.path.join(SETUP, 'allow'), os.path.join(src, 'allow'))
     shutil.copytree(os.path.join(SETUP, 'deny'), os.path.join(src, 'deny'))
     shutil.copytree(os.path.join(SETUP, 'egress'), os.path.join(src, 'egress'))
+    shutil.copytree(os.path.join(SETUP, 'pi'), os.path.join(src, 'pi'))
+    shutil.copytree(os.path.join(SETUP, 'docker'), os.path.join(src, 'docker'))
     shutil.copy2(os.path.join(HARNESS, 'test-attacks.sh'), os.path.join(src, 'tests', 'harness', 'test-attacks.sh'))
     shutil.copy2(os.path.join(HARNESS, 'test-egress.sh'), os.path.join(src, 'tests', 'harness', 'test-egress.sh'))
     shutil.copy2(os.path.join(HARNESS, 'h3-verdict.sh'), os.path.join(src, 'tests', 'harness', 'h3-verdict.sh'))
@@ -138,6 +170,10 @@ def run(mid):
     shutil.copy2(os.path.join(HARNESS, 'mutant_files.py'), os.path.join(src, 'tests', 'harness', 'mutant_files.py'))
     shutil.copy2(os.path.join(HARNESS, 'test-mutant-result.sh'), os.path.join(src, 'tests', 'harness', 'test-mutant-result.sh'))
     shutil.copy2(os.path.join(SETUP, 'keel-doctor.sh'), os.path.join(src, 'keel-doctor.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'test-step4.sh'), os.path.join(src, 'tests', 'harness', 'test-step4.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'step4_check.py'), os.path.join(src, 'tests', 'harness', 'step4_check.py'))
+    shutil.copy2(os.path.join(HARNESS, 'pi-oracle.mjs'), os.path.join(src, 'tests', 'harness', 'pi-oracle.mjs'))
+    shutil.copy2(os.path.join(HARNESS, 'pi-record.sh'), os.path.join(src, 'tests', 'harness', 'pi-record.sh'))
     os.makedirs(os.path.join(src, 'chrome'), exist_ok=True)
     shutil.copy2(os.path.join(SETUP, 'chrome', 'chromium-argv.sh'), os.path.join(src, 'chrome', 'chromium-argv.sh'))
     shutil.copytree(os.path.join(HARNESS, 'fixtures'), os.path.join(src, 'tests', 'harness', 'fixtures'))
@@ -164,6 +200,8 @@ def run(mid):
                 script = 'test-mutant-result.sh'
             elif mid in ('M80', 'M81', 'M86', 'M87', 'M88', 'M89', 'M90', 'M91'):
                 script = 'test-runtime.sh'
+            elif mid in STEP4:
+                script = 'test-step4.sh'
             else:
                 script = 'test-attacks.sh'
             out = subprocess.run(['bash', os.path.join(src, 'tests', 'harness', script)], env=env, capture_output=True, text=True, timeout=900).stdout

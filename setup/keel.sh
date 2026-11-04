@@ -147,6 +147,8 @@ init-repo) mkdir -p "$R" "$P/.gatehome"; cd "$R" || exit 1; git init -q; git sym
     mkdir -p -- "$rel"
     : > "$rel/.keep"
   done
+  mkdir -p .keel/memory
+  : > .keel/memory/.keep
   git add -A; git -c user.name=h -c user.email=h@x commit -qm init; echo "repo main=$(git rev-parse main) gc.auto=$(git config gc.auto) gc.pruneExpire=$(git config gc.pruneExpire)";;
 setup) launch_guard; need_docker; M=$(git -C "$R" rev-parse main); mkdir -p "$W" "$B" "$(dirname "$S")"
   git init -q --bare "$S"; reset_shadow; echo "$M" > "$P/$T.base"

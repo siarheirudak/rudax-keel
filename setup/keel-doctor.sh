@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # keel-doctor: is this machine ready to run the rudax-keel agent harness (variant 2)? bash 3.2+.
-# Usage: keel-doctor.sh [--attacks | --score-log FILE]
+# Usage: keel-doctor.sh [--attacks | --score-log FILE | --pi | --pi-score FILE]
 # env: KEEL_ROOT (default ~/keel-proto), KEEL_REPO (default $KEEL_ROOT/repo), DOCKER (docker | "sudo docker" | podman)
 # Exit: 0 = READY or READY WITH WARNINGS, 1 = NOT READY (a CRITICAL check failed), 2 = usage.
 # Docs: docs/harness-checks-why.md#<id>
@@ -11,6 +11,8 @@ HERE=$(cd "$(dirname "$0")" && pwd -P)
 KEEL_ROOT=${KEEL_ROOT:-$HOME/keel-proto}; KEEL_REPO=${KEEL_REPO:-$KEEL_ROOT/repo}; DOCKER=${DOCKER:-docker}
 ATTACKS=0
 SCORE_LOG=
+PI_ONLY=0
+PI_SCORE=
 while [ $# -gt 0 ]; do
   case $1 in
     --attacks) ATTACKS=1;;
@@ -19,6 +21,12 @@ while [ $# -gt 0 ]; do
       [ $# -ge 1 ] || { echo "missing log path" >&2; exit 2; }
       SCORE_LOG=$1
       ATTACKS=1;;
+    --pi) PI_ONLY=1;;
+    --pi-score)
+      shift
+      [ $# -ge 1 ] || { echo "missing score path" >&2; exit 2; }
+      PI_SCORE=$1
+      PI_ONLY=1;;
     -h|--help) sed -n 2,6p "$0"; exit 0;;
     *) echo "unknown option: $1" >&2; exit 2;;
   esac
@@ -33,6 +41,62 @@ check(){ local id=$1 lvl=$2 st=$3 what=$4 det=${5-} icon col
     *) icon="❌" col=$R; FAIL=$((FAIL+1)); [ "$lvl" = CRITICAL ] && CRIT_FAIL=$((CRIT_FAIL+1));; esac
   printf '%s %s%-7s%s %s%-11s%s %s%s%s%s\n' "$icon" "$B" "$id" "$N" "$D" "$lvl" "$N" "$col" "$what" "${det:+: $det}" "$N"; }
 section(){ printf '\n%s%s%s\n' "$B" "$1" "$N"; }
+
+# Missing or skipped Pi rows are failures. A zero here ignores both.
+score_pi_file() {
+  local file=$1 id status detail
+  local pi_rows_required=1 # pi-rows-required
+  local seen=" "
+  while IFS=$(printf '\t') read -r id status detail; do
+    [ -n "$id" ] || continue
+    seen="$seen$id "
+    if [ "$status" = pass ]; then
+      check "$id" CRITICAL pass "pi launch" "$detail"
+    elif [ "$status" = skip ] && [ "$pi_rows_required" != 1 ]; then
+      check "$id" CRITICAL pass "pi launch" "$detail"
+    else
+      check "$id" CRITICAL fail "pi launch" "${detail:-$status}"
+    fi
+  done < "$file"
+  if [ "$pi_rows_required" = 1 ]; then
+    for id in PI-01 PI-02 PI-03 PI-04 PI-05 PI-06 PI-07 PI-08 PI-09; do
+      case $seen in
+        *" $id "*) ;;
+        *) check "$id" CRITICAL fail "pi launch" "no result";;
+      esac
+    done
+  fi
+}
+
+run_pi_live() {
+  local pi_tmp table
+  section "Pi launch"
+  pi_tmp=$(mktemp -d "${TMPDIR:-/tmp}/keel-pi.XXXXXX")
+  table=$pi_tmp/rows.tsv
+  python3 "$HERE/lib/pi_launch.py" doctor \
+    --harness "$HERE" --keel "$pi_tmp/keel" --work "$pi_tmp/work" \
+    --repo "$pi_tmp/repo" --task pi-doctor >"$table" 2>"$pi_tmp/err" || true
+  score_pi_file "$table"
+  rm -rf "$pi_tmp"
+}
+
+finish() {
+  echo
+  summary="${PASS} passed, ${WARN} warnings, ${FAIL} failed"
+  if [ $CRIT_FAIL -gt 0 ]; then printf '%s❌ NOT READY%s (%s; %d critical)\n' "$R$B" "$N" "$summary" "$CRIT_FAIL"; exit 1
+  elif [ $((WARN + FAIL)) -gt 0 ]; then printf '%s⚠️  READY WITH WARNINGS%s (%s)\n' "$Y$B" "$N" "$summary"; exit 0
+  else printf '%s✅ READY%s (%s)\n' "$G$B" "$N" "$summary"; exit 0; fi
+}
+
+if [ -n "$PI_SCORE" ]; then
+  section "Pi launch"
+  score_pi_file "$PI_SCORE"
+  finish
+fi
+if [ "$PI_ONLY" = 1 ]; then
+  run_pi_live
+  finish
+fi
 
 section "Environment"
 os=$(uname -s); arch=$(uname -m)
@@ -168,6 +232,8 @@ else
   check CHR-01 "$chr_level" fail "chromium sandbox argv" "sandbox disable flag was accepted"
 fi
 
+run_pi_live
+
 # attack id -> human name (bash 3.2: no associative arrays)
 ATK_IDS="N1 N2 A1 A2 A3 A12 A12b A4 A4b A4c A5 A6 A6b A6c A7 A7b A8 A8b A9 A10 A10b A11 A11-detect A13 A14 A15 A16 A17 A17b A17c A18 A18b A19 A19b A20 A21 A22 A22b H1 H2 H3 H4 H5 V-H9 V-H1 V-A2 V-A10-hardlink V-A20 V-H3 V-A1 V-A15 V-A25 V-A24b V-A16 V-H2 V-H5 V-A5 V-H6 V-H7 V-A27 V-H4 V-A6 V-A23 V-A28 V-A25b V-A11 V-A25c V-A17 V-A18 V-H6b V-A12 V-A7 V-A8 V-A24 V-A29 V-A30 V-A31 V-H8 V-LOG V-A13 V-A14 V-A4 V-A21 V-A22 V-A19 V-A3 V-A3b V-A26 V-A32 V-PARSE V-RO V-RUNS E-H1 E-H2 E-H3 E-H4 E-H5 E-H6 E-A1 E-A2 E-A3 E-A4 E-A5 E-A6 E-A7 E-A8 E-A9 E-A10 E-A11 E-A12 E-A13 E-A14 E-A15 E-A16 E-A17 S-H1 S-A1 S-A2 S-A3 S-A4 SEC-H1 SEC-03 SEC-04 SEC-05 MODE-A1 R-H1 R-A1 R-A4 R-A5 R-A7 R-A8 R-A9 M-H1 M-A1 M-A2 M-A3 M-A4"
 atk_name(){ case $1 in
@@ -211,8 +277,4 @@ EOT
   fi
 fi
 
-echo
-summary="${PASS} passed, ${WARN} warnings, ${FAIL} failed"
-if [ $CRIT_FAIL -gt 0 ]; then printf '%s❌ NOT READY%s (%s; %d critical)\n' "$R$B" "$N" "$summary" "$CRIT_FAIL"; exit 1
-elif [ $((WARN + FAIL)) -gt 0 ]; then printf '%s⚠️  READY WITH WARNINGS%s (%s)\n' "$Y$B" "$N" "$summary"; exit 0
-else printf '%s✅ READY%s (%s)\n' "$G$B" "$N" "$summary"; exit 0; fi
+finish
