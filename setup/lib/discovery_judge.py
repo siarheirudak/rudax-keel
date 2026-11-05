@@ -3,8 +3,9 @@
 
 The oneshot broker in this file is the only code that reads the key file
 and the only code that adds Authorization. The filter, the doctor, and
-role containers do not. CI uses the stub transport. The stub is refused
-outside CI. The live client is not used by the test suite.
+role containers do not. The stub transport is used only when KEEL_CI=1.
+A generic CI=true does not enable it. The stub is refused otherwise.
+The live client is not used by the test suite.
 """
 
 import json
@@ -44,7 +45,7 @@ class JudgeError(Exception):
 def stub_permitted(env=None):
     if env is None:
         env = os.environ
-    marker = str(env.get("CI", "")).lower() in ("1", "true") or env.get("KEEL_CI") == "1"
+    marker = env.get("KEEL_CI") == "1"
     return marker  # disc-stub-ci-only
 
 
@@ -119,8 +120,10 @@ def key_file_ok(path):
     return True
 
 
-def default_key_path(keel):
-    override = os.environ.get("KEEL_JUDGE_KEY_FILE", "")
+def default_key_path(keel, env=None):
+    if env is None:
+        env = os.environ
+    override = env.get("KEEL_JUDGE_KEY_FILE", "")
     if override:
         return override
     if not keel:

@@ -261,6 +261,7 @@ def run(mid):
     shutil.copy2(os.path.join(HARNESS, 'pi-oracle.mjs'), os.path.join(src, 'tests', 'harness', 'pi-oracle.mjs'))
     shutil.copy2(os.path.join(HARNESS, 'pi-record.sh'), os.path.join(src, 'tests', 'harness', 'pi-record.sh'))
     shutil.copy2(os.path.join(HARNESS, 'test-step5.sh'), os.path.join(src, 'tests', 'harness', 'test-step5.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'run-tests.sh'), os.path.join(src, 'tests', 'harness', 'run-tests.sh'))
     shutil.copy2(os.path.join(HARNESS, 'step5_check.py'), os.path.join(src, 'tests', 'harness', 'step5_check.py'))
     shutil.copytree(os.path.join(SETUP, 'tools'), os.path.join(src, 'tools'))
     os.makedirs(os.path.join(src, 'chrome'), exist_ok=True)

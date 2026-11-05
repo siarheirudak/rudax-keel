@@ -92,7 +92,7 @@ def main():
     ok = True
     checks = (
         check_h1, check_h2, check_h3, check_h4, check_h5, check_h6, check_h7,
-        check_h8, check_h9, check_h10, check_h11, check_h12,
+        check_h8, check_h9, check_h10, check_h11, check_h12, check_h13,
         check_a1, check_a2, check_a3, check_a4, check_a5, check_a6, check_a7,
         check_a8, check_a9, check_a10, check_a11, check_a12, check_a13, check_a14,
         check_a15, check_a16, check_a17, check_a18, check_a19, check_a20, check_a21,
@@ -259,17 +259,85 @@ def check_h8():
             timeout=60,
             env=env,
         )
-        ci_rows = filt.doctor_rows(SETUP, {"CI": "true", "KEEL_FORBID_LIVE": "1"}, key_root)
+        keel_rows = filt.doctor_rows(SETUP, {"KEEL_CI": "1", "KEEL_FORBID_LIVE": "1"}, tempfile.mkdtemp(prefix="keelci-"))
+        generic_rows = filt.doctor_rows(SETUP, {"CI": "true", "KEEL_FORBID_LIVE": "1"}, tempfile.mkdtemp(prefix="genci-"))
         bare_rows = filt.doctor_rows(SETUP, {"KEEL_FORBID_LIVE": "1"}, tempfile.mkdtemp(prefix="nokey-"))
-        ci_map = {item[0]: item[1] for item in ci_rows}
+        keel_map = {item[0]: item[1] for item in keel_rows}
+        generic_map = {item[0]: item[1] for item in generic_rows}
         bare_map = {item[0]: item[1] for item in bare_rows}
         live_ok = proc.returncode == 0 and "NOT READY" not in proc.stdout and "DISC-07a" in proc.stdout and "DISC-08" in proc.stdout
-        branch_ok = ci_map.get("DISC-07b") == "pass" and ci_map.get("DISC-07a") == "pass" and bare_map.get("DISC-07b") == "fail"
+        branch_ok = (
+            keel_map.get("DISC-07a") == "pass"
+            and keel_map.get("DISC-07b") == "pass"
+            and generic_map.get("DISC-07a") == "pass"
+            and generic_map.get("DISC-07b") == "fail"
+            and bare_map.get("DISC-07b") == "fail"
+        )
         if live_ok and branch_ok:
             return say("DISC-H8", "BLOCKED", "doctor rows")
-        return say("DISC-H8", "NOT BLOCKED", "live={0} ci={1} bare={2}".format(proc.returncode, ci_map.get("DISC-07b"), bare_map.get("DISC-07b")))
+        return say("DISC-H8", "NOT BLOCKED", "live={0} keel={1} generic={2} bare={3}".format(
+            proc.returncode, keel_map.get("DISC-07b"), generic_map.get("DISC-07b"), bare_map.get("DISC-07b")
+        ))
     finally:
         shutil.rmtree(key_root, ignore_errors=True)
+
+
+def _snapshot(path):
+    if not os.path.lexists(path):
+        return None
+    st = os.lstat(path)
+    with open(path, "rb") as handle:
+        body = handle.read()
+    return (st.st_ino, st.st_mtime_ns, st.st_mode, body)
+
+
+def check_h13():
+    real = tempfile.mkdtemp(prefix="real-keel-")
+    try:
+        key = os.path.join(real, ".keel", "keys", "openrouter.key")
+        os.makedirs(os.path.dirname(key))
+        with open(key, "wb") as handle:
+            handle.write(b"REAL-KEY-SENTINEL\n")
+        os.chmod(key, 0o600)
+        before = _snapshot(key)
+        absent = os.path.join(real, "absent", ".keel", "keys", "openrouter.key")
+        env = os.environ.copy()
+        env.pop("KEEL_CI", None)
+        env["CI"] = "true"
+        env["KEEL_ROOT"] = real
+        env["KEEL_JUDGE_KEY_FILE"] = key
+        env["TMPDIR"] = "/tmp"
+        proc = subprocess.run(
+            ["bash", os.path.join(HERE, "run-tests.sh"), "--doctor-root"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        lines = [line for line in proc.stdout.splitlines() if line]
+        after = _snapshot(key)
+        printed_root = lines[0] if lines else ""
+        printed_key = lines[1] if len(lines) > 1 else ""
+        kept = after == before and not os.path.lexists(absent)
+        separate = printed_root and not printed_root.startswith(real) and printed_key.startswith(printed_root + "/")
+        env["KEEL_ROOT"] = os.path.join(real, "absent")
+        env.pop("KEEL_JUDGE_KEY_FILE", None)
+        os.makedirs(env["KEEL_ROOT"])
+        proc2 = subprocess.run(
+            ["bash", os.path.join(HERE, "run-tests.sh"), "--doctor-root"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        still_absent = not os.path.lexists(absent)
+        if proc.returncode == 0 and proc2.returncode == 0 and kept and separate and still_absent:
+            return say("DISC-H13", "BLOCKED", "real key path untouched")
+        return say("DISC-H13", "NOT BLOCKED", "rc={0}/{1} separate={2}".format(proc.returncode, proc2.returncode, separate))
+    finally:
+        shutil.rmtree(real, ignore_errors=True)
 
 
 def check_h9():
@@ -679,13 +747,22 @@ def check_a21():
 def check_a22():
     box = Box()
     try:
-        path = box.write("cand.md", filt.render_candidate(meta(id="stub"), BODY))
-        env = {"KEEL_DISCOVERY_JUDGE": "stub", "KEEL_FORBID_LIVE": "1"}
-        result = box.promote(path, env=env, transport=None)
+        envs = (
+            {"KEEL_DISCOVERY_JUDGE": "stub", "KEEL_FORBID_LIVE": "1"},
+            {"CI": "true", "KEEL_DISCOVERY_JUDGE": "stub", "KEEL_FORBID_LIVE": "1"},
+        )
+        for index, env in enumerate(envs):
+            path = box.write(
+                "stub{0}.md".format(index),
+                filt.render_candidate(meta(id="stub-{0}".format(index)), BODY),
+            )
+            result = box.promote(path, env=env, transport=None)
+            if result.get("reason") != "stub_refused" or box.accepted():
+                return say("DISC-A22", "NOT BLOCKED", result.get("reason", result.get("status", "")))
         log = box.log()
-        if result.get("reason") == "stub_refused" and not box.accepted() and "stub_refused" in log:
-            return say("DISC-A22", "BLOCKED", "stub refused")
-        return say("DISC-A22", "NOT BLOCKED", result.get("reason", result["status"]))
+        if log.count("stub_refused") >= 2:
+            return say("DISC-A22", "BLOCKED", "stub refused without KEEL_CI")
+        return say("DISC-A22", "NOT BLOCKED", "audit")
     finally:
         box.close()
 

@@ -660,20 +660,22 @@ def doctor_rows(harness, env=None, keel=None):
         hosts = []
     stub_ok = (
         discovery_judge.stub_permitted({}) is False
-        and discovery_judge.stub_permitted({"CI": "true"}) is True
+        and discovery_judge.stub_permitted({"CI": "true"}) is False
+        and discovery_judge.stub_permitted({"CI": "1"}) is False
+        and discovery_judge.stub_permitted({"KEEL_CI": "1"}) is True
         and hosts == ["openrouter.ai"]
         and discovery_judge.classify_url(discovery_judge.DECISIONS_URL) is True
         and discovery_judge.classify_url("https://openrouter.ai/api/v1/chat/completions") is False
         and discovery_judge.MODEL_ID == "typesafe/jev-1.14"
         and "latest" not in discovery_judge.MODEL_ID
     )
-    add("DISC-07a", stub_ok, "stub refused outside CI" if stub_ok else "stub or egress pin wrong")
+    add("DISC-07a", stub_ok, "stub requires KEEL_CI=1" if stub_ok else "stub or egress pin wrong")
 
     ci = discovery_judge.stub_permitted(env)
     if ci:
-        add("DISC-07b", True, "CI stub; live key not required")
+        add("DISC-07b", True, "KEEL_CI stub; live key not required")
     else:
-        key_path = discovery_judge.default_key_path(keel or env.get("KEEL_ROOT", ""))
+        key_path = discovery_judge.default_key_path(keel or env.get("KEEL_ROOT", ""), env)
         ok_key = discovery_judge.key_file_ok(key_path)
         add("DISC-07b", ok_key, "key path present" if ok_key else "key path missing or loose")
 
