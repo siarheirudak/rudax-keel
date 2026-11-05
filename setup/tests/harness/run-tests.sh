@@ -21,6 +21,8 @@ echo "== mutant dispatch"
 bash "$HERE/test-resolve-mutant-target.sh" || exit 1
 echo "== mutant result binding"
 bash "$HERE/test-mutant-result.sh" || exit 1
+echo "== mutate schedule"
+bash "$HERE/test-mutate-schedule.sh" || exit 1
 echo "== attack results"
 "$HERE/test-attack-results.sh" || exit 1
 echo "== nested ro probe"
