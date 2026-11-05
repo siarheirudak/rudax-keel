@@ -1297,3 +1297,131 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 **If it fails.** FAIL.
 
 **How to fix.** Point `--gitleaks-ignore-path` at the harness ignore file, and do not copy `.gitleaksignore` or `.gitleaks.toml` into the scanned tree.
+
+## Pi launch
+
+<a id="pi-01"></a>
+
+### PI-01 Pi version
+
+**Level.** CRITICAL
+
+**Check.** The installed `@mariozechner/pi-coding-agent` package and the `keel-pi` image both report 0.73.1.
+
+**Why.** Flag meaning and prompt order are pinned to that release. A different release can load different files.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Install that exact package and rebuild `keel-pi` from `setup/docker/keel-pi.Dockerfile`.
+
+<a id="pi-02"></a>
+
+### PI-02 Append file
+
+**Level.** CRITICAL
+
+**Check.** Every launch passes `--append-system-prompt` with a file path under `$KEEL_ROOT/.keel/runs/`. The value is a file, not inline text.
+
+**Why.** Pi treats a missing flag as a request to load `APPEND_SYSTEM.md` from the project or the agent directory. Inline text also hits the operating-system argument limit.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Keep the launch writer on a file path, and pass that flag on every role.
+
+<a id="pi-03"></a>
+
+### PI-03 Discovery flags
+
+**Level.** CRITICAL
+
+**Check.** The launch argv contains `-ne` and `-np`. It does not contain `-nc`, `-ns`, or `-e`.
+
+**Why.** `-ne` turns off extension discovery. `-np` turns off prompt templates. `-nc` would turn off `AGENTS.md` and `CLAUDE.md`. `-ns` would turn off skills. An explicit `-e` still loads an extension even when `-ne` is set.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Keep `-ne` and `-np`. Do not pass `-nc`, `-ns`, or `-e`.
+
+<a id="pi-04"></a>
+
+### PI-04 Agent directory
+
+**Level.** CRITICAL
+
+**Check.** `PI_CODING_AGENT_DIR` is an empty directory mounted read-only. A missing directory is a failure. An empty directory is a pass.
+
+**Why.** Pi reads extensions, settings, skills, and prompt templates from that directory. A writable directory lets the role plant them.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Create an empty directory for the launch and mount it read-only. Do not mount the host `~/.pi`.
+
+<a id="pi-05"></a>
+
+### PI-05 HOME
+
+**Level.** CRITICAL
+
+**Check.** `HOME` is an empty directory mounted read-only. A missing directory is a failure. `HOME=/tmp` is a failure.
+
+**Why.** With skills left on, Pi also looks at `$HOME/.agents/skills`. A writable home lets the role create that tree.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Point `HOME` at an empty read-only directory. Do not use `/tmp`.
+
+<a id="pi-06"></a>
+
+### PI-06 Skills snapshot
+
+**Level.** CRITICAL
+
+**Check.** `/work/.agents/skills` is mounted read-only from a snapshot of `.agents/skills` on the main branch. The export refuses a symlink. The worktree copy is not the source.
+
+**Why.** A role must not publish a skill for the next role by writing the worktree, and a symlink must not point the catalog outside the snapshot.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Export the tree from `main` with `git ls-tree`, refuse mode `120000`, and mount the result read-only.
+
+<a id="pi-07"></a>
+
+### PI-07 Ancestors of /work
+
+**Level.** CRITICAL
+
+**Check.** The role image has no `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, or `CLAUDE.MD` in any ancestor of `/work`, including `/`. The image build runs the same guard.
+
+**Why.** Pi walks context files from the working directory to filesystem `/`, not only to the git root. A file baked into the image would load after the harness rules.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Keep `setup/docker/ancestor-guard.sh` in the image build. Do not add those names above `/work`.
+
+<a id="pi-08"></a>
+
+### PI-08 Precedence
+
+**Level.** CRITICAL
+
+**Check.** The harness rules in the append file say that harness rules win, and that this covers Project Context files (`AGENTS.md` and `CLAUDE.md`) and skill descriptions.
+
+**Why.** Pi places Project Context and the skills catalog after the append. Those texts are untrusted. The harness states which side wins.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Keep that sentence in the harness part of the append file.
+
+<a id="pi-09"></a>
+
+### PI-09 Extensions
+
+**Level.** CRITICAL
+
+**Check.** The row is present and recorded as not applicable. This step does not load an extension.
+
+**Why.** A missing row must not look like a pass. An extension can add tools and change the prompt, so discovery stays off until a later step vendors one and pins its hash.
+
+**If it fails.** FAIL, including when the row is missing. The verdict is not ready.
+
+**How to fix.** Keep the recorded not-applicable row. Do not pass `-e`.

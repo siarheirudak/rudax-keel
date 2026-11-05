@@ -22,7 +22,7 @@ A role sees the folder roots in `setup/allow/<role>.paths`, and nothing else. Th
 | qa | `qa-stub/` | none |
 | researcher | `research-stub/` | none |
 
-`setup/deny/base` always withholds secret basenames (`.env` and the other names in that file), `.keel/logs/`, `.keel/runs/`, `.keel/deny.local`, and `.git`. `.keel/decisions/` is withheld from every role except the orchestrator and the architect. `.agents/` is withheld from every role except the skills auditor. `.keel/deny.local` may add paths. A line that tries to remove a base entry refuses the launch. The file is read once per task. Roles cannot edit it.
+`setup/deny/base` always withholds secret basenames (`.env` and the other names in that file), `.keel/logs/`, `.keel/runs/`, `.keel/deny.local`, and `.git`. `.keel/decisions/` is withheld from every role except the orchestrator and the architect. `.agents/` is withheld. `.agents/skills` is the exception: every launchable role may read it, and the harness mounts that tree read-only from a snapshot of the main branch. The rest of `.agents/` stays withheld, including from the skills auditor. `.keel/deny.local` may add paths. A line that tries to remove a base entry refuses the launch. The file is read once per task. Roles cannot edit it.
 
 D1 confidence notes and the handoff for a task live at `.keel/decisions/<task-id>/` in the product git tree (`d1.md`, `handoff.md`). The orchestrator can write them. The architect can read them. The developer, the tester, and the auditor cannot. A public product repository publishes those files. The harness prints that warning once. This repository does not commit task decisions.
 

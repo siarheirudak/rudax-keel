@@ -16,7 +16,7 @@ Three layers carry that idea. The first two exist in the repository. The third i
 
 `setup/keel.sh role` and `role-env` mount only the folder roots in `setup/allow/<role>.paths`. An unknown name, an empty list, a glob, or a path that escapes the tree refuses the launch. There is no whole-tree fallback.
 
-`setup/deny/base` withholds secret basenames and the harness paths `.keel/logs/`, `.keel/runs/`, `.keel/deny.local`, and `.git`. `.keel/decisions/` is withheld from every role except the orchestrator and the architect. `.agents/` is withheld from every role except the skills auditor. A project may add paths in `.keel/deny.local`. It cannot remove a base entry. The project file is read once per task. Roles cannot read or write it.
+`setup/deny/base` withholds secret basenames and the harness paths `.keel/logs/`, `.keel/runs/`, `.keel/deny.local`, and `.git`. `.keel/decisions/` is withheld from every role except the orchestrator and the architect. `.agents/` is withheld. `.agents/skills` is granted to every launchable role and is mounted read-only from a snapshot of the main branch. The rest of `.agents/` stays withheld. A project may add paths in `.keel/deny.local`. It cannot remove a base entry. The project file is read once per task. Roles cannot read or write it.
 
 `.keel/decisions/<task-id>/` is in the product git tree when a task records it. The orchestrator can write it. The architect can read it. A public product repository publishes those files. The harness prints that warning once and does not store task decisions itself. This repository does not commit any.
 

@@ -82,11 +82,11 @@ The owner's answers (a D2 question, a skill, a split, an irreversible change, a 
 - **Effort:** L
 - **Done when:** On Linux, a rootful daemon fails ENV-05 and the verdict is not ready. Docker passes only when `SecurityOptions` contains `rootless`. Podman passes only when it is rootless. Docker Desktop on Darwin is an isolation pass only and does not make egress supported. The hardening flags already in `setup/keel.sh` stay, including `--memory-swap` equal to `--memory`. Free space under `KEEL_ROOT` below the configured minimum fails DISK-02 and refuses `setup` / `role`. A separate OS account for secrets is not this step; broker-owned key files are the model sidecar and the push step. The host check refuses `--no-sandbox` and `--disable-setuid-sandbox` and does not start a browser. Chromium running under rootless is Step 20. A hosted CI runner is often rootful. ENV-05 fails there, and the commands that start a container refuse.
 
-### Step 4 — L1 context packaging script
-- **Does:** Package allowed paths + one import level; ADR/discoveries one-file-per-entry; in-memory index (newest first); full text for path/tag/critical matches; token limit → `NEEDS_SPLIT`; CI path-exist / rename-follow / stale-deleted. (Content fencing remains backlog; packaging still treats packaged text as data in the design sense once fences land.)
+### Step 4 — What a role sees at launch
+- **Does:** Write one append file, in order: harness rules, role rules, memory index. Pass that file to Pi 0.73.1 as `--append-system-prompt` on every launch. Send the task brief as the first RPC user message. Load `AGENTS.md` and `CLAUDE.md` only the way Pi does, from the working directory and its ancestors. Mount `.agents/skills` read-only from a snapshot of the main branch. Mount project memory read-only and rebuild its index at each launch. Pass `-ne` and `-np`. Do not pass `-nc` or `-ns`. Point `PI_CODING_AGENT_DIR` and `HOME` at empty read-only directories.
 - **Depends on:** Step 1
 - **Effort:** M
-- **Done when:** Fixture repo packages correctly under token budget; over-limit returns `NEEDS_SPLIT`; stale/renamed paths reported; index not stored on disk.
+- **Done when:** The append order, the Pi flags, the brief channel, the skills snapshot, the memory index, and doctor rows PI-01 through PI-09 hold. A failed or missing PI row is not ready. Import walking, token limits, and `NEEDS_SPLIT` are not this step.
 
 ### Step 5 — Discoveries store (script filter accept/discard)
 - **Does:** Date-prefixed discovery files with front matter; agents may append candidates; host script filter auto-accepts only if schema, existing paths, size, no bypass imperatives, and significance check pass (concrete paths or a rule + non-obvious pitfall/decision). Failures **DISCARDED** (no proposed list). Dossier script writes abort-cause entries. Only harness edits/deletes accepted files. Answers that belong in product memory go into an ADR, `docs/owner-decisions.md`, or a discovery.
