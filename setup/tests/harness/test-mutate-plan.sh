@@ -113,15 +113,76 @@ expect_full() {
   fi
 }
 
+expect_selective() {
+  local file=$1 repo out id
+  shift
+  repo=$root/sel-$(printf '%s' "$file" | tr '/' '-')
+  mkdir -p "$repo/$(dirname "$file")"
+  git_repo "$repo"
+  printf 'a\n' >"$repo/$file"
+  git -C "$repo" add -- "$file"
+  git -C "$repo" commit -qm base
+  git -C "$repo" branch -M main
+  git -C "$repo" update-ref refs/remotes/origin/main HEAD
+  git -C "$repo" checkout -q -b feature
+  printf 'b\n' >"$repo/$file"
+  git -C "$repo" add -- "$file"
+  git -C "$repo" commit -qm change
+  out=$(env -u GITHUB_BASE_REF KEEL_MUTATE_BASE=origin/main KEEL_MUTATE_REPO="$repo" bash "$PLAN")
+  case $out in
+    "RESULT mutate: run "*) ;;
+    *)
+      echo "expected selective run for $file, got: $out" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$out" = "RESULT mutate: run" ]; then
+    echo "expected selective run for $file, got the full set" >&2
+    exit 1
+  fi
+  for id in "$@"; do
+    case $id in
+      '!'*)
+        id=${id#!}
+        if printf '%s\n' "$out" | grep -Eq "(^| )${id}( |$)"; then
+          echo "$file selected ${id}: $out" >&2
+          exit 1
+        fi
+        ;;
+      *)
+        if ! printf '%s\n' "$out" | grep -Eq "(^| )${id}( |$)"; then
+          echo "$file dropped ${id}: $out" >&2
+          exit 1
+        fi
+        ;;
+    esac
+  done
+}
+
 expect_full setup/tests/harness/mutate.py
 expect_full .github/workflows/checks.yml
-expect_full setup/keel-doctor.sh
-expect_full setup/tests/harness/test-attacks.sh
 expect_full setup/tests/harness/mutate-plan.sh
+expect_full setup/tests/harness/mutant-result.py
 expect_full setup/docker/keel-git.Dockerfile
-expect_full setup/allow/developer.paths
 expect_full .github/workflows/mutate-full.yml
 expect_full setup/not-a-mapped-target
+expect_full setup/allow/README.md
+expect_full setup/egress/README.md
+expect_full setup/allow/foo.paths.bak
+expect_full setup/allow/nested/x.paths
+expect_full setup/tests/harness/runtime-stub.sh
+expect_selective setup/allow/developer.paths M45 '!M03' '!M53'
+expect_selective setup/deny/base M51 '!M03' '!M53'
+expect_selective setup/egress/developer.allow M53 '!M03' '!M45'
+expect_selective setup/check.sh M79 '!M03'
+expect_selective setup/keel-doctor.sh M89 M110 '!M03'
+expect_selective setup/docker/ancestor-guard.sh M108 '!M03'
+expect_selective setup/tests/harness/test-attacks.sh M03 M79 '!M80'
+expect_selective setup/tests/harness/test-runtime.sh M80 '!M03'
+expect_selective setup/tests/harness/test-mutant-result.sh M92 M93 '!M03'
+expect_selective setup/tests/harness/test-step4.sh M94 '!M03' '!M99'
+expect_selective setup/tests/harness/test-egress.sh M53 '!M45'
+expect_selective setup/tests/harness/visibility-suite.sh M45 '!M53'
 # A scripts-only edit of the gate is not a skip. Other scripts files still are.
 expect_full scripts/check-gate.sh
 expect_full scripts/gate-jobs.txt

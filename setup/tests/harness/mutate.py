@@ -2,13 +2,13 @@
 """Mutation audit: remove one protection at a time in a temp copy, rerun test-attacks.sh,
 and require that the guarding check(s) stop reporting BLOCKED/CONTAINED.
 Usage: DOCKER="sudo docker" python3 setup/tests/harness/mutate.py [ID ...]   (box/Linux only; ~40 s per mutant)"""
-import os, re, shutil, subprocess, sys, tempfile, concurrent.futures as cf
+import os, py_compile, re, shutil, subprocess, sys, tempfile, concurrent.futures as cf
 HARNESS = os.path.dirname(os.path.abspath(__file__))
 SETUP = os.path.abspath(os.path.join(HARNESS, os.pardir, os.pardir))
 K = 'keel.sh'
 # id: (file, old, new, protection removed, expected red check IDs ([] = known masked by another layer))
 M = {
- 'M01': (K, '-v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c "$*";;', '-v "$R/.git/objects:/base/objects" "${MNT[@]}" -w /work "$IMG" sh -c "$*";;', ':ro on base objects mount (roles)', ['A1']),
+ 'M01': (K, 'crun -v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c "$*"', 'crun -v "$R/.git/objects:/base/objects" "${MNT[@]}" -w /work "$IMG" sh -c "$*"', ':ro on base objects mount (roles)', ['A1']),
  'M02': (K, 'MNT=(-v "$W:/work:$m" -v "$W/.git:/work/.git:ro"', 'MNT=(-v "$W:/work:$m" -v "$W/.git:/work/.git"', ':ro on pointer file bind', ['A2']),
  'M03': (K, 'HARDEN=(--rm --network none ', 'HARDEN=(--rm ', '--network none', ['N1']),
  'M04': (K, 'GITENV=(-e HOME=/tmp ', 'GITENV=(-e "GH_TOKEN=${GH_TOKEN:-}" -e "GITHUB_TOKEN=${GITHUB_TOKEN:-}" -e HOME=/tmp ', 'token passed with -e NAME=value', ['N2']),
@@ -135,6 +135,67 @@ STEP4 = {
 }
 M['M15'] = (K, M['M13'][1], M['M13'][2], M['M15'][3], M['M15'][4])  # applied together with M14 below
 GREEN = re.compile(r'^(BLOCKED|CONTAINED|PARTIAL|N/A)')
+PARSE_ERROR = 'mutated file does not parse'
+EMPTY_RESULT = 'empty RESULT'
+
+def apply_edits(text, edits):
+    """Replace each old string once. Zero or many matches is an invalid mutant."""
+    for old, new in edits:
+        count = text.count(old)
+        if count != 1:
+            return None, 'mutation did not apply (%s matches)' % count
+        text = text.replace(old, new, 1)
+    return text, None
+
+def mutated_file_parses(path):
+    """True when the applied file is syntactically valid for its language."""
+    if path.endswith('.py'):
+        try:
+            py_compile.compile(path, doraise=True)
+        except py_compile.PyCompileError:
+            return False
+        return True
+    if path.endswith('.sh'):
+        proc = subprocess.run(
+            ['bash', '-n', path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return proc.returncode == 0
+    return True
+
+def collect_results(out):
+    return dict(re.findall(r'^RESULT ([^:]+): (.*)$', out or '', re.M))
+
+def red_from_results(res):
+    return sorted(k for k, v in res.items() if not GREEN.match(v))
+
+def judge(_exp, out, applied_error=None, parse_failed=False):
+    """Return (red, detail). red is None when the mutant is invalid.
+
+    An apply miss, a file that does not parse, or a RESULT dict with no lines
+    is an error. An empty expected list does not turn a missing RESULT into a pass.
+    """
+    if applied_error:
+        return None, applied_error
+    if parse_failed:
+        return None, PARSE_ERROR
+    res = collect_results(out)
+    if not res:
+        return None, EMPTY_RESULT
+    return red_from_results(res), res
+
+def verdict_tag(exp, red):
+    if red is None:
+        return 'ERROR'
+    ok = set(exp) <= set(red) if exp else True
+    if not ok:
+        return 'NO'
+    if exp:
+        return 'yes'
+    if not red:
+        return 'masked (expected)'
+    return 'yes (extra)'
 
 def cleanup_ns(mid):
     ns = mid.lower()
@@ -188,11 +249,15 @@ def run(mid):
     edits = [(old, new)] + list(M[mid][5] if len(M[mid]) > 5 else []) + ([(M['M14'][1], M['M14'][2])] if mid == 'M15' else [])
     env = dict(os.environ, KEEL_ROOT=os.path.join(d, 'k'), KEEL_NS=mid)
     try:
-        for o, n in edits:
-            if s.count(o) != 1:
-                return mid, what, exp, None, f'mutation did not apply ({s.count(o)} matches)'
-            s = s.replace(o, n)
-        open(p, 'w').write(s)
+        text, applied_error = apply_edits(s, edits)
+        out = ''
+        if applied_error:
+            red, detail = judge(exp, out, applied_error, False)
+            return mid, what, exp, red, detail
+        open(p, 'w').write(text)
+        if not mutated_file_parses(p):
+            red, detail = judge(exp, out, None, True)
+            return mid, what, exp, red, detail
         try:
             if mid == 'M78':
                 script = 'test-attack-results.sh'
@@ -208,9 +273,8 @@ def run(mid):
         except subprocess.TimeoutExpired:
             return mid, what, exp, None, 'timeout'
         open(os.path.join(HARNESS, 'logs', f'mutation-{mid}.log'), 'w').write(out)
-        res = dict(re.findall(r'^RESULT ([^:]+): (.*)$', out, re.M))
-        red = sorted(k for k, v in res.items() if not GREEN.match(v))
-        return mid, what, exp, red, res
+        red, detail = judge(exp, out, None, False)
+        return mid, what, exp, red, detail
     finally:
         cleanup_ns(mid)
         subprocess.run(['sudo', 'rm', '-rf', d], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -225,8 +289,7 @@ if __name__ == '__main__':
     print('|---|---|---|---|---|')
     for mid, what, exp, red, res in rows:
         if red is None: print(f'| {mid} | {what} | {",".join(exp)} | ERROR: {res} | ERROR |'); bad += 1; continue
-        ok = set(exp) <= set(red) if exp else True
-        tag = ('yes' if exp else ('masked (expected)' if not red else 'yes (extra)')) if ok else 'NO'
-        if not ok: bad += 1
+        tag = verdict_tag(exp, red)
+        if tag == 'NO': bad += 1
         print(f'| {mid} | {what} | {",".join(exp) or "(none: masked)"} | {",".join(red) or "-"} | {tag} |')
     sys.exit(1 if bad else 0)

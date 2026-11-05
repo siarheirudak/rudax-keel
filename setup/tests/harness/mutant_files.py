@@ -3,6 +3,7 @@
 
 The map is data. test-mutant-select.py checks it against mutate.M.
 """
+import fnmatch
 import sys
 
 FILES = {
@@ -203,15 +204,128 @@ CI_IDS = [
     "M118",
 ]
 
-# Docker mount probes. Pull-request CI skips these. The daily full run includes them.
+# Docker mount probes, plus M01. Pull-request CI skips these. The daily full run includes them.
 OFFLINE_IDS = [
+    "M01",
     "M99",
     "M100",
     "M102",
     "M106",
 ]
 
+# CI ids, in CI_IDS order. Pull-request selection never includes OFFLINE_IDS.
+VISIBILITY_CI = (
+    "M45",
+    "M46",
+    "M48",
+    "M49",
+    "M50",
+    "M51",
+    "M52",
+    "M70",
+    "M71",
+    "M72",
+    "M104",
+    "M105",
+)
+EGRESS_CI = (
+    "M53",
+    "M54",
+    "M55",
+    "M56",
+    "M57",
+    "M58",
+    "M59",
+    "M60",
+    "M61",
+    "M62",
+    "M63",
+    "M64",
+    "M65",
+    "M66",
+    "M68",
+    "M76",
+    "M77",
+)
+ATTACK_CI = (
+    "M03",
+    "M17",
+    "M27",
+    "M45",
+    "M46",
+    "M47",
+    "M48",
+    "M49",
+    "M50",
+    "M51",
+    "M52",
+    "M53",
+    "M54",
+    "M55",
+    "M56",
+    "M57",
+    "M58",
+    "M59",
+    "M60",
+    "M61",
+    "M62",
+    "M63",
+    "M64",
+    "M65",
+    "M66",
+    "M67",
+    "M68",
+    "M69",
+    "M70",
+    "M71",
+    "M72",
+    "M73",
+    "M74",
+    "M75",
+    "M76",
+    "M77",
+    "M79",
+    "M82",
+    "M83",
+    "M84",
+    "M85",
+)
+RUNTIME_CI = (
+    "M80",
+    "M81",
+    "M86",
+    "M87",
+    "M88",
+    "M89",
+    "M90",
+    "M91",
+)
+STEP4_CI = (
+    "M94",
+    "M95",
+    "M96",
+    "M97",
+    "M98",
+    "M101",
+    "M103",
+    "M104",
+    "M105",
+    "M107",
+    "M108",
+    "M109",
+    "M110",
+    "M111",
+    "M112",
+    "M113",
+    "M114",
+    "M115",
+    "M116",
+    "M117",
+    "M118",
+)
+
 # A change to one of these files selects only the CI mutants mapped to it.
+# Exact policy paths and listed oracle scripts are selective too.
 # Every other changed path under setup/ or .github/ selects the full CI set.
 TARGET_ONLY = frozenset((
     "setup/keel.sh",
@@ -222,20 +336,38 @@ TARGET_ONLY = frozenset((
     "setup/tests/harness/attack-results.sh",
     "setup/lib/runtime.sh",
     "setup/tests/harness/doctor-score.sh",
-    "setup/tests/harness/mutant-result.py",
     "setup/lib/pi_launch.py",
+    "setup/check.sh",
+    "setup/docker/ancestor-guard.sh",
+    "setup/keel-doctor.sh",
 ))
 
-# Fixture files and the oracles for R-H1, R-A1, and R-A8.
-# A change here runs the full CI set.
+# Whole path, or one basename glob under that directory. Not a directory prefix.
+POLICY_SELECT = (
+    ("setup/allow/*.paths", VISIBILITY_CI),
+    ("setup/deny/base", VISIBILITY_CI),
+    ("setup/egress/*.allow", EGRESS_CI),
+)
+
+# Exact oracle scripts. A change selects this CI list, not the full set.
+ORACLE_SCRIPTS = {
+    "setup/tests/harness/test-attacks.sh": ATTACK_CI,
+    "setup/tests/harness/test-attack-results.sh": ("M78",),
+    "setup/tests/harness/test-mutant-result.sh": ("M92", "M93"),
+    "setup/tests/harness/test-runtime.sh": RUNTIME_CI,
+    "setup/tests/harness/test-step4.sh": STEP4_CI,
+    "setup/tests/harness/test-egress.sh": EGRESS_CI,
+    "setup/tests/harness/visibility-suite.sh": VISIBILITY_CI,
+}
+
+# Fixtures and helpers that stay on the full CI set through the setup/ rule.
+# test-runtime.sh and test-mutant-result.sh are selective oracle scripts.
 ORACLE_FILES = (
     "setup/tests/harness/fixtures/runtime-rootless.info",
     "setup/tests/harness/fixtures/runtime-rootful.info",
     "setup/tests/harness/fixtures/runtime-userns.info",
-    "setup/tests/harness/test-runtime.sh",
     "setup/tests/harness/runtime-stub.sh",
     "setup/tests/harness/harness-keel.sh",
-    "setup/tests/harness/test-mutant-result.sh",
 )
 
 # Gate and binder paths outside setup/ and .github/. A change here is not a skip.
@@ -245,11 +377,15 @@ FULL_PATHS = frozenset((
     "scripts/tests/test_gate_jobs.py",
 ))
 
-# Selector files. Covered by the setup/ and .github/ rule; kept so a test can name them.
+# Selector and binder files. A change here runs the full CI set.
 TRIGGERS = [
     "setup/tests/harness/mutate.py",
     "setup/tests/harness/run-tests.sh",
     "setup/tests/harness/mutant_files.py",
+    "setup/tests/harness/mutate-plan.sh",
+    "setup/tests/harness/test-mutant-select.py",
+    "setup/tests/harness/test-mutate-parse.py",
+    "setup/tests/harness/mutant-result.py",
     ".github/workflows/checks.yml",
 ]
 
@@ -261,16 +397,69 @@ class SelectionError(Exception):
     pass
 
 
-def needs_full_set(changed):
-    """True when a changed path is under setup/ or .github/ and is not a mapped target.
+def path_matches(path, pattern):
+    """Whole-path equality, or one basename glob in a fixed directory.
 
-    Gate and binder paths outside those trees are included too. A pull request
-    that only edits one of them is not a skip.
+    A star matches inside that final path segment only. A directory prefix
+    is not a match.
+    """
+    if not any(ch in pattern for ch in "*?["):
+        return path == pattern
+    if "/" not in pattern:
+        return False
+    directory, basepat = pattern.rsplit("/", 1)
+    parent, sep, name = path.rpartition("/")
+    if sep != "/" or parent != directory or not name:
+        return False
+    return fnmatch.fnmatchcase(name, basepat)
+
+
+def policy_ids(path):
+    found = []
+    for pattern, ids in POLICY_SELECT:
+        if path_matches(path, pattern):
+            found.extend(ids)
+    return found
+
+
+def is_selective(path):
+    """True when this path selects a CI list instead of the full set.
+
+    A trigger or a gate path is never selective, even if it is also a mutant
+    edit target.
+    """
+    if path in TRIGGERS or path in FULL_PATHS:
+        return False
+    if path in TARGET_ONLY or path in ORACLE_SCRIPTS:
+        return True
+    return bool(policy_ids(path))
+
+
+def ids_for_path(path):
+    """CI ids contributed by one selective path. Empty when the path is not selective."""
+    if not is_selective(path):
+        return []
+    found = []
+    if path in TARGET_ONLY:
+        found.extend(mid for mid in CI_IDS if path in FILES[mid])
+    script_ids = ORACLE_SCRIPTS.get(path)
+    if script_ids:
+        found.extend(script_ids)
+    found.extend(policy_ids(path))
+    return found
+
+
+def needs_full_set(changed):
+    """True when the diff must run the full CI set.
+
+    A selective edit target, an exact policy path, or a listed oracle script
+    does not. A trigger, a gate path, or any other path under setup/ or
+    .github/ does. A pull request that only edits a gate path is not a skip.
     """
     for path in changed:
-        if path in TARGET_ONLY:
+        if is_selective(path):
             continue
-        if path in FULL_PATHS:
+        if path in FULL_PATHS or path in TRIGGERS:
             return True
         if path.startswith("setup/") or path.startswith(".github/"):
             return True
@@ -281,7 +470,10 @@ def select_mutants(changed):
     """Return (status, ids). status is full, some, or skip."""
     if needs_full_set(changed):
         return ("full", list(CI_IDS))
-    chosen = [mid for mid in CI_IDS if set(changed) & set(FILES[mid])]
+    found = set()
+    for path in changed:
+        found.update(ids_for_path(path))
+    chosen = [mid for mid in CI_IDS if mid in found]
     if not chosen:
         return ("skip", [])
     return ("some", chosen)
@@ -292,15 +484,14 @@ def check_selection(changed, select=None):
     choose = select or select_mutants
     status, ids = choose(list(changed))
     ids = list(ids)
-    changed_set = set(changed)
     if needs_full_set(changed):
         if status != "full" or ids != list(CI_IDS):
             raise SelectionError("full set required")
         return status, ids
-    expected = [mid for mid in CI_IDS if changed_set & set(FILES[mid])]
+    _status, expected = select_mutants(list(changed))
     if expected and (status == "skip" or not ids):
         raise SelectionError("selection dropped every mutant")
-    if expected and (status != "some" or ids != expected):
+    if expected and (status != "some" or ids != list(expected)):
         raise SelectionError("selection does not match the map")
     if not expected and (status != "skip" or ids):
         raise SelectionError("selection does not match the map")
@@ -343,7 +534,10 @@ def main(argv):
         return 0
     if argv[1:2] == ["--check-ids"]:
         return 0 if ids_accepted(argv[2:]) else 1
-    print("usage: mutant_files.py --ci | --decide | --check-ids ID...", file=sys.stderr)
+    print(
+        "usage: mutant_files.py --ci | --full | --decide | --check-ids ID...",
+        file=sys.stderr,
+    )
     return 2
 
 
