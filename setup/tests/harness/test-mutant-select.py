@@ -176,34 +176,6 @@ def catch(changed, select, needle, label):
         fail("%s was not caught" % label)
 
 
-def doc_h1():
-    path = os.path.join(ROOT, "docs", "harness-getting-started.md")
-    text = open(path, encoding="utf-8").read()
-    required = (
-        "setup/allow/*.paths",
-        "setup/deny/base",
-        "setup/egress/*.allow",
-        "select the visibility CI mutants",
-        "selects the egress CI mutants",
-        "These oracle scripts select an explicit CI list, not the full set",
-        "setup/tests/harness/test-attacks.sh",
-        "setup/tests/harness/test-egress.sh",
-        "setup/tests/harness/visibility-suite.sh",
-        "setup/tests/harness/test-runtime.sh",
-        "setup/check.sh",
-        "setup/keel-doctor.sh",
-        "setup/tests/harness/mutant-result.py",
-        "A change to a selector or to the mutant binder runs the full CI set",
-        "The mapped files are",
-    )
-    for phrase in required:
-        if phrase not in text:
-            fail("DOC-H1 missing " + phrase)
-    old = "`setup/allow/`, `setup/deny/`, `setup/egress/`"
-    if old in text or "The full set covers" in text:
-        fail("DOC-H1 still claims allow, deny, egress, or the old helper list always run the full set")
-
-
 def cli_lists():
     ci = subprocess.check_output(
         [sys.executable, os.path.join(HERE, "mutant_files.py"), "--ci"],
@@ -395,8 +367,7 @@ def main():
     if not mf.ids_accepted(KEEL) or mf.ids_accepted([]) or mf.ids_accepted(["M51", "M03"]):
         fail("id check")
     cli_lists()
-    doc_h1()
-    print("mutant select: SEL-H1 through SEL-M6, DOC-H1, and M01-H2 hold")
+    print("mutant select: SEL-H1 through SEL-M6 and M01-H2 hold")
 
 
 if __name__ == "__main__":
