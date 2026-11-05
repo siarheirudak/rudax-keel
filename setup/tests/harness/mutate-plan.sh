@@ -7,7 +7,8 @@
 # "run" with no ids is the full CI set. A missing base, or a git diff that
 # fails, exits 1 with ERROR: mutate: on stderr.
 # The diff is setup/, .github/, and the gate paths outside those trees.
-# A mapped target selects its mutants. Any other file in the diff selects the full set.
+# A mapped target, an exact policy path, or a listed oracle script selects its
+# CI mutants. Any other file in the diff selects the full set.
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 SETUP=$(cd "$HERE/../.." && pwd -P)

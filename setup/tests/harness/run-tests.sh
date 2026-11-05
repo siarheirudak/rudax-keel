@@ -14,6 +14,7 @@ echo "== script modes"
 bash "$SETUP/check.sh" || exit 1
 echo "== mutant select"
 python3 "$HERE/test-mutant-select.py" || exit 1
+python3 "$HERE/test-mutate-parse.py" || exit 1
 python3 "$HERE/mutate-issue.py" --self-test || exit 1
 echo "== mutate plan"
 "$HERE/test-mutate-plan.sh" || exit 1
@@ -21,6 +22,8 @@ echo "== mutant dispatch"
 bash "$HERE/test-resolve-mutant-target.sh" || exit 1
 echo "== mutant result binding"
 bash "$HERE/test-mutant-result.sh" || exit 1
+echo "== mutate schedule"
+bash "$HERE/test-mutate-schedule.sh" || exit 1
 echo "== attack results"
 "$HERE/test-attack-results.sh" || exit 1
 echo "== nested ro probe"
