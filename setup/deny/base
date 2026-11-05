@@ -16,4 +16,5 @@ path .keel/deny.local
 path .git
 path .git/hooks
 except orchestrator,architect path .keel/decisions
-except skills_auditor path .agents
+path .agents
+except orchestrator,architect,tester,developer,auditor,skills_auditor,critic,design_reviewer,verifier,qa,researcher path .agents/skills

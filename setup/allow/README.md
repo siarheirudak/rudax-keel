@@ -6,7 +6,7 @@ Read-only and read-write are fixed in `setup/lib/visibility.py`. `tests/` is rea
 
 `setup/deny/base` is the immutable withhold list (secret basenames and harness paths). `.keel/deny.local` may add paths. A line that tries to remove a base entry refuses the launch. The project file is read once per task, at the first launch, and later edits are ignored. Roles cannot read or write `.keel/deny.local`, `.keel/logs/`, or `.keel/runs/`.
 
-`.keel/decisions/<task-id>/` is mounted for the orchestrator (read-write) and the architect (read-only). Every other role is withheld, including the developer, the tester, and the auditor. `.agents/` is withheld from every role except the skills auditor.
+`.keel/decisions/<task-id>/` is mounted for the orchestrator (read-write) and the architect (read-only). Every other role is withheld, including the developer, the tester, and the auditor. `.agents/skills` is an allow root for every role. The rest of `.agents/` stays withheld, including from the skills auditor. The harness mounts `.agents/skills` read-only from a snapshot of the main branch.
 
 A role launch refuses, and does not start a container, when the launching environment has any name on the exact denylist in `setup/lib/visibility.py` (`LAUNCH_DENY_ENV`). The refuse line names that variable. It does not include the value. The container's environment is the explicit list in `setup/keel.sh`, not a copy of the host environment.
 
