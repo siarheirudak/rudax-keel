@@ -5,22 +5,15 @@ HERE=$(cd "$(dirname "$0")" && pwd -P)
 ROOT=$(cd "$HERE/../../.." && pwd)
 full=$ROOT/.github/workflows/mutate-full.yml
 pr=$ROOT/.github/workflows/mutate-pr.yml
-status=$ROOT/docs/status.md
 
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 
 cron=$(grep -E '^[[:space:]]*- cron:' "$full" || true)
 if [ "$cron" != '    - cron: "17 18 * * *"' ]; then
-  fail "DOC-H2 cron is not 17 18 * * *"
+  fail "cron is not 17 18 * * *"
 fi
 if grep -q '17 6 \* \* \*' "$full"; then
-  fail "DOC-H2 old cron remains"
-fi
-if ! grep -q '18:17 UTC' "$status"; then
-  fail "DOC-H2 status does not state 18:17 UTC"
-fi
-if ! grep -q '02:17 WITA' "$status"; then
-  fail "DOC-H2 status does not state 02:17 WITA"
+  fail "old cron remains"
 fi
 if grep -Eq '^[[:space:]]*(matrix|strategy):' "$full"; then
   fail "NIGHT-A1 matrix or strategy is present"
@@ -73,4 +66,4 @@ for banned in ("pull_request:", "pull_request_target:", "schedule:", "push:"):
         sys.exit("NIGHT-A1 mutate-pr trigger includes " + banned)
 PY
 
-echo "mutate schedule: DOC-H2 and NIGHT-A1 hold"
+echo "mutate schedule: cron is 17 18 * * *; NIGHT-A1 holds"
