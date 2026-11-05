@@ -113,7 +113,7 @@ M = {
  'M102': ('lib/pi_launch.py', 'return "ro"  # skills-mount-ro', 'return "rw"  # skills-mount-ro', 'skills mount is writable', ['PI-A1']),
  'M103': ('lib/pi_launch.py', 'return False  # skills-no-follow', 'return True  # skills-no-follow', 'skills export follows symlinks', ['PI-A4']),
  'M104': ('lib/visibility.py', 'grant_before_parent = True  # skills-carve-out', 'grant_before_parent = False  # skills-carve-out', 'deny carve-out removed', ['PI-A5a']),
- 'M105': ('lib/visibility.py', 'raise PolicyError("allow_denied", "setup/allow/" + role + ".paths", line, rel)  # allow-root-loud', "            withheld.append(logical)\n            continue  # allow-root-loud", 'silent withhold of a denied allow root', ['PI-A5b']),
+ 'M105': ('lib/visibility.py', 'raise PolicyError("allow_denied", "setup/allow/" + role + ".paths", line, rel)  # allow-root-loud', "withheld.append(logical)\n            continue  # allow-root-loud", 'silent withhold of a denied allow root', ['PI-A5b']),
  'M106': ('lib/pi_launch.py', 'return "ro"  # memory-mount-ro', 'return "rw"  # memory-mount-ro', 'memory mount is writable', ['PI-A6']),
  'M107': ('lib/pi_launch.py', 'return True  # memory-sort', 'return False  # memory-sort', 'memory index unsorted', ['PI-H5']),
  'M108': ('docker/ancestor-guard.sh', 'guard_on=1 # ancestor-guard', 'guard_on=0 # ancestor-guard', 'ancestor guard removed', ['PI-A3']),
