@@ -36,6 +36,16 @@ echo "== build image keel-git (native arch: $($DOCKER info --format '{{.Architec
 $DOCKER build -q -t keel-git -f "$SETUP/docker/keel-git.Dockerfile" "$SETUP/docker" >/dev/null || { echo "ERROR: image build failed" >&2; exit 1; }
 echo "== build image keel-proxy"
 $DOCKER build -q -t keel-proxy -f "$SETUP/docker/keel-proxy.Dockerfile" "$SETUP/docker" >/dev/null || { echo "ERROR: proxy image build failed" >&2; exit 1; }
+echo "== build image keel-pi"
+$DOCKER build -q -t keel-pi -f "$SETUP/docker/keel-pi.Dockerfile" "$SETUP/docker" >/dev/null || { echo "ERROR: pi image build failed" >&2; exit 1; }
+echo "== pi 0.73.1"
+PI_DIR=${KEEL_PI_DIR:-$HOME/.cache/keel/pi-0.73.1}
+if [ ! -x "$PI_DIR/node_modules/.bin/pi" ]; then
+  mkdir -p "$PI_DIR"
+  npm install --prefix "$PI_DIR" --silent @mariozechner/pi-coding-agent@0.73.1 || { echo "ERROR: pi install failed" >&2; exit 1; }
+fi
+export NODE_PATH="$PI_DIR/node_modules${NODE_PATH:+:$NODE_PATH}"
+export KEEL_PI_BIN="$PI_DIR/node_modules/.bin/pi"
 rc=0
 echo "== visibility self-test"
 python3 "$SETUP/lib/visibility.py" self-test || rc=1
@@ -54,6 +64,15 @@ open_attacks=$(attack_results_open "$HERE/logs/attacks-$TS.log")
 if [ -n "$open_attacks" ]; then
   echo "ERROR: an attack printed NOT BLOCKED, WRONG REASON, or ERROR" >&2
   printf '%s\n' "$open_attacks" >&2
+  rc=1
+fi
+echo "== step 4     -> logs/step4-$TS.log"
+bash "$HERE/test-step4.sh" > "$HERE/logs/step4-$TS.log" 2>&1 || rc=1
+grep -a '^RESULT ' "$HERE/logs/step4-$TS.log" || true
+open_step4=$(attack_results_open "$HERE/logs/step4-$TS.log")
+if [ -n "$open_step4" ]; then
+  echo "ERROR: a step 4 check printed NOT BLOCKED, WRONG REASON, or ERROR" >&2
+  printf '%s\n' "$open_step4" >&2
   rc=1
 fi
 echo "== keel-doctor (verdict last; on a fresh throwaway repo, the suites wiped theirs)"
@@ -90,11 +109,19 @@ if [ "$mutate_ok" -eq 0 ]; then
   ids=
   case $decision in
     "RESULT mutate: run")
-      ids=$(python3 "$HERE/mutant_files.py" --ci) || {
-        echo "ERROR: mutate: ci list failed" >&2
-        rc=1
-        ids=
-      }
+      if [ "${KEEL_MUTATE_FORCE:-}" = 1 ]; then
+        ids=$(python3 "$HERE/mutant_files.py" --full) || {
+          echo "ERROR: mutate: full list failed" >&2
+          rc=1
+          ids=
+        }
+      else
+        ids=$(python3 "$HERE/mutant_files.py" --ci) || {
+          echo "ERROR: mutate: ci list failed" >&2
+          rc=1
+          ids=
+        }
+      fi
       ;;
     "RESULT mutate: skipped (no harness files changed)")
       ;;

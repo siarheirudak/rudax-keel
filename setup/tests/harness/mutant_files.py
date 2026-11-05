@@ -99,6 +99,31 @@ FILES = {
     "M91": ["setup/keel.sh"],
     "M92": ["setup/tests/harness/mutant-result.py"],
     "M93": ["scripts/check-gate.sh"],
+    "M94": ["setup/lib/pi_launch.py"],
+    "M95": ["setup/lib/pi_launch.py"],
+    "M96": ["setup/lib/pi_launch.py"],
+    "M97": ["setup/lib/pi_launch.py"],
+    "M98": ["setup/lib/pi_launch.py"],
+    "M99": ["setup/lib/pi_launch.py"],
+    "M100": ["setup/lib/pi_launch.py"],
+    "M101": ["setup/lib/pi_launch.py"],
+    "M102": ["setup/lib/pi_launch.py"],
+    "M103": ["setup/lib/pi_launch.py"],
+    "M104": ["setup/lib/visibility.py"],
+    "M105": ["setup/lib/visibility.py"],
+    "M106": ["setup/lib/pi_launch.py"],
+    "M107": ["setup/lib/pi_launch.py"],
+    "M108": ["setup/docker/ancestor-guard.sh"],
+    "M109": ["setup/lib/pi_launch.py"],
+    "M110": ["setup/keel-doctor.sh"],
+    "M111": ["setup/lib/pi_launch.py"],
+    "M112": ["setup/lib/pi_launch.py"],
+    "M113": ["setup/lib/pi_launch.py"],
+    "M114": ["setup/lib/pi_launch.py"],
+    "M115": ["setup/lib/pi_launch.py"],
+    "M116": ["setup/lib/pi_launch.py"],
+    "M117": ["setup/lib/pi_launch.py"],
+    "M118": ["setup/lib/pi_launch.py"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -155,6 +180,35 @@ CI_IDS = [
     "M91",
     "M92",
     "M93",
+    "M94",
+    "M95",
+    "M96",
+    "M97",
+    "M98",
+    "M101",
+    "M103",
+    "M104",
+    "M105",
+    "M107",
+    "M108",
+    "M109",
+    "M110",
+    "M111",
+    "M112",
+    "M113",
+    "M114",
+    "M115",
+    "M116",
+    "M117",
+    "M118",
+]
+
+# Docker mount probes. Pull-request CI skips these. The daily full run includes them.
+OFFLINE_IDS = [
+    "M99",
+    "M100",
+    "M102",
+    "M106",
 ]
 
 # A change to one of these files selects only the CI mutants mapped to it.
@@ -169,6 +223,7 @@ TARGET_ONLY = frozenset((
     "setup/lib/runtime.sh",
     "setup/tests/harness/doctor-score.sh",
     "setup/tests/harness/mutant-result.py",
+    "setup/lib/pi_launch.py",
 ))
 
 # Fixture files and the oracles for R-H1, R-A1, and R-A8.
@@ -264,6 +319,8 @@ def decision_line(changed):
 def ids_accepted(ids):
     if not ids:
         return False
+    if list(ids) == list(CI_IDS) + list(OFFLINE_IDS):
+        return True
     if len(ids) != len(set(ids)):
         return False
     pos = {mid: index for index, mid in enumerate(CI_IDS)}
@@ -276,6 +333,9 @@ def ids_accepted(ids):
 def main(argv):
     if argv[1:2] == ["--ci"]:
         print(" ".join(CI_IDS))
+        return 0
+    if argv[1:2] == ["--full"]:
+        print(" ".join(list(CI_IDS) + list(OFFLINE_IDS)))
         return 0
     if argv[1:2] == ["--decide"]:
         names = [line.strip() for line in sys.stdin if line.strip()]

@@ -33,17 +33,17 @@ LAUNCHABLE = (
 
 # tests is listed rw here so the read-only override below is the one switch.
 MODES = {
-    "orchestrator": {"briefs": "rw", "docs": "ro", "tests": "ro", ".keel/decisions": "rw"},
-    "architect": {"briefs": "ro", "docs": "ro", ".keel/decisions": "ro"},
-    "tester": {"src": "ro", "docs": "ro", "tests": "rw"},
-    "developer": {"src": "rw", "docs": "rw", "tests": "rw"},
-    "auditor": {"src": "ro", "docs": "ro"},
-    "skills_auditor": {"skills-draft": "ro", "skill-review": "ro"},
-    "critic": {"plans": "ro"},
-    "design_reviewer": {"docs": "ro"},
-    "verifier": {"findings": "ro"},
-    "qa": {"qa-stub": "ro"},
-    "researcher": {"research-stub": "ro"},
+    "orchestrator": {"briefs": "rw", "docs": "ro", "tests": "ro", ".keel/decisions": "rw", ".agents/skills": "ro"},
+    "architect": {"briefs": "ro", "docs": "ro", ".keel/decisions": "ro", ".agents/skills": "ro"},
+    "tester": {"src": "ro", "docs": "ro", "tests": "rw", ".agents/skills": "ro"},
+    "developer": {"src": "rw", "docs": "rw", "tests": "rw", ".agents/skills": "ro"},
+    "auditor": {"src": "ro", "docs": "ro", ".agents/skills": "ro"},
+    "skills_auditor": {"skills-draft": "ro", "skill-review": "ro", ".agents/skills": "ro"},
+    "critic": {"plans": "ro", ".agents/skills": "ro"},
+    "design_reviewer": {"docs": "ro", ".agents/skills": "ro"},
+    "verifier": {"findings": "ro", ".agents/skills": "ro"},
+    "qa": {"qa-stub": "ro", ".agents/skills": "ro"},
+    "researcher": {"research-stub": "ro", ".agents/skills": "ro"},
 }
 
 SECRET_ENV = (
@@ -231,6 +231,11 @@ def require_base(rules, file):
     allowed = {"orchestrator", "architect"}
     if not decisions or any(role not in allowed for role in decisions[0].roles) or set(decisions[0].roles) != allowed:
         missing.append("except:.keel/decisions")
+    if fold_key(".agents") not in paths:
+        missing.append("path:.agents")
+    skills = [r for r in rules if r.kind == "except" and fold_key(r.value) == fold_key(".agents/skills")]
+    if len(skills) != 1 or set(skills[0].roles) != set(LAUNCHABLE):
+        missing.append("except:.agents/skills")
     if missing:
         raise PolicyError("deny_base_narrow", file, 0, ",".join(missing))
 
@@ -306,12 +311,28 @@ def mode_for(role, root):
     return mode
 
 
+def _except_grants(folded, role, rules):
+    grant_before_parent = True  # skills-carve-out
+    if not grant_before_parent:
+        return False
+    for rec in rules:
+        if rec.kind != "except" or role not in rec.roles:
+            continue
+        path = fold_key(rec.value)
+        if folded == path or folded.startswith(path + "/"):
+            return True
+    return False
+
+
 def is_denied(rel, role, rules):
     folded = fold_key(rel)
     base = folded.rsplit("/", 1)[-1]
     for rec in rules:
         if rec.kind == "name" and base == fold_key(rec.value):
             return True
+    if _except_grants(folded, role, rules):
+        return False
+    for rec in rules:
         if rec.kind == "path":
             path = fold_key(rec.value)
             if folded == path or folded.startswith(path + "/"):
@@ -660,7 +681,15 @@ def build_mounts(role, work, harness, keel, task, repo, env):
             logical = ".keel/decisions/" + task
         mode = mode_for(role, rel)
         if is_denied(logical, role, rules) or is_denied(rel, role, rules):
-            withheld.append(logical)
+            raise PolicyError("allow_denied", "setup/allow/" + role + ".paths", line, rel)  # allow-root-loud
+        if folded == fold_key(".agents/skills"):
+            import pi_launch
+            host = pi_launch.export_skills(repo, keel, task, work)
+            mode = pi_launch.skills_mount_mode()
+            if not os.path.isdir(host) or os.path.islink(host):
+                raise PolicyError("skills_export", ".agents/skills", line, rel)
+            mounts.append((host, "/work/.agents/skills", mode))
+            mounted.append(logical)
             continue
         if not os.path.isdir(host) or os.path.islink(host):
             if role == "tester" and rel != "tests":
@@ -695,6 +724,11 @@ def build_mounts(role, work, harness, keel, task, repo, env):
         withheld.extend(local_withheld)
     if role != "tester" and not mounted:
         raise PolicyError("allow_empty", "setup/allow/" + role + ".paths", 0, "")
+    import pi_launch
+    mem_host = os.path.join(work, ".keel", "memory")
+    if os.path.islink(mem_host) or not os.path.isdir(mem_host):
+        raise PolicyError("memory_missing", ".keel/memory", 0, "")
+    mounts.append((mem_host, "/work/.keel/memory", pi_launch.memory_mount_mode()))
     detail = ""
     if absent:
         detail = "absent " + ",".join(absent)
@@ -839,8 +873,9 @@ name .env
 path .keel/logs
 path .keel/runs
 path .keel/deny.local
+path .agents
 except orchestrator,architect path .keel/decisions
-except skills_auditor path .agents
+except orchestrator,architect,tester,developer,auditor,skills_auditor,critic,design_reviewer,verifier,qa,researcher path .agents/skills
 """
     rules = parse_deny_base(base, "setup/deny/base")
     try:
@@ -856,8 +891,12 @@ except skills_auditor path .agents
     assert is_denied(".keel/decisions/task-1/d1.md", "developer", merged)
     assert is_denied(".keel/decisions/task-1/d1.md", "tester", merged)
     assert is_denied(".keel/decisions/task-1/d1.md", "auditor", merged)
-    assert is_denied(".agents/skills/a", "auditor", merged)
+    assert not is_denied(".agents/skills/a", "auditor", merged)
+    assert not is_denied(".agents/skills/a", "developer", merged)
     assert not is_denied(".agents/skills/a", "skills_auditor", merged)
+    assert is_denied(".agents/other", "developer", merged)
+    assert is_denied(".agents/other", "skills_auditor", merged)
+    assert is_denied(".agents/other", "auditor", merged)
     try:
         merge_deny(rules, parse_deny_local("- .env\n", ".keel/deny.local"))
         raise SystemExit("drop accepted")
@@ -913,7 +952,7 @@ except skills_auditor path .agents
         os.makedirs(os.path.join(work, "src"))
         os.makedirs(os.path.join(work, "docs"))
         os.makedirs(os.path.join(work, "tests"))
-        os.makedirs(os.path.join(work, ".keel"))
+        os.makedirs(os.path.join(work, ".keel", "memory"))
         with open(os.path.join(work, "src", ".env"), "w", encoding="utf-8") as handle:
             handle.write("SECRET\n")
         with open(os.path.join(work, ".keel", "deny.local"), "w", encoding="utf-8") as handle:
