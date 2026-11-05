@@ -22,7 +22,9 @@ A role sees the folder roots in `setup/allow/<role>.paths`, and nothing else. Th
 | qa | `qa-stub/` | none |
 | researcher | `research-stub/` | none |
 
-`setup/deny/base` always withholds secret basenames (`.env` and the other names in that file), `.keel/logs/`, `.keel/runs/`, `.keel/deny.local`, and `.git`. `.keel/decisions/` is withheld from every role except the orchestrator and the architect. `.agents/` is withheld. `.agents/skills` is the exception: every launchable role may read it, and the harness mounts that tree read-only from a snapshot of the main branch. The rest of `.agents/` stays withheld, including from the skills auditor. `.keel/deny.local` may add paths. A line that tries to remove a base entry refuses the launch. The file is read once per task. Roles cannot edit it.
+`setup/deny/base` always withholds secret basenames (`.env` and the other names in that file), `.keel/logs/`, `.keel/runs/`, `.keel/deny.local`, and `.git`. `.keel/decisions/` is withheld from every role except the orchestrator and the architect. `.agents/` is withheld. `.agents/skills` is the exception: every launchable role may read it, and the harness mounts that tree read-only from a snapshot of the main branch. The skill `keel-write-memory` is included only for the developer and the orchestrator. The rest of `.agents/` stays withheld, including from the skills auditor. `.keel/deny.local` may add paths. A line that tries to remove a base entry refuses the launch. The file is read once per task. Roles cannot edit it.
+
+`.keel/memory/` is mounted read-only for every role. The index reads `.keel/memory/discoveries/` and `.keel/memory/adr/` only. The developer and the orchestrator also get `.keel/candidates/` read-write and `.keel/tools/` read-only. Other roles do not get the candidates directory. Nothing in the task reads candidates into another role’s prompt. The host promotes or deletes them after the iteration. [Discoveries and ADRs](discoveries.md).
 
 D1 confidence notes and the handoff for a task live at `.keel/decisions/<task-id>/` in the product git tree (`d1.md`, `handoff.md`). The orchestrator can write them. The architect can read them. The developer, the tester, and the auditor cannot. A public product repository publishes those files. The harness prints that warning once. This repository does not commit task decisions.
 
@@ -81,7 +83,7 @@ On some hosts the packet filter drops traffic between containers. The doctor’s
 
 A **skill** is a project file of instructions for a role, under `.agents/skills/`. Creating, changing, or deleting one requires the owner’s approval. [Human decisions](owner-decisions.md).
 
-The developer, the tester, QA, and the architect receive project skills. The orchestrator can be asked, in chat, to order a skill. Usage is written to the log. A comparison trial of two versions is reserved for a major stack skill. How that trial would be measured is still open.
+The developer, the tester, QA, and the architect receive project skills. The orchestrator can be asked, in chat, to order a skill. `keel-write-memory` is not one of those shared project skills: the snapshot for the developer and the orchestrator includes it, and the snapshot for every other role omits it. Usage is written to the log. A comparison trial of two versions is reserved for a major stack skill. How that trial would be measured is still open.
 
 Harness checklists for the critic and the reviewers are not project skills. They are generated from `standards/rules.md` and mounted read-only. They do not go through the project skill-approval card. The standard itself is specified in [Quality standard](quality.md) and the file is not in the repository yet.
 
