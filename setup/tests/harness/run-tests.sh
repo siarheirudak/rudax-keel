@@ -78,8 +78,27 @@ if [ -n "$open_step4" ]; then
   printf '%s\n' "$open_step4" >&2
   rc=1
 fi
+echo "== step 5     -> logs/step5-$TS.log"
+bash "$HERE/test-step5.sh" > "$HERE/logs/step5-$TS.log" 2>&1 || rc=1
+grep -a '^RESULT ' "$HERE/logs/step5-$TS.log" || true
+open_step5=$(attack_results_open "$HERE/logs/step5-$TS.log")
+if [ -n "$open_step5" ]; then
+  echo "ERROR: a step 5 check printed NOT BLOCKED, WRONG REASON, or ERROR" >&2
+  printf '%s\n' "$open_step5" >&2
+  rc=1
+fi
 echo "== keel-doctor (verdict last; on a fresh throwaway repo, the suites wiped theirs)"
 [ -n "${KEEL_REPO:-}" ] || "$SETUP/keel.sh" init-repo >/dev/null
+# Outside CI the doctor requires a key file to be present. It does not read it.
+# CI sets CI=true and does not need a vendor key. This placeholder is not a secret.
+if [ "${CI:-}" != "true" ] && [ "${CI:-}" != "1" ] && [ "${KEEL_CI:-}" != "1" ]; then
+  key_root=${KEEL_ROOT:-$HOME/keel-proto}
+  mkdir -p "$key_root/.keel/keys"
+  (umask 077; printf '%s\n' 'local-doctor-placeholder' > "$key_root/.keel/keys/openrouter.key")
+  chmod 600 "$key_root/.keel/keys/openrouter.key"
+  export KEEL_ROOT="$key_root"
+  export KEEL_JUDGE_KEY_FILE="$key_root/.keel/keys/openrouter.key"
+fi
 # The live daemon stays rootful. Bring egress up through the test entrypoint
 # so the doctor can score every other critical check.
 if ! "$HERE/harness-keel.sh" egress-up >/dev/null; then

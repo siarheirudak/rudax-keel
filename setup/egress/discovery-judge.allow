@@ -1,0 +1,2 @@
+# Decisions API host only. The broker also pins POST /api/alpha/decisions.
+openrouter.ai

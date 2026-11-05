@@ -387,7 +387,7 @@ class Suite(object):
         ident = "PI-H5"
         try:
             mem = os.path.join(self.root, "mem-h5", "memory")
-            os.makedirs(mem)
+            os.makedirs(os.path.join(mem, "discoveries"))
             keel = os.path.join(self.root, "mem-h5", "keel")
             os.makedirs(keel)
             entries = [
@@ -395,7 +395,7 @@ class Suite(object):
                 ("2020-01-01-a.md", "2020-01-01", "Earlier", "alpha", "2021-05-02-b"),
             ]
             for name, date, title, tags, superseded in entries:
-                path = os.path.join(mem, name)
+                path = os.path.join(mem, "discoveries", name)
                 with open(path, "w", encoding="utf-8") as handle:
                     handle.write(
                         "---\ndate: {0}\ntitle: {1}\ntags: {2}\nsuperseded_by: {3}\n---\nbody\n".format(
@@ -405,10 +405,10 @@ class Suite(object):
             first = pi_launch.build_memory_index(mem, keel)
             second = pi_launch.build_memory_index(mem, keel)
             text = first["text"]
-            early = text.find("path=2020-01-01-a.md")
-            late = text.find("path=2021-05-02-b.md")
+            early = text.find("path=discoveries/2020-01-01-a.md")
+            late = text.find("path=discoveries/2021-05-02-b.md")
             log = open(os.path.join(keel, ".keel", "logs", "memory-index.log"), encoding="utf-8").read()
-            marked = "mark=SUPERSEDED" in text and "path=2020-01-01-a.md" in text
+            marked = "mark=SUPERSEDED" in text and "path=discoveries/2020-01-01-a.md" in text
             fenced = text.count("[data]") >= 2 and "[/data]" in text
             same = first["text"] == second["text"] and first["sha256"] == second["sha256"]
             logged = "memory_index_sha256={0} ".format(first["sha256"]) in log
@@ -737,8 +737,8 @@ class Suite(object):
         ident = "PI-A-meminj"
         try:
             mem = os.path.join(self.root, "mem-inj")
-            os.makedirs(mem)
-            with open(os.path.join(mem, "note.md"), "w", encoding="utf-8") as handle:
+            os.makedirs(os.path.join(mem, "discoveries"))
+            with open(os.path.join(mem, "discoveries", "note.md"), "w", encoding="utf-8") as handle:
                 handle.write("---\ndate: 2024-01-01\ntitle: hello\nINJECT\x01\ntags: t\n---\nbody\n")
             result = pi_launch.build_memory_index(mem, None)
             text = result["text"]

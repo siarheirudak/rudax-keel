@@ -27,6 +27,7 @@ def mids(start, end):
 
 
 VIS = mids(45, 46) + mids(48, 52) + mids(70, 72) + mids(104, 105)
+VIS_FILE = VIS + ["M128"]
 EGRESS = mids(53, 66) + ["M68", "M76", "M77"]
 ATTACK = ["M03", "M17", "M27"] + mids(45, 77) + ["M79"] + mids(82, 85)
 RUNTIME = ["M80", "M81"] + mids(86, 91)
@@ -35,7 +36,8 @@ KEEL = [
     "M03", "M17", "M27", "M47", "M67", "M69",
     "M73", "M74", "M75", "M82", "M83", "M84", "M85", "M91",
 ]
-PI = mids(94, 98) + ["M101", "M103", "M107", "M109"] + mids(111, 118)
+PI = mids(94, 98) + ["M101", "M103", "M107", "M109"] + mids(111, 118) + ["M123"]
+STEP5 = ["M{0}".format(n) for n in range(119, 139)]
 RESIDUAL = (
     "setup/tests/harness/fixtures/runtime-rootless.info",
     "setup/tests/harness/fixtures/runtime-rootful.info",
@@ -49,6 +51,7 @@ ORACLES = {
     "setup/tests/harness/test-mutant-result.sh": ["M92", "M93"],
     "setup/tests/harness/test-runtime.sh": RUNTIME,
     "setup/tests/harness/test-step4.sh": STEP4,
+    "setup/tests/harness/test-step5.sh": STEP5,
     "setup/tests/harness/test-egress.sh": EGRESS,
     "setup/tests/harness/visibility-suite.sh": VIS,
 }
@@ -72,12 +75,12 @@ def validate():
         for path in paths:
             if not os.path.isfile(os.path.join(ROOT, path)):
                 fail("missing " + path)
-    if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 73:
+    if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93:
         fail("CI id set changed")
     if len(mf.OFFLINE_IDS) != len(set(mf.OFFLINE_IDS)) or len(mf.OFFLINE_IDS) != 5:
         fail("offline id set changed")
-    if len(mf.CI_IDS) + len(mf.OFFLINE_IDS) != 78:
-        fail("full id count is not 78")
+    if len(mf.CI_IDS) + len(mf.OFFLINE_IDS) != 98:
+        fail("full id count is not 98")
     for mid in mf.CI_IDS + mf.OFFLINE_IDS:
         if mid not in mf.FILES:
             fail("listed id not mapped " + mid)
@@ -111,6 +114,7 @@ def validate():
         ("ATTACK_CI", ATTACK),
         ("RUNTIME_CI", RUNTIME),
         ("STEP4_CI", STEP4),
+        ("STEP5_CI", STEP5),
     ):
         got = list(getattr(mf, path))
         if got != ids or got != in_ci_order(ids):
@@ -202,11 +206,11 @@ def main():
     expect_exact(["setup/keel.sh"], KEEL, "SEL-H1")
     if "M03" not in KEEL or "M51" in KEEL:
         fail("SEL-H1 keel set")
-    expect_exact(["setup/lib/visibility.py"], VIS, "SEL-H1 visibility")
-    if set(KEEL) & set(VIS):
+    expect_exact(["setup/lib/visibility.py"], VIS_FILE, "SEL-H1 visibility")
+    if set(KEEL) & set(VIS_FILE):
         fail("keel.sh and visibility.py share a CI mutant")
     both = mf.check_selection(["setup/keel.sh", "setup/lib/visibility.py"])
-    union = [mid for mid in mf.CI_IDS if mid in set(KEEL) | set(VIS)]
+    union = [mid for mid in mf.CI_IDS if mid in set(KEEL) | set(VIS_FILE)]
     if both != ("some", union):
         fail("combined selection %s" % (both,))
 
@@ -215,9 +219,9 @@ def main():
     expect_exact(["setup/tests/harness/attack-results.sh"], ["M78"], "attack-results")
     expect_exact(["setup/check.sh"], ["M79"], "SEL-H6")
     expect_exact(["setup/docker/ancestor-guard.sh"], ["M108"], "ancestor-guard")
-    expect_exact(["setup/keel-doctor.sh"], ["M89", "M110"], "keel-doctor")
+    expect_exact(["setup/keel-doctor.sh"], ["M89", "M110", "M129"], "keel-doctor")
     expect_exact(["setup/lib/pi_launch.py"], PI, "pi_launch")
-    if "M99" in PI or "M01" in PI or len(PI) != 17:
+    if "M99" in PI or "M01" in PI or len(PI) != 18:
         fail("pi_launch CI list includes an offline id")
 
     for path in (

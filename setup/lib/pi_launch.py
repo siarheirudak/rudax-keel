@@ -97,6 +97,19 @@ def memory_scan_root(configured):
     return configured  # memory-index-root
 
 
+def extra_index_roots(memory_dir):
+    return []  # disc-no-candidate-scan
+
+
+def index_rel_ok(rel):
+    rel = rel.replace(os.sep, "/")
+    return rel.startswith("discoveries/") or rel.startswith("adr/")
+
+
+def skill_visible_to(role):
+    return role in ("developer", "orchestrator")
+
+
 def arm_memory_audit(hook):
     sys.addaudithook(hook)  # memory-audit-hook
     return True
@@ -259,24 +272,7 @@ def _under(path, root):
     return path == root or path.startswith(root + os.sep)
 
 
-def build_memory_index(memory_dir, keel=None):
-    """Read headers under memory_dir. Refuse a symlink. Log a fingerprint."""
-    if os.path.islink(memory_dir) or not os.path.isdir(memory_dir):
-        raise visibility.PolicyError("memory_missing", ".keel/memory", 0, memory_dir)
-    opened = []
-
-    def _hook(event, args):
-        if event != "open" or not args:
-            return
-        path = args[0]
-        if not isinstance(path, (str, bytes, os.PathLike)):
-            return
-        opened.append(os.fsdecode(path))
-
-    armed = arm_memory_audit(_hook)
-    start = len(opened)
-    scan = memory_scan_root(memory_dir)
-    rows = []
+def _index_tree(scan, memory_dir, rows):
     for dirpath, dirnames, filenames in os.walk(scan, followlinks=False):
         kept = []
         for name in dirnames:
@@ -298,8 +294,10 @@ def build_memory_index(memory_dir, keel=None):
                 raise visibility.PolicyError("memory_path", path, 0, memory_dir)
             with open(path, "r", encoding="utf-8", errors="replace") as handle:
                 text = handle.read()
-            date, title, tags, superseded = _parse_header(text)
             rel = os.path.relpath(path, memory_dir).replace(os.sep, "/")
+            if not index_rel_ok(rel):
+                continue
+            date, title, tags, superseded = _parse_header(text)
             rows.append({
                 "date": date,
                 "title": title,
@@ -307,6 +305,36 @@ def build_memory_index(memory_dir, keel=None):
                 "path": rel,
                 "superseded_by": superseded,
             })
+
+
+def build_memory_index(memory_dir, keel=None):
+    """Read headers under memory_dir. Refuse a symlink. Log a fingerprint."""
+    if os.path.islink(memory_dir) or not os.path.isdir(memory_dir):
+        raise visibility.PolicyError("memory_missing", ".keel/memory", 0, memory_dir)
+    opened = []
+
+    def _hook(event, args):
+        if event != "open" or not args:
+            return
+        path = args[0]
+        if not isinstance(path, (str, bytes, os.PathLike)):
+            return
+        opened.append(os.fsdecode(path))
+
+    armed = arm_memory_audit(_hook)
+    start = len(opened)
+    scan = memory_scan_root(memory_dir)
+    walk_roots = [scan]
+    for extra in extra_index_roots(memory_dir):
+        if extra not in walk_roots:
+            walk_roots.append(extra)
+    rows = []
+    for scan_root in walk_roots:
+        if not os.path.isdir(scan_root) or os.path.islink(scan_root):
+            if os.path.islink(scan_root):
+                raise visibility.PolicyError("memory_symlink", scan_root, 0, "")
+            continue
+        _index_tree(scan_root, memory_dir, rows)
     scanned = opened[start:]
     for path in scanned:
         if not _under(path, memory_dir):
@@ -419,8 +447,9 @@ def _export_git(repo, dest, follow):
             handle.write(blob)
 
 
-def export_skills(repo, keel, task, work):
-    dest = os.path.join(keel, ".keel", "runs", task, "skills-main")
+def export_skills(repo, keel, task, work, role=None):
+    label = "skills-main" if role is None else "skills-main-" + role
+    dest = os.path.join(keel, ".keel", "runs", task, label)
     if os.path.lexists(dest):
         if os.path.islink(dest):
             raise visibility.PolicyError("skills_symlink", dest, 0, "")
@@ -431,6 +460,36 @@ def export_skills(repo, keel, task, work):
         _export_tree(os.path.join(work, ".agents", "skills"), dest, follow)
     else:
         _export_git(repo, dest, follow)
+    _hide_memory_skill(dest, role)
+    return dest
+
+
+def _hide_memory_skill(dest, role):
+    if skill_visible_to(role):
+        return
+    path = os.path.join(dest, "keel-write-memory")
+    if os.path.islink(path):
+        raise visibility.PolicyError("skills_symlink", path, 0, "")
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+
+
+def export_tools(harness, keel, task):
+    src = os.path.join(harness, "tools")
+    dest = os.path.join(keel, ".keel", "runs", task, "tools")
+    if os.path.lexists(dest):
+        if os.path.islink(dest):
+            raise visibility.PolicyError("tools_symlink", dest, 0, "")
+        shutil.rmtree(dest)
+    if not os.path.isdir(src) or os.path.islink(src):
+        raise visibility.PolicyError("tools_missing", src, 0, "")
+    os.makedirs(dest)
+    for name in os.listdir(src):
+        path = os.path.join(src, name)
+        if os.path.islink(path):
+            raise visibility.PolicyError("tools_symlink", path, 0, "")
+        if os.path.isfile(path):
+            _copy_file(path, os.path.join(dest, name))
     return dest
 
 
