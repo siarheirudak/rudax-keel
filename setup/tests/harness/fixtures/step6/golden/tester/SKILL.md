@@ -5,9 +5,9 @@ description: Test-authoring guidance from the quality standard for the tester.
 
 # keel-standards-tester
 
-Generated from standards/rules.md — do not edit
+Generated from setup/standards/rules.md — do not edit
 
-source-sha256: 9cb42bf2e1f2811d9e8d1e2953d74497a16e6f2f5eee4c073a0771a6e275979b
+source-sha256: b99ed50575565436ccb7863e30b687b6eb080ee4bdde942f2c2a7a4804a4f34d
 
 Reviewers do not flag formatting, style, or naming.
 

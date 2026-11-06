@@ -619,11 +619,6 @@ def fill_repo(repo, temp_root, src):
                 if parent:
                     os.makedirs(parent, exist_ok=True)
                 shutil.copy2(os.path.join(dirpath, name), dest)
-    standards = os.path.join(repo, "standards")
-    if os.path.isdir(standards):
-        dest_std = os.path.join(temp_root, "standards")
-        if not os.path.exists(dest_std):
-            shutil.copytree(standards, dest_std)
 
 def run(mid):
     _f, _old, _new, what, exp = M[mid][:5]

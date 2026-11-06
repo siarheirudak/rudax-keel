@@ -30,7 +30,7 @@ def _load_gen():
 
 gen = _load_gen()
 
-RULES = os.path.join(REPO, "standards", "rules.md")
+RULES = os.path.join(SETUP, "standards", "rules.md")
 VIEWS = os.path.join(SETUP, "standards", "views")
 FIXTURE = os.path.join(HERE, "fixtures", "step6", "rules.md")
 GOLDEN = os.path.join(HERE, "fixtures", "step6", "golden")
@@ -147,7 +147,7 @@ def base_rule(ident="DES-01", extra="", kind="judgment", severity="advice", auth
         "rule: Do the thing.",
         "flag: It breaks the contract.",
         "noflag: It matches the contract.",
-        "source: Fixture source (to verify)",
+        "source: Fixture source",
     ])
     if extra:
         lines.append(extra)
@@ -346,31 +346,73 @@ def _snapshot_problems(dest, role):
     return problems
 
 
+def _role_write(mounts):
+    """Try a write on the skills mount inside a container using the role mounts.
+
+    A pass is only a read-only rejection. Any other docker result is a failure.
+    """
+    skills = [item for item in mounts if item[1] == "/work/.agents/skills"]
+    if len(skills) != 1:
+        return False, "skills mount missing"
+    host, dest, mode = skills[0]
+    if mode != "ro":
+        return False, "mode " + mode
+    docker = step4_check.docker_bin()
+    if shutil.which(docker[0]) is None:
+        return False, "docker missing"
+    script = (
+        "if echo probe > '{0}/pwn'; then echo WROTE; else echo DENIED; fi"
+    ).format(dest)
+    cmd = docker + [
+        "run", "--rm", "--network", "none",
+        "--user", "{0}:{1}".format(os.getuid(), os.getgid()),
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges",
+        "--read-only",
+        "--tmpfs", "/tmp:rw,size=64m",
+    ]
+    for item_host, item_dest, item_mode in mounts:
+        cmd.extend(["-v", "{0}:{1}:{2}".format(item_host, item_dest, item_mode)])
+    cmd.extend(["-w", "/work", "keel-git", "sh", "-c", script])
+    proc = step4_check.run(cmd, timeout=60)
+    out = proc.stdout.decode("utf-8", "replace") + proc.stderr.decode("utf-8", "replace")
+    landed = os.path.lexists(os.path.join(host, "pwn"))
+    if "WROTE" in out or landed:
+        return False, "wrote"
+    if proc.returncode != 0 and "Read-only file system" not in out:
+        tail = " ".join(out.split())[:120] or "docker failed"
+        return False, tail
+    if "DENIED" in out and "Read-only file system" in out and not landed:
+        return True, "read-only"
+    return False, "unexpected"
+
+
 def check_h8():
     root = tempfile.mkdtemp(prefix="s6-h8-")
     try:
         repo, work, keel = step4_check.make_tree(root)
-        bad = []
+        rows = []
+        bad = False
         for role in visibility.LAUNCHABLE:
             dest = pi_launch.export_skills(repo, keel, "h8-" + role, work, role)
             problems = _snapshot_problems(dest, role)
             mounts, _r, _w, _d = step4_check.mounts_for(role, repo, work, keel)
             item = step4_check.mount_named(mounts, "/work/.agents/skills")
             if item is None:
-                problems.append("mount")
+                problems.append("mount missing")
             elif role in pi_launch.standards_roles():
-                if item[2] != "ro":
-                    problems.append("mode")
-                held, detail = step4_check.ro_holds(item[0], item[1], item[2])
-                if detail == "docker missing":
-                    return say("S6-H8", "ERROR", detail)
-                if not held:
-                    problems.append("write")
+                held, detail = _role_write(mounts)
+                if held:
+                    rows.append(role + ": " + detail)
+                else:
+                    problems.append(detail)
             if problems:
-                bad.append(role + ":" + ",".join(problems))
+                bad = True
+                rows.append(role + ": " + ",".join(problems))
+        detail = "; ".join(rows)
         if bad:
-            return say("S6-H8", "NOT BLOCKED", ";".join(bad))
-        return say("S6-H8", "BLOCKED", "own view, read-only, private files absent")
+            return say("S6-H8", "NOT BLOCKED", detail)
+        return say("S6-H8", "BLOCKED", detail)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -547,7 +589,7 @@ def check_a5():
         "reviewers: auditor\n"
         "rule: Do the thing.\n"
         "noflag: It matches the contract.\n"
-        "source: Fixture source (to verify)\n"
+        "source: Fixture source\n"
         "```\n"
     )
     if _must_reject(text, "### DES-01", "flag"):
@@ -567,7 +609,7 @@ def check_a7():
     unknown = document(base_rule("DES-01", extra="frob: no"))
     cases.append((unknown, "frob:", "unknown key"))
     duplicate = document(base_rule("DES-01") + "\n" + base_rule("DES-01", extra=""))
-    cases.append((duplicate, "### DES-01 — Example\n```keys\nkind: judgment\nseverity: advice\nauthors: developer\nreviewers: auditor\nrule: Do the thing.\nflag: It breaks the contract.\nnoflag: It matches the contract.\nsource: Fixture source (to verify)\n```\n\n### DES-01", "duplicate id"))
+    cases.append((duplicate, "### DES-01 — Example\n```keys\nkind: judgment\nseverity: advice\nauthors: developer\nreviewers: auditor\nrule: Do the thing.\nflag: It breaks the contract.\nnoflag: It matches the contract.\nsource: Fixture source\n```\n\n### DES-01", "duplicate id"))
     bad_id = document(base_rule("NOPE"))
     cases.append((bad_id, "### NOPE", "bad id"))
     family = document(base_rule("XYZ-01"))
@@ -650,7 +692,7 @@ def check_a11():
         "rule: Do the thing.\n"
         "flag: It breaks the contract.\n"
         "noflag: It matches the contract.\n"
-        "source: Fixture source (to verify)\n"
+        "source: Fixture source\n"
         "```\n"
     )
     if _must_reject(text, "### DES-01", "orphan"):
@@ -707,7 +749,7 @@ def check_a15():
         "rule: Speculative generality is a defect.\n"
         "flag: It adds an unused layer.\n"
         "noflag: It fits the current layer.\n"
-        "source: Fixture source (to verify)\n"
+        "source: Fixture source\n"
         "```\n"
     )
     parser_ok = _must_reject(text, "### DES-01", "speculative generality")
@@ -730,7 +772,7 @@ def check_a17():
         "rule: Do the thing.\n"
         "flag: It breaks the contract.\n"
         "noflag: It matches the contract.\n"
-        "source: Fixture source (to verify)\n"
+        "source: Fixture source\n"
         "```\n"
     )
     if _must_reject(text, "### COR-01", "evidence bar"):

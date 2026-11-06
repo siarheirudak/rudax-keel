@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate per-role standards views from standards/rules.md.
+"""Generate per-role standards views from setup/standards/rules.md.
 
 Python stdlib only. No network and no environment reads. Suppression syntax
 is rejected. The review step's precondition is an owner-controlled approval
@@ -697,12 +697,8 @@ def render_views(model, source_bytes):
     return views
 
 
-def repo_root():
-    return os.path.dirname(os.path.dirname(_HERE))
-
-
 def rules_path():
-    return os.path.join(repo_root(), "standards", "rules.md")
+    return os.path.join(_HERE, "rules.md")
 
 
 def views_root():

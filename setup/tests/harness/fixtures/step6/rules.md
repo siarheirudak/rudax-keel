@@ -15,7 +15,7 @@ merges: DES-02
 rule: Keep one obvious place for a concern.
 flag: The storage call sits in the view.
 noflag: The call sits next to the existing storage function.
-source: Fixture source (to verify)
+source: Fixture source
 ```
 
 ### TST-01 — Tests
@@ -30,7 +30,7 @@ reviewers: auditor
 rule: A required behavior change has a test that fails when the bug returns.
 flag: The transition changed and no test fails if the change is removed.
 noflag: Existing tests already fail when the behavior is removed.
-source: Fixture source (to verify)
+source: Fixture source
 ```
 
 ### REA-01 — Names
@@ -42,7 +42,7 @@ only: developer
 rule: Names describe behavior.
 flag: A public function is named px.
 noflag: A local name is obvious in a three-line function.
-source: Fixture source (to verify)
+source: Fixture source
 ```
 
 ### STY-01 — Format
@@ -51,7 +51,7 @@ kind: mechanical
 severity: block
 gate: formatter
 rule: The configured formatter is clean.
-source: Fixture source (to verify)
+source: Fixture source
 ```
 
 ## NOT-to-flag
@@ -60,5 +60,5 @@ source: Fixture source (to verify)
 ```keys
 id: SEC-08
 policy: Flag a concrete defect in the changed code. A theoretical suggestion is not a finding.
-source: Fixture source (to verify)
+source: Fixture source
 ```

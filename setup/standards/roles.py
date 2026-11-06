@@ -84,7 +84,7 @@ def front_matter(role):
 
 
 def generated_banner():
-    return "Generated from standards/rules.md — do not edit"
+    return "Generated from setup/standards/rules.md — do not edit"
 
 
 def reviewers_leave_alone():

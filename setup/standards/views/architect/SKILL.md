@@ -5,9 +5,9 @@ description: Design guidance from the quality standard for the architect.
 
 # keel-standards-architect
 
-Generated from standards/rules.md — do not edit
+Generated from setup/standards/rules.md — do not edit
 
-source-sha256: 82112a686750f825609315b4a8a3c1046b8568bfb0102e6341493775fa694bfb
+source-sha256: 17717924e35ed68a58cb2f1054a9f6e36640bf6e6d188bcf7cff84c6220c0128
 
 Reviewers do not flag formatting, style, or naming.
 
