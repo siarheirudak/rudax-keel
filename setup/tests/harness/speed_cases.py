@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -32,6 +33,7 @@ SHARD_CASES = (
     "S-A28", "S-A29", "S-A30", "S-A31", "S-A34", "S-A35", "S-A36",
     "H1", "H2", "H3", "H4",
     "A1", "A2", "A3", "A4", "A5", "A6",
+    "S-P1", "S-P2", "S-P3", "S-P4", "S-P5", "S-P6", "S-P7", "S-P8", "S-P9",
 )
 
 
@@ -880,7 +882,8 @@ def case_h2():
     try:
         tar_path = os.path.join(root, "tree.tar.gz")
         out_dir = os.path.join(root, "out")
-        _write_tar(tar_path, _shard_files([mid], _STUB_REL, _stub_suite(_STUB_LINE)))
+        line = "RESULT A1: BLOCKED"
+        _write_tar(tar_path, _shard_files([mid], _STUB_REL, _stub_suite(line)))
         plan = {
             "ids": [mid],
             "shards": {"0": [mid]},
@@ -892,7 +895,7 @@ def case_h2():
             return False
         got = open(os.path.join(out_dir, mid + ".txt"), encoding="utf-8").read()
         base = open(os.path.join(out_dir, "baseline-" + suite), encoding="utf-8").read()
-        return _STUB_LINE in got and _STUB_LINE in base
+        return line in got and line in base
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -1247,6 +1250,999 @@ def case_a6():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _no(detail):
+    print(detail, file=sys.stderr)
+    return False
+
+
+def _shard_script(rel):
+    text = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+    job = _workflow_jobs(text).get("shard") or ""
+    lines = job.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() != "run: |":
+            continue
+        base = len(line) - len(line.lstrip(" "))
+        body = []
+        for nxt in lines[index + 1:]:
+            if nxt.strip() and (len(nxt) - len(nxt.lstrip(" "))) <= base:
+                break
+            body.append(nxt)
+        if "run-shard" not in "\n".join(body):
+            continue
+        indent = min(len(item) - len(item.lstrip(" ")) for item in body if item.strip())
+        return "\n".join(item[indent:] if len(item) >= indent else item for item in body)
+    return ""
+
+
+def _resolve_job(rel):
+    text = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+    return _workflow_jobs(text).get("resolve-plan") or ""
+
+
+def case_s_p1():
+    """Both workflows keep one read-only run-shard lifecycle and upload k=0..7."""
+    scripts = []
+    for rel in (".github/workflows/mutate-pr.yml", ".github/workflows/mutate-full.yml"):
+        text = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+        jobs = _workflow_jobs(text)
+        shard = jobs.get("shard") or ""
+        if _permission_map(shard) != {"contents": "read"}:
+            return _no("permission " + rel)
+        if "actions/cache" in text or "actions/cache" in shard:
+            return _no("cache " + rel)
+        if "GH_TOKEN" in shard or "GITHUB_TOKEN" in shard or "NPM_TOKEN" in shard:
+            return _no("token " + rel)
+        script = _shard_script(rel)
+        if "env -i" not in script or "run-shard" not in script:
+            return _no("entrypoint " + rel)
+        if '"PATH=$PATH"' not in script:
+            return _no("path " + rel)
+        if "/usr/bin:/bin" in script:
+            return _no("replaced path " + rel)
+        if 'NODE_PATH=$NODE_PATH' not in script or 'KEEL_PI_BIN=$KEEL_PI_BIN' not in script:
+            return _no("forward " + rel)
+        if '"KEEL_CI=1"' not in script:
+            return _no("keel ci " + rel)
+        if "docker build" in script or "gitleaks-install" in script or "npm install" in script:
+            return _no("yaml provision " + rel)
+        if "if: always()" not in shard:
+            return _no("always " + rel)
+        if "raw-out/shard-status.json" not in shard or "raw-out/baseline-*" not in shard:
+            return _no("raw paths " + rel)
+        if "raw-out/work" in shard:
+            return _no("work upload " + rel)
+        for line in shard.splitlines():
+            if line.strip() == "path: raw-out":
+                return _no("broad raw " + rel)
+        if "fromJSON(needs.resolve-plan.outputs.matrix)" not in shard:
+            return _no("matrix " + rel)
+        if 'JOBS: "3"' not in shard:
+            return _no("jobs " + rel)
+        plan_job = _resolve_job(rel)
+        cursor = 0
+        for key in range(8):
+            marker = "name: tree-%d" % key
+            gate = "hashFiles('plan-out/tree-%d.tar.gz')" % key
+            found = plan_job.find(marker, cursor)
+            if found < 0 or gate not in plan_job:
+                return _no("tree %d %s" % (key, rel))
+            cursor = found + len(marker)
+        if "ea165f8d65b6e75b540449e92b4886f43607fa02" not in plan_job:
+            return _no("pin " + rel)
+        scripts.append(script)
+    if scripts[0] != scripts[1]:
+        return _no("lifecycle drift")
+    return True
+
+
+def _source_pins():
+    run = open(os.path.join(ROOT, "setup/tests/harness/run-tests.sh"), encoding="utf-8").read()
+    installer = open(os.path.join(ROOT, "setup/gitleaks-install.sh"), encoding="utf-8").read()
+    image = open(os.path.join(ROOT, "setup/docker/keel-pi.Dockerfile"), encoding="utf-8").read()
+    pi = open(os.path.join(ROOT, "setup/lib/pi_launch.py"), encoding="utf-8").read()
+    gitleaks_ver = "8.30.1"
+    pi_ver = "0.73.1"
+    if gitleaks_ver not in installer or "sha256sum -c" not in installer:
+        return None
+    if "gitleaks-install.sh" not in run:
+        return None
+    if pi_ver not in run or pi_ver not in image or ('PI_PIN = "%s"' % pi_ver) not in pi:
+        return None
+    package = "@mariozechner/pi-coding-agent@%s" % pi_ver
+    if package not in run:
+        return None
+    keys = (
+        "$DOCKER info",
+        "gitleaks-install.sh",
+        "keel-git.Dockerfile",
+        "keel-proxy.Dockerfile",
+        "keel-pi.Dockerfile",
+        package,
+    )
+    try:
+        positions = [run.index(key) for key in keys]
+    except ValueError:
+        return None
+    if positions != sorted(positions):
+        return None
+    return gitleaks_ver, pi_ver, package
+
+
+def _flat_commands(cmds):
+    return "\n".join(" ".join(argv) for argv in cmds)
+
+
+def _contract_ok(cmds, baseline, gitleaks_ver, pi_ver, package):
+    flat = _flat_commands(cmds)
+    keys = (
+        "gitleaks-install.sh",
+        "keel-git.Dockerfile",
+        "keel-proxy.Dockerfile",
+        "keel-pi.Dockerfile",
+        package,
+    )
+    try:
+        positions = [flat.index(key) for key in keys]
+    except ValueError:
+        return False
+    if positions != sorted(positions):
+        return False
+    if gitleaks_ver not in flat or pi_ver not in flat:
+        return False
+    if flat.index("docker info") > flat.index("gitleaks-install.sh"):
+        return False
+    bash_cmds = [argv for argv in cmds if argv[:1] == ["bash"]]
+    installer = os.path.join(baseline, "setup", "gitleaks-install.sh")
+    if bash_cmds != [["bash", installer]]:
+        return False
+    for argv in cmds:
+        if argv[:3] != ["docker", "build", "-q"]:
+            continue
+        dockerfile = argv[argv.index("-f") + 1]
+        context = argv[-1]
+        if not dockerfile.startswith(baseline + os.sep) or not context.startswith(baseline + os.sep):
+            return False
+        if os.path.dirname(dockerfile) != context:
+            return False
+    return True
+
+
+def case_s_p2():
+    pins = _source_pins()
+    if pins is None:
+        return _no("source pins")
+    gitleaks_ver, pi_ver, package = pins
+    baseline = "/validated/baseline"
+    home = "/runner/home"
+    needed = set()
+    for suite in mf.SUITES:
+        needed |= ms.SUITE_NEEDS[suite]
+    cmds = ms.provision_commands(baseline, needed, home, pi_present=False)
+    if not _contract_ok(cmds, baseline, gitleaks_ver, pi_ver, package):
+        return _no("contract")
+    pin = json.loads(json.dumps(cmds))
+    pin[2][0] = pin[2][0].replace(gitleaks_ver, "8.30.2")
+    if _contract_ok(pin, baseline, gitleaks_ver, pi_ver, package):
+        return _no("bad pin accepted")
+    swapped = json.loads(json.dumps(cmds))
+    git_at = next(i for i, argv in enumerate(swapped) if "keel-git.Dockerfile" in " ".join(argv))
+    proxy_at = next(i for i, argv in enumerate(swapped) if "keel-proxy.Dockerfile" in " ".join(argv))
+    swapped[git_at], swapped[proxy_at] = swapped[proxy_at], swapped[git_at]
+    if _contract_ok(swapped, baseline, gitleaks_ver, pi_ver, package):
+        return _no("bad order accepted")
+    wrong_path = json.loads(json.dumps(cmds))
+    wrong_path[git_at][wrong_path[git_at].index("-f") + 1] = "/checkout-main-sentinel/keel-git.Dockerfile"
+    if _contract_ok(wrong_path, baseline, gitleaks_ver, pi_ver, package):
+        return _no("bad path accepted")
+    wrong_setup = json.loads(json.dumps(cmds))
+    wrong_setup[1][1] = os.path.join(baseline, "setup", "other-install.sh")
+    if _contract_ok(wrong_setup, baseline, gitleaks_ver, pi_ver, package):
+        return _no("bad setup accepted")
+    return True
+
+
+def _env_stub():
+    return b"""#!/bin/bash
+if ! command -v node >/dev/null || ! command -v npm >/dev/null; then
+  printf 'RESULT A1: ERROR\\n'
+  exit 1
+fi
+node -e 'require("probe-pkg/package.json")' || exit 1
+test -x "$KEEL_PI_BIN" || exit 1
+printf 'NS=%s\\n' "$KEEL_NS"
+printf 'NODE_PATH=%s\\n' "$NODE_PATH"
+printf 'KEEL_PI_BIN=%s\\n' "$KEEL_PI_BIN"
+printf 'PATH=%s\\n' "$PATH"
+if [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}${NPM_TOKEN:-}${KEEL_SECRET:-}${GITHUB_ENV:-}${DOCKER_AUTH_CONFIG:-}" ]; then
+  printf 'LEAK=1\\n'
+fi
+printf 'RESULT A1: BLOCKED\\n'
+"""
+
+
+def case_s_p3():
+    """NODE_PATH and KEEL_PI_BIN cross env -i and run_suite. Token-like names do not."""
+    root = tempfile.mkdtemp(prefix="env-")
+    try:
+        bin_dir = os.path.join(root, "bin")
+        node_path = os.path.join(root, "modules")
+        os.makedirs(os.path.join(node_path, "probe-pkg"))
+        os.makedirs(bin_dir)
+        open(os.path.join(node_path, "probe-pkg", "package.json"), "w", encoding="utf-8").write("{}\n")
+        node = os.path.join(bin_dir, "node")
+        open(node, "w", encoding="utf-8").write(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "code = sys.argv[sys.argv.index('-e') + 1] if '-e' in sys.argv else ''\n"
+            "root = os.environ.get('NODE_PATH', '').split(':')[0]\n"
+            "raise SystemExit(0 if os.path.isfile(os.path.join(root, 'probe-pkg', 'package.json')) and 'probe-pkg' in code else 1)\n"
+        )
+        os.chmod(node, 0o755)
+        npm = os.path.join(bin_dir, "npm")
+        open(npm, "w", encoding="utf-8").write("#!/bin/sh\nexit 0\n")
+        os.chmod(npm, 0o755)
+        pi_bin = os.path.join(root, "pi")
+        open(pi_bin, "w", encoding="utf-8").write("#!/bin/sh\nexit 0\n")
+        os.chmod(pi_bin, 0o755)
+        poisoned = {
+            "GH_TOKEN": "CANARY_GH_TOKEN",
+            "GITHUB_TOKEN": "CANARY_GITHUB_TOKEN",
+            "NPM_TOKEN": "CANARY_NPM_TOKEN",
+            "KEEL_SECRET": "CANARY_KEEL_SECRET",
+            "DOCKER_AUTH_CONFIG": "CANARY_DOCKER_AUTH",
+        }
+        work = os.path.join(root, "direct")
+        os.makedirs(os.path.join(work, "setup", "tests", "harness"))
+        script = os.path.join(work, "setup", "tests", "harness", "test-mutate-shards.sh")
+        open(script, "wb").write(_env_stub())
+        old = _push_env(dict(poisoned, PATH=bin_dir + ":" + os.environ.get("PATH", "")))
+        try:
+            stdout, code = ms.run_suite(
+                work,
+                "test-mutate-shards.sh",
+                "base",
+                {"NODE_PATH": node_path, "KEEL_PI_BIN": pi_bin},
+            )
+            text = stdout.decode("utf-8")
+            if code != 0 or "NODE_PATH=%s" % node_path not in text or "KEEL_PI_BIN=%s" % pi_bin not in text:
+                return _no("direct child %s %s" % (code, text))
+            if "LEAK=1" in text or "CANARY_" in text:
+                return _no("direct leak")
+            stdout, code = ms.run_suite(
+                work,
+                "test-mutate-shards.sh",
+                "M201",
+                {"NODE_PATH": node_path, "KEEL_PI_BIN": pi_bin},
+            )
+            mutant = stdout.decode("utf-8")
+            if code != 0 or "NS=M201" not in mutant or "CANARY_" in mutant:
+                return _no("mutant child")
+            env = ms.allowlisted_env({"NODE_PATH": node_path, "KEEL_PI_BIN": pi_bin})
+            if any(key.startswith("GH") or "TOKEN" in key or key.startswith("KEEL_SECRET") for key in env):
+                return _no("allowlist keys")
+        finally:
+            _pop_env(old)
+
+        tar_path = os.path.join(root, "tree.tar.gz")
+        _write_tar(tar_path, _shard_files(["M201"], _STUB_REL, _env_stub()))
+        digest = ms.sha256_file(tar_path)
+        plan = {
+            "ids": ["M201"],
+            "shards": {"0": ["M201"]},
+            "suite": {"M201": "test-mutate-shards.sh"},
+            "exp": {"M201": ["A1"]},
+            "skip": False,
+            "sha256": {"0": digest},
+            "full_plan": False,
+            "red_counts": "ci+offline",
+        }
+        workdir = os.path.join(root, "flow")
+        os.makedirs(os.path.join(workdir, "shard-in"))
+        os.symlink(os.path.join(ROOT, "setup"), os.path.join(workdir, "setup"))
+        shutil.copy(tar_path, os.path.join(workdir, "shard-in", "tree-0.tar.gz"))
+        script_path = os.path.join(root, "run.sh")
+        open(script_path, "w", encoding="utf-8").write(_shard_script(".github/workflows/mutate-pr.yml") + "\n")
+        flow_env = dict(os.environ)
+        flow_env.update(poisoned)
+        flow_env.update({
+            "PATH": bin_dir + ":" + os.environ.get("PATH", ""),
+            "PLAN_B64": _plan_b64(plan),
+            "K": "0",
+            "JOBS": "3",
+            "NODE_PATH": node_path,
+            "KEEL_PI_BIN": pi_bin,
+            "HOME": os.environ.get("HOME", root),
+            "TMPDIR": root,
+        })
+        proc = subprocess.run(
+            ["bash", script_path],
+            cwd=workdir,
+            env=flow_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return _no("workflow env %s %s" % (proc.returncode, proc.stderr[-500:]))
+        base = open(os.path.join(workdir, "raw-out", "baseline-test-mutate-shards.sh"), encoding="utf-8").read()
+        got = open(os.path.join(workdir, "raw-out", "M201.txt"), encoding="utf-8").read()
+        for label, body in (("base", base), ("mutant", got)):
+            if "NODE_PATH=%s" % node_path not in body or "KEEL_PI_BIN=%s" % pi_bin not in body:
+                return _no("workflow missing forward " + label)
+            if bin_dir not in body.split("PATH=", 1)[-1]:
+                return _no("workflow path " + label)
+            if "LEAK=1" in body or "CANARY_" in body:
+                return _no("workflow leak " + label)
+        if "NS=base" not in base or "NS=M201" not in got:
+            return _no("workflow namespaces")
+        return True
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _restore_runner(saved):
+    ms._run_allowlisted = saved
+
+
+def case_s_p4():
+    if set(ms.SUITE_NEEDS) != set(mf.SUITES):
+        return _no("suite map")
+    expects = {
+        "test-attacks.sh": {"docker", "gitleaks", "image_git", "image_proxy"},
+        "test-attack-results.sh": set(),
+        "test-mutant-result.sh": set(),
+        "test-runtime.sh": {"docker"},
+        "test-step4.sh": {"docker", "image_git", "image_pi", "host_pi"},
+        "test-step5.sh": set(),
+        "test-step6.sh": {"docker", "image_git"},
+        "test-egress.sh": {"docker", "image_git", "image_proxy"},
+        "visibility-suite.sh": {"docker", "image_git", "image_proxy"},
+        "test-mutant-select.py": set(),
+        "test-mutate-shards.sh": set(),
+    }
+    for suite, need in expects.items():
+        if set(ms.SUITE_NEEDS[suite]) != need:
+            return _no("row " + suite)
+    if "image_proxy" not in ms.union_needs(["test-attacks.sh", "visibility-suite.sh"]):
+        return _no("transitive proxy")
+    if ms.union_needs(["test-step5.sh"]) or ms.union_needs(["test-mutate-shards.sh"]):
+        return _no("empty union")
+    partial = dict(ms.SUITE_NEEDS)
+    partial.pop("test-step5.sh")
+    try:
+        ms.union_needs(["test-attacks.sh"], partial)
+        return _no("partial map accepted")
+    except ms.ShardError as err:
+        if str(err) != "prereq":
+            return _no("partial map error")
+    try:
+        ms.union_needs(["missing.sh"])
+        return _no("unknown suite accepted")
+    except ms.ShardError:
+        pass
+    runtime = ms.provision_commands("/baseline", ms.union_needs(["test-runtime.sh"]), "/home")
+    if runtime != [["docker", "info"]]:
+        return _no("runtime commands %s" % runtime)
+
+    calls = []
+    saved = ms._run_allowlisted
+
+    def spy(argv, env):
+        calls.append(list(argv))
+        if "GH_TOKEN" in env or "NPM_TOKEN" in env:
+            return 9, ""
+        if argv[:2] == ["node", "-e"]:
+            return 0, ""
+        if argv[-1:] == ["version"]:
+            return 0, "8.30.1\n"
+        return 0, ""
+
+    root = tempfile.mkdtemp(prefix="need-")
+    ms._run_allowlisted = spy
+    try:
+        step5 = os.path.join(root, "step5")
+        os.makedirs(step5)
+        tar_path = os.path.join(step5, "tree.tar.gz")
+        out_dir = os.path.join(step5, "out")
+        script = "baseline/setup/tests/harness/test-step5.sh"
+        _write_tar(tar_path, _shard_files(["M201"], script, _stub_suite("RESULT A1: BLOCKED")))
+        old = _push_env({"K": "0", "GH_TOKEN": "CANARY_GH_TOKEN", "NPM_TOKEN": "CANARY_NPM_TOKEN"})
+        try:
+            rc = ms.cmd_run_shard(
+                tar_path,
+                ms.sha256_file(tar_path),
+                out_dir,
+                {"M201": "test-step5.sh"},
+                ["M201"],
+                {"M201": ["A1"]},
+            )
+        finally:
+            _pop_env(old)
+        if rc != 0 or calls:
+            return _no("step5 called provision %s %s" % (rc, calls))
+        if not os.path.isfile(os.path.join(out_dir, "M201.txt")):
+            return _no("step5 mutant missing")
+
+        calls[:] = []
+        home = os.path.join(root, "home")
+        pi_dir = os.path.join(home, ".cache", "keel", "pi-0.73.1", "node_modules")
+        os.makedirs(os.path.join(pi_dir, ".bin"))
+        os.makedirs(os.path.join(pi_dir, "@mariozechner", "pi-coding-agent"))
+        pi_bin = os.path.join(pi_dir, ".bin", "pi")
+        open(pi_bin, "w", encoding="utf-8").write("#!/bin/sh\n")
+        os.chmod(pi_bin, 0o755)
+        open(os.path.join(pi_dir, "@mariozechner", "pi-coding-agent", "package.json"), "w", encoding="utf-8").write(
+            '{"version":"0.73.1"}\n'
+        )
+        base = os.path.join(root, "base")
+        docker = os.path.join(base, "setup", "docker")
+        os.makedirs(docker)
+        for name in ("keel-git", "keel-pi"):
+            open(os.path.join(docker, name + ".Dockerfile"), "w", encoding="utf-8").write("FROM scratch\n")
+        old = _push_env({
+            "KEEL_PI_BIN": "/untrusted/pi",
+            "NODE_PATH": "/untrusted/modules",
+            "KEEL_PI_DIR": "/untrusted/pi-dir",
+            "GH_TOKEN": "CANARY_GH_TOKEN",
+        })
+        try:
+            verified = ms.provision_selected(base, ["test-step4.sh"], {"test-step4.sh": ["M10"]}, home=home)
+        finally:
+            _pop_env(old)
+        if verified.get("KEEL_PI_BIN") != pi_bin:
+            return _no("pi bin not superseded")
+        if not verified.get("NODE_PATH", "").startswith(pi_dir):
+            return _no("node path")
+        if "/untrusted/modules" not in verified.get("NODE_PATH", ""):
+            return _no("inherited node path dropped")
+        joined = " ".join(" ".join(argv) for argv in calls)
+        if "/untrusted/pi-dir" in joined or "/untrusted/pi " in joined:
+            return _no("external pi path used")
+        if base not in joined or "keel-git.Dockerfile" not in joined:
+            return _no("baseline image path missing")
+        node_calls = [argv for argv in calls if argv[:2] == ["node", "-e"]]
+        if not node_calls or "0.73.1" not in node_calls[-1][-1]:
+            return _no("pi probe")
+
+        calls[:] = []
+
+        def missing_docker(argv, env):
+            calls.append(list(argv))
+            if argv[:2] == ["docker", "info"]:
+                return 127, ""
+            return 0, ""
+
+        ms._run_allowlisted = missing_docker
+        bad = os.path.join(root, "bad")
+        os.makedirs(bad)
+        tar_path = os.path.join(bad, "tree.tar.gz")
+        out_dir = os.path.join(bad, "out")
+        files = _shard_files(
+            ["M11"],
+            "baseline/setup/tests/harness/test-step6.sh",
+            _stub_suite("RESULT A1: BLOCKED"),
+        )
+        files["baseline/setup/docker/keel-git.Dockerfile"] = b"FROM scratch\n"
+        _write_tar(tar_path, files)
+        suite_calls = []
+        real_suite = ms.run_suite
+
+        def suite_spy(*args, **kwargs):
+            suite_calls.append(args)
+            return real_suite(*args, **kwargs)
+
+        ms.run_suite = suite_spy
+        old = _push_env({"K": "2"})
+        try:
+            rc = ms.cmd_run_shard(
+                tar_path,
+                ms.sha256_file(tar_path),
+                out_dir,
+                {"M11": "test-step6.sh"},
+                ["M11"],
+                {"M11": ["A1"]},
+            )
+        finally:
+            _pop_env(old)
+            ms.run_suite = real_suite
+        if rc == 0 or suite_calls:
+            return _no("missing docker still ran")
+        err = open(os.path.join(out_dir, "shard-status.json"), encoding="utf-8").read()
+        if "docker_missing" not in err:
+            return _no("docker category")
+        return True
+    finally:
+        _restore_runner(saved)
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _tar_with(path, members):
+    with tarfile.open(path, "w:gz") as tar:
+        for spec in members:
+            info = tarfile.TarInfo(name=spec["name"])
+            kind = spec.get("kind", "file")
+            if kind == "file":
+                blob = spec.get("blob", b"")
+                info.size = len(blob)
+                info.mode = 0o644
+                info.type = tarfile.REGTYPE
+                tar.addfile(info, io.BytesIO(blob))
+            elif kind == "symlink":
+                info.type = tarfile.SYMTYPE
+                info.linkname = spec.get("link", "x")
+                tar.addfile(info)
+            elif kind == "fifo":
+                info.type = tarfile.FIFOTYPE
+                tar.addfile(info)
+
+
+def case_s_p5():
+    """Invalid archives never provision, and builds use the extracted tree."""
+    root = tempfile.mkdtemp(prefix="order-")
+    calls = []
+    saved = ms._run_allowlisted
+    real_suite = ms.run_suite
+
+    def spy(argv, env):
+        calls.append(("prov", list(argv)))
+        return 0, "8.30.1\n"
+
+    def suite_spy(*args, **kwargs):
+        calls.append(("suite", args[1] if len(args) > 1 else ""))
+        return b"RESULT A1: BLOCKED\n", 0
+
+    ms._run_allowlisted = spy
+    ms.run_suite = suite_spy
+    try:
+        out_dir = os.path.join(root, "out")
+        os.makedirs(out_dir)
+        tar_path = os.path.join(root, "bad-path.tar.gz")
+        _tar_with(tar_path, [{"name": "../escape", "blob": b"x"}])
+        try:
+            ms.cmd_run_shard(
+                tar_path, ms.sha256_file(tar_path), out_dir,
+                {"M201": "test-step6.sh"}, ["M201"], {"M201": ["A1"]},
+            )
+            return _no("path accepted")
+        except ms.ShardError as err:
+            if str(err) != "path" or calls:
+                return _no("path provision %s" % err)
+        tar_path = os.path.join(root, "link.tar.gz")
+        _tar_with(tar_path, [{"name": "baseline/link", "kind": "symlink"}])
+        try:
+            ms.cmd_run_shard(
+                tar_path, ms.sha256_file(tar_path), out_dir,
+                {"M201": "test-mutate-shards.sh"}, ["M201"], {"M201": []},
+            )
+            return _no("link accepted")
+        except ms.ShardError as err:
+            if str(err) != "symlink" or calls:
+                return _no("link provision")
+        tar_path = os.path.join(root, "fifo.tar.gz")
+        _tar_with(tar_path, [{"name": "baseline/fifo", "kind": "fifo"}])
+        try:
+            ms.cmd_run_shard(
+                tar_path, ms.sha256_file(tar_path), out_dir,
+                {"M201": "test-mutate-shards.sh"}, ["M201"], {"M201": []},
+            )
+            return _no("fifo accepted")
+        except ms.ShardError as err:
+            if str(err) != "type" or calls:
+                return _no("fifo provision")
+        tar_path = os.path.join(root, "ids.tar.gz")
+        _tar_with(tar_path, [
+            {"name": "baseline/setup/tests/harness/test-mutate-shards.sh", "blob": b"#!/bin/bash\n"},
+            {"name": "ids/M202/setup/keel.sh", "blob": b"x\n"},
+        ])
+        try:
+            ms.cmd_run_shard(
+                tar_path, ms.sha256_file(tar_path), out_dir,
+                {"M201": "test-mutate-shards.sh", "M202": "test-mutate-shards.sh"},
+                ["M201"], {"M201": []},
+            )
+            return _no("id bind accepted")
+        except ms.ShardError as err:
+            if str(err) != "shard" or calls:
+                return _no("bind provision")
+        try:
+            ms.cmd_run_shard(tar_path, "0" * 64, out_dir, {"M201": "test-mutate-shards.sh"}, ["M201"])
+            return _no("digest accepted")
+        except SystemExit as err:
+            if err.code != "sha256" or calls:
+                return _no("digest provision")
+        try:
+            ms.cmd_run_shard(
+                tar_path, ms.sha256_file(tar_path), out_dir,
+                {"M202": "../../x.sh"}, ["M202"], {"M202": ["A1"]},
+            )
+            return _no("suite accepted")
+        except ms.ShardError as err:
+            if str(err) != "suite" or calls:
+                return _no("suite provision")
+
+        checkout = os.path.join(root, "checkout-main-sentinel")
+        os.makedirs(os.path.join(checkout, "setup", "docker"))
+        open(os.path.join(checkout, "setup", "docker", "keel-git.Dockerfile"), "w", encoding="utf-8").write(
+            "FROM scratch\n# SENTINEL_MAIN\n"
+        )
+        tar_path = os.path.join(root, "good.tar.gz")
+        good_out = os.path.join(root, "out-good")
+        _tar_with(tar_path, [
+            {"name": "baseline/setup/docker/keel-git.Dockerfile", "blob": b"FROM scratch\n# BASELINE_TREE\n"},
+            {"name": "baseline/setup/tests/harness/test-step6.sh", "blob": _stub_suite("RESULT A1: BLOCKED")},
+            {"name": "ids/M11/setup/keel.sh", "blob": b"changed\n"},
+        ])
+        cwd = os.getcwd()
+        os.chdir(checkout)
+        try:
+            rc = ms.cmd_run_shard(
+                tar_path, ms.sha256_file(tar_path), good_out,
+                {"M11": "test-step6.sh"}, ["M11"], {"M11": ["A1"]},
+            )
+        finally:
+            os.chdir(cwd)
+        if rc != 0:
+            return _no("good shard %s" % rc)
+        blob = " ".join(" ".join(item[1]) for item in calls if item[0] == "prov")
+        if "checkout-main-sentinel" in blob or "SENTINEL_MAIN" in blob:
+            return _no("checkout dockerfile used")
+        if "keel-git.Dockerfile" not in blob or "/baseline/" not in blob and "baseline/setup/docker" not in blob:
+            return _no("baseline dockerfile missing %s" % blob)
+        if not any(item[0] == "suite" for item in calls):
+            return _no("suite did not run")
+        if calls[0][0] != "prov":
+            return _no("provision after suite")
+        return True
+    finally:
+        ms._run_allowlisted = saved
+        ms.run_suite = real_suite
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _pairs(mid, names):
+    return [(mid, list(names))]
+
+
+def case_s_p6():
+    suite = "test-step6.sh"
+    missing = ms.classify_baseline("2", suite, _pairs("M224", ["S6-H8"]), None, 0)
+    if missing["kind"] != "missing" or missing["red_expected"] or missing["reason"] != "absent":
+        return _no("missing")
+    if missing["ids"] != ["M224"]:
+        return _no("missing ids")
+    decode = ms.classify_baseline("2", suite, _pairs("M224", ["S6-H8"]), b"\xff", 0)
+    if decode["kind"] != "unparseable" or decode["reason"] != "decode" or decode["red_expected"]:
+        return _no("decode")
+    long_line = "RESULT S6-H8: BLOCKED\n" + ("x" * (ms.MAX_LINE + 1))
+    lined = ms.classify_baseline("2", suite, _pairs("M224", ["S6-H8"]), long_line, 0)
+    if lined["kind"] != "unparseable" or lined["reason"] != "line":
+        return _no("line")
+    empty = ms.classify_baseline("2", suite, _pairs("M224", []), "", 0)
+    if empty["kind"] != "unparseable" or empty["reason"] != "empty":
+        return _no("empty")
+    incomplete = ms.classify_baseline(
+        "2", suite, _pairs("M224", ["S6-H8", "S6-H9"]), "RESULT S6-H8: BLOCKED\n", 0
+    )
+    if incomplete["kind"] != "unparseable" or incomplete["missing_expected"] != ["S6-H9"]:
+        return _no("incomplete")
+    duplicate = ms.classify_baseline(
+        "2", suite, _pairs("M224", ["S6-H8"]),
+        "RESULT S6-H8: BLOCKED\nRESULT S6-H8: BLOCKED\n", 0,
+    )
+    conflict = ms.classify_baseline(
+        "2", suite, _pairs("M224", ["S6-H8"]),
+        "RESULT S6-H8: BLOCKED\nRESULT S6-H8: NOT BLOCKED\n", 0,
+    )
+    if duplicate["reason"] != "duplicate" or conflict["reason"] != "conflict":
+        return _no("records")
+    if duplicate["red_expected"] or conflict["red_expected"]:
+        return _no("unsafe red")
+    bad = ms.classify_baseline(
+        "2", suite,
+        [("M224", ["S6-H8"]), ("M225", ["S6-H8"]), ("M226", ["OTHER"])],
+        "RESULT S6-H8: NOT BLOCKED\nRESULT OTHER: BLOCKED\nRESULT CANARY_NAME: NOT BLOCKED\n",
+        0,
+    )
+    if bad["kind"] != "BAD" or bad["ids"] != ["M224", "M225"] or bad["red_expected"] != ["S6-H8"]:
+        return _no("bad ids %s" % bad)
+    if bad["tags"] != ["NOT_BLOCKED"] or bad["extra_red_count"] != 1:
+        return _no("bad tags")
+    rendered = ms.format_finding(bad)
+    if "CANARY_NAME" in rendered or "shard=2" not in rendered or "test-step6.sh" not in rendered:
+        return _no("render %s" % rendered)
+    masked = ms.classify_baseline("0", "test-step5.sh", _pairs("M14", []), None, 0)
+    if masked["kind"] != "missing":
+        return _no("masked waived")
+    usable = ms.classify_baseline(
+        "0", "test-step5.sh", _pairs("M14", []), "RESULT EXTRA: NOT BLOCKED\n", 0
+    )
+    if usable is not None:
+        return _no("extra red changed policy")
+
+    plan = {
+        "ids": ["M224", "M225"],
+        "shards": {"0": ["M224"], "1": ["M225"]},
+        "suite": {"M224": suite, "M225": suite},
+        "exp": {"M224": ["S6-H8"], "M225": ["S6-H8"]},
+        "skip": False,
+        "full_plan": True,
+        "red_counts": "ci+offline",
+    }
+
+    def write(raw):
+        _raw_id(os.path.join(raw, "raw-0"), "M224", "RESULT S6-H8: NOT BLOCKED\n", suite, "RESULT S6-H8: NOT BLOCKED\n")
+        _raw_id(os.path.join(raw, "raw-1"), "M225", "RESULT S6-H8: NOT BLOCKED\n", suite, "RESULT S6-H8: BLOCKED\n")
+
+    rc, text = _grade(plan, write)
+    if rc == 0 or "kind=BAD" not in text or "shard=0" not in text:
+        return _no("mask %s %s" % (rc, text))
+    if "shard=1" in text and "kind=BAD" in text.split("shard=1")[0]:
+        pass
+    saved = ms.check_baseline
+    ms.check_baseline = False
+    try:
+        quiet = ms.baseline_bad_ids(["M01"], {"M01": "s"}, {"M01": ["A1"]}, {})
+        rc_off, text_off = _grade(plan, write)
+    finally:
+        ms.check_baseline = saved
+    if quiet != ([], False) or rc_off != 0 or "kind=BAD" in text_off:
+        return _no("flag off %s %s %s" % (quiet, rc_off, text_off))
+    return True
+
+
+def case_s_p7():
+    canary = "CANARY_SECRET_VALUE"
+    suite = "test-step6.sh"
+    body = (
+        canary + "\n"
+        "\x1b[31mred\x1b[0m\n"
+        "::error file=secret::" + canary + "\n"
+        "::add-mask::" + canary + "\n"
+        "RESULT S6-H8: NOT BLOCKED\n"
+        + ("Y" * (ms.MAX_LINE + 50))
+    )
+    script = (
+        "#!/bin/bash\npython3 - << 'PY'\n"
+        "print(%r)\nprint('\\x1b[31m')\nprint(%r)\nprint('RESULT S6-H8: NOT BLOCKED')\n"
+        "print('Y' * %d)\nPY\n"
+    ) % (canary, "::error file=secret::" + canary, ms.MAX_LINE + 50)
+    finding = ms.classify_baseline("2", suite, _pairs("M224", ["S6-H8"]), body, 0)
+    rendered = ms.render_findings([finding])
+    if canary in rendered or "\x1b" in rendered or "::" in rendered or "Y" * 80 in rendered:
+        return _no("render leaked")
+    if finding["reason"] != "line":
+        return _no("long line kind")
+    injected = ms.classify_baseline(
+        "0\n::warning::" + canary,
+        suite,
+        _pairs("M224", ["S6-H8"]),
+        "RESULT S6-H8: NOT BLOCKED " + canary + "\n::warning::" + canary + "\n",
+        0,
+    )
+    line = ms.format_finding(injected)
+    if canary in line or "\n" in line or "::" in line or "tags=[OTHER]" not in line:
+        return _no("injection %s" % line)
+    ids = ["M%d" % n for n in range(1, 26)] + ["bad id"]
+    wide = ms._finding("BAD", "1", suite, ids, red_expected=["A1"] * 25, tags=["NOT_BLOCKED"])
+    wide_line = ms.format_finding(wide)
+    if "ids_total=26" not in wide_line or "bad id" in wide_line or "M21" in wide_line:
+        return _no("id bound %s" % wide_line)
+    many = [
+        ms._finding("missing", "0", "test-step5.sh", ["M1"], reason="absent")
+        for _ in range(150)
+    ]
+    bounded = ms.render_findings(many)
+    if "records_total=150" not in bounded or "records_omitted=" not in bounded or "truncated" not in bounded:
+        return _no("record bound")
+    if bounded.count("kind=missing") > ms.DIAG_RECORD_CAP:
+        return _no("too many lines")
+    huge = ms.bound_diagnostic_text([canary + ("x" * 5000)], 1)
+    if canary in huge or "truncated=record" not in huge:
+        return _no("byte bound")
+    root = tempfile.mkdtemp(prefix="san-")
+    try:
+        tar_path = os.path.join(root, "tree.tar.gz")
+        out_dir = os.path.join(root, "out")
+        files = _shard_files(["M224"], "baseline/setup/tests/harness/test-step6.sh", script.encode("utf-8"))
+        files["baseline/setup/docker/keel-git.Dockerfile"] = b"FROM scratch\n"
+        _write_tar(tar_path, files)
+        saved = ms._run_allowlisted
+        ms._run_allowlisted = lambda argv, env: (0, "8.30.1\n")
+        old = _push_env({"K": "2"})
+        buf = io.StringIO()
+        err = sys.stderr
+        sys.stderr = buf
+        try:
+            rc = ms.cmd_run_shard(
+                tar_path, ms.sha256_file(tar_path), out_dir,
+                {"M224": suite}, ["M224"], {"M224": ["S6-H8"]},
+            )
+        finally:
+            sys.stderr = err
+            _pop_env(old)
+            ms._run_allowlisted = saved
+        console = buf.getvalue()
+        status = open(os.path.join(out_dir, "shard-status.json"), encoding="utf-8").read()
+        if rc == 0 or canary in console or canary in status or "\x1b" in console or "::" in console:
+            return _no("status leaked")
+        if os.path.isfile(os.path.join(out_dir, "M224.txt")):
+            return _no("mutant ran on bad baseline")
+        return True
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _grade(plan, write_raw, updates=None):
+    raw = tempfile.mkdtemp(prefix="grade-")
+    cwd = os.getcwd()
+    buf = io.StringIO()
+    old_err = sys.stderr
+    try:
+        write_raw(raw)
+        os.chdir(ROOT)
+        env = {
+            "PLAN_B64": _plan_b64(plan),
+            "SHARD_RESULT": "success",
+            "SELECTOR": ms.selector_hash(ROOT),
+            "RAW_DIR": raw,
+            "STATE_PATH": os.path.join(raw, "state.json"),
+            "GH_TOKEN": None,
+            "REPO": None,
+            "RUN_ID": None,
+            "GITHUB_OUTPUT": None,
+            "HEAD_SHA": None,
+        }
+        if updates:
+            env.update(updates)
+        old = _push_env(env)
+        sys.stderr = buf
+        try:
+            return ms.cmd_aggregate(), buf.getvalue()
+        finally:
+            sys.stderr = old_err
+            _pop_env(old)
+            os.chdir(cwd)
+    finally:
+        if sys.stderr is buf:
+            sys.stderr = old_err
+        shutil.rmtree(raw, ignore_errors=True)
+
+
+def case_s_p8():
+    root = tempfile.mkdtemp(prefix="pre-")
+    try:
+        marker = os.path.join(root, "mutant-ran")
+        script = (
+            "#!/bin/bash\n"
+            "if [ \"$KEEL_NS\" != base ]; then printf ran > '%s'; fi\n"
+            "printf 'RESULT A1: NOT BLOCKED\\n'\n" % marker
+        ).encode("utf-8")
+        tar_path = os.path.join(root, "tree.tar.gz")
+        out_dir = os.path.join(root, "out")
+        _write_tar(tar_path, _shard_files(["M201"], _STUB_REL, script))
+        buf = io.StringIO()
+        err = sys.stderr
+        sys.stderr = buf
+        old = _push_env({"K": "0", "TMPDIR": root})
+        try:
+            rc = ms.cmd_run_shard(
+                tar_path, ms.sha256_file(tar_path), out_dir,
+                {"M201": "test-mutate-shards.sh"}, ["M201"], {"M201": ["A1"]},
+            )
+        finally:
+            sys.stderr = err
+            _pop_env(old)
+        console = buf.getvalue()
+        if rc == 0 or os.path.exists(marker) or "kind=BAD" not in console:
+            return _no("preflight %s %s" % (rc, console))
+        if not os.path.isfile(os.path.join(out_dir, "baseline-test-mutate-shards.sh")):
+            return _no("baseline artifact")
+        if os.path.isfile(os.path.join(out_dir, "M201.txt")):
+            return _no("mutant artifact")
+
+        suite = "test-mutate-shards.sh"
+        plan = {
+            "ids": ["M201"],
+            "shards": {"0": ["M201"]},
+            "suite": {"M201": suite},
+            "exp": {"M201": ["A1"]},
+            "skip": False,
+            "full_plan": True,
+            "red_counts": "ci+offline",
+        }
+
+        def green(raw):
+            _raw_id(os.path.join(raw, "raw-0"), "M201", "RESULT A1: NOT BLOCKED\n", suite, "RESULT A1: BLOCKED\n")
+
+        rc, text = _grade(plan, green, {"SHARD_RESULT": "failure"})
+        if rc == 0 or "shard result failure" not in text:
+            return _no("latched shard %s %s" % (rc, text))
+
+        def missing_both(raw):
+            os.makedirs(os.path.join(raw, "raw-0"))
+
+        rc, text = _grade(plan, missing_both)
+        if rc == 0 or text.find("kind=missing") < 0 or text.find("kind=missing") > text.find("binding"):
+            return _no("order %s" % text)
+
+        def status_lie(raw):
+            folder = os.path.join(raw, "raw-0")
+            _raw_id(folder, "M201", "RESULT A1: NOT BLOCKED\n", suite, "RESULT A1: NOT BLOCKED\n")
+            open(os.path.join(folder, "shard-status.json"), "w", encoding="utf-8").write('{"ok": true}\n')
+
+        rc, text = _grade(plan, status_lie)
+        if rc == 0 or "kind=BAD" not in text:
+            return _no("status trust")
+
+        saved_json = ms._github_json
+
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("CANARY_SECRET_URL")
+
+        ms._github_json = boom
+        try:
+            rc, text = _grade(plan, green, {"GH_TOKEN": "t", "REPO": "o/r", "RUN_ID": "1"})
+        finally:
+            ms._github_json = saved_json
+        if rc == 0 or "category=transport" not in text or "CANARY_SECRET_URL" in text:
+            return _no("transport %s %s" % (rc, text))
+
+        both = {
+            "ids": ["M201", "M202"],
+            "shards": {"0": ["M201", "M202"]},
+            "suite": {"M201": suite, "M202": suite},
+            "exp": {"M201": ["A1"], "M202": ["A1"]},
+            "skip": False,
+            "full_plan": False,
+            "red_counts": "ci+offline",
+        }
+
+        def write_both(raw):
+            folder = os.path.join(raw, "raw-0")
+            _raw_id(folder, "M201", "RESULT A1: NOT BLOCKED\n", suite, "RESULT A1: BLOCKED\n")
+            open(os.path.join(folder, "M202.txt"), "w", encoding="utf-8").write("RESULT A1: NOT BLOCKED\n")
+
+        rc, _text = _grade(both, write_both)
+        if rc != 0:
+            return _no("complete grade %s" % rc)
+        return True
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_s_p9():
+    ids = ["M%d" % n for n in range(1, 159)]
+    shards = ms.assign_shards(ids)
+    if [len(group) for group in shards] != [20, 20, 20, 20, 20, 20, 19, 19]:
+        return _no("cap8 sizes")
+    flat = [mid for group in shards for mid in group]
+    if sorted(flat, key=lambda mid: int(mid[1:])) != ids or len(flat) != len(set(flat)):
+        return _no("cap8 coverage")
+    if ms.assign_shards([], 8) != []:
+        return _no("empty")
+    if len(ms.assign_shards(["M1", "M2"], 8)) != 2:
+        return _no("short")
+    four = ms.assign_shards(ids, 4)
+    if [len(group) for group in four] != [40, 40, 39, 39]:
+        return _no("cap4")
+    keys = [str(index) for index in range(8)]
+    names = ["plan"] + ["raw-%s" % key for key in keys] + ["tree-%s" % key for key in keys]
+    if not ms.artifact_names_ok(names, keys):
+        return _no("keys 0..7")
+    if ms.artifact_names_ok(names + ["raw-8"], keys) or ms.artifact_names_ok(names + ["tree-9"], keys):
+        return _no("foreign key")
+    if ms.artifact_names_ok(names + ["raw-0"], keys):
+        return _no("duplicate artifact")
+    for rel in (".github/workflows/mutate-pr.yml", ".github/workflows/mutate-full.yml"):
+        job = _resolve_job(rel)
+        for key in keys:
+            if "name: tree-%s" % key not in job:
+                return _no("upload " + key)
+    return True
+
+
 CASES = {
     "S-H1": case_s_h1,
     "S-H2": case_s_h2,
@@ -1304,6 +2300,15 @@ CASES = {
     "A4": case_a4,
     "A5": case_a5,
     "A6": case_a6,
+    "S-P1": case_s_p1,
+    "S-P2": case_s_p2,
+    "S-P3": case_s_p3,
+    "S-P4": case_s_p4,
+    "S-P5": case_s_p5,
+    "S-P6": case_s_p6,
+    "S-P7": case_s_p7,
+    "S-P8": case_s_p8,
+    "S-P9": case_s_p9,
 }
 
 

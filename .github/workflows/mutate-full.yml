@@ -111,6 +111,26 @@ jobs:
         with:
           name: tree-3
           path: plan-out/tree-3.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: hashFiles('plan-out/tree-4.tar.gz') != ''
+        with:
+          name: tree-4
+          path: plan-out/tree-4.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: hashFiles('plan-out/tree-5.tar.gz') != ''
+        with:
+          name: tree-5
+          path: plan-out/tree-5.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: hashFiles('plan-out/tree-6.tar.gz') != ''
+        with:
+          name: tree-6
+          path: plan-out/tree-6.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: hashFiles('plan-out/tree-7.tar.gz') != ''
+        with:
+          name: tree-7
+          path: plan-out/tree-7.tar.gz
 
   shard:
     needs: resolve-plan
@@ -158,15 +178,26 @@ jobs:
             "JOBS=${JOBS}"
             "PLAN_B64=$PLAN_B64"
             "K=$K"
+            "KEEL_CI=1"
           )
           if [ -n "${DOCKER_HOST:-}" ]; then
             clean+=("DOCKER_HOST=$DOCKER_HOST")
           fi
+          if [ -n "${NODE_PATH:-}" ]; then
+            clean+=("NODE_PATH=$NODE_PATH")
+          fi
+          if [ -n "${KEEL_PI_BIN:-}" ]; then
+            clean+=("KEEL_PI_BIN=$KEEL_PI_BIN")
+          fi
           env -i "${clean[@]}" python3 setup/tests/harness/mutate_shards.py run-shard
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
         with:
           name: raw-${{ matrix.k }}
-          path: raw-out
+          path: |
+            raw-out/shard-status.json
+            raw-out/baseline-*
+            raw-out/*.txt
 
   mutants:
     needs: [fresh, resolve-plan, shard]
