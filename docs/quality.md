@@ -2,11 +2,11 @@
 
 Reviewers and gates in the v1 design share one written standard. They do not each invent rules, and they do not comment on style.
 
-**Status.** The source file is `standards/rules.md`. The generator is `setup/standards/gen.py`. It writes one view per role under `setup/standards/views/`. Each model role mounts only its own view, read-only, as `keel-standards-<role>`. The static gate view is generated and is not mounted into a model role. The host gate in `setup/keel.sh` is still the path gate. It does not score complexity and it does not run a linter. A hand-edited view fails `gen.py --check`.
+**Status.** The source file is `setup/standards/rules.md`. The generator is `setup/standards/gen.py`. It writes one view per role under `setup/standards/views/`. Each model role mounts only its own view, read-only, as `keel-standards-<role>`. The static gate view is generated and is not mounted into a model role. The host gate in `setup/keel.sh` is still the path gate. It does not score complexity and it does not run a linter. A hand-edited view fails `gen.py --check`.
 
 ## One source file
 
-`standards/rules.md` is the only place a rule is written. A generator turns that file into a view per role. Each view is mounted read-only, as a harness skill, into the role that should see it. A role does not receive the other roles’ views.
+`setup/standards/rules.md` is the only place a rule is written. A generator turns that file into a view per role. Each view is mounted read-only, as a harness skill, into the role that should see it. A role does not receive the other roles’ views.
 
 A rule id is a short code such as `DES-01` or `SEC-03`. The letters are the family. The families the generator knows are:
 
@@ -30,7 +30,7 @@ A rule id is a short code such as `DES-01` or `SEC-03`. The letters are the fami
 | API | Supported request, response, event, and serialized contracts |
 | RES | Bounded work, retries, waits, and resource lifetime |
 
-Assignment is per rule in the source. A family name is not a view. The sentences live in `standards/rules.md`.
+Assignment is per rule in the source. A family name is not a view. The sentences live in `setup/standards/rules.md`.
 
 Judgment rules carry two examples in the generated view: one the reviewer should flag, because behaviour is wrong, and one the reviewer should leave alone, because it is a nitpick. That pair is how a reviewer tells a bug from a preference.
 
@@ -76,7 +76,7 @@ The static gate blocks on its families and lists warnings in the envelope. The c
 
 Suppression syntax is not accepted in the source. A comment is not authorization. The review step needs an owner-controlled approval path before a suppression can be authorized. Until that path exists, a suppression blocks. Advice does not by itself send the change back to the developer.
 
-A rule that can block names one evidence bar. A rule with no bar is advice. An unknown requirement is advice plus a question for the owner. A required gate adapter with no tool behind it blocks. An optional adapter that is not supported is advice, and it is not a passing check. Project budgets and advisory policy are project policy. This standard does not set a universal number. Citations that are not confirmed are marked to verify.
+A rule that can block names one evidence bar. A rule with no bar is advice. An unknown requirement is advice plus a question for the owner. A required gate adapter with no tool behind it blocks. An optional adapter that is not supported is advice, and it is not a passing check. Project budgets and advisory policy are project policy. This standard does not set a universal number. A security citation names an OWASP ASVS 5.0.0 requirement id only when that requirement is in the published text.
 
 ## Related
 

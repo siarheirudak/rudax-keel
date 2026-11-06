@@ -2,7 +2,7 @@
 
 This page is the line between what the repository does and what the v1 design specifies. When another page describes a link, a role mount, or a log, the behaviour is planned unless this page lists it under [Shipped](#shipped).
 
-Nothing in the L0–L11 chain runs. There is no committed task decision and no envelope. `standards/rules.md` is the quality standard. The generator writes a read-only view for each role. `.agents/skills/keel-write-memory/` is the skill that appends a discovery or ADR candidate. The harness creates `.keel/logs/` and `.keel/runs/` at runtime, and it creates candidate and accepted-memory directories when a task needs them. Those notes are not committed in this repository. The bot is a real GitHub account used with the rules below. The pipeline’s “bot opens the pull request” step is still the push stub.
+Nothing in the L0–L11 chain runs. There is no committed task decision and no envelope. `setup/standards/rules.md` is the quality standard. The generator writes a read-only view for each role. `.agents/skills/keel-write-memory/` is the skill that appends a discovery or ADR candidate. The harness creates `.keel/logs/` and `.keel/runs/` at runtime, and it creates candidate and accepted-memory directories when a task needs them. Those notes are not committed in this repository. The bot is a real GitHub account used with the rules below. The pipeline’s “bot opens the pull request” step is still the push stub.
 
 ## Shipped
 
@@ -79,7 +79,7 @@ The candidate size cap starts at 32 KiB, and a note that relies on a rule instea
 
 ### Quality standard
 
-Implemented in `standards/rules.md`, `setup/standards/gen.py`, `setup/standards/roles.py`, and `setup/standards/views/`.
+Implemented in `setup/standards/rules.md`, `setup/standards/gen.py`, `setup/standards/roles.py`, and `setup/standards/views/`.
 
 One source file assigns each rule to the roles that author it, the roles that may cite it, and any mechanical gate facet. The generator writes six views. The developer, architect, tester, auditor, and design reviewer each mount only their own view, read-only. The static gate view is not mounted into a model role. `SEC-08` is a do-not-flag policy and is not a rule id. Merged ids are not emitted. A hand-edited view fails the drift check in the harness.
 

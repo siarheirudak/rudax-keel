@@ -94,8 +94,8 @@ The owner's answers (a D2 question, a skill, a split, an irreversible change, a 
 - **Effort:** M
 - **Done when:** Filter rejects bypass-imperative and insignificant fixtures; abort path writes cause via dossier script; L1 indexes only accepted discoveries; no proposed queue exists; those answers do not get a separate store.
 
-### Step 6 — Standards generator (`standards/rules.md` → per-role views)
-- **Status.** Implemented. The source assigns each rule. Six views are generated. Each model role mounts only its own view, read-only. `SEC-08` and merged ids are not emitted. Judgment rules keep a flag and a do-not-flag example. Suppression syntax is not accepted.
+### Step 6 — Standards generator (`setup/standards/rules.md` → per-role views)
+- **Status.** Implemented. The source is `setup/standards/rules.md`. It assigns each rule. Six views are generated. Each model role mounts only its own view, read-only. `SEC-08` and merged ids are not emitted. Judgment rules keep a flag and a do-not-flag example. Suppression syntax is not accepted.
 - **Depends on:** quality-standard research (done as input)
 - **Effort:** M
 - **Done when:** Generator produces views from one source; role mounts get only their subset; SEC-08 absent from emit-able ids; flag/do-not-flag examples present for judgment rules.
