@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Fail when a pull request mixes process files with anything else.
 
-Process files are .github/**, scripts/**, and setup/** at the root, and
-.pi/** and .agents/** at any depth.
+Process files are .github/**, scripts/**, setup/**, and standards/** at
+the root, and .pi/** and .agents/** at any depth.
 Two paths are ordinary docs, matched as the whole path and ignoring case:
 setup/README.md and setup/TESTING.md. A different path with the same
 basename, such as setup/a/README.md, is still a process file. These names
@@ -36,7 +36,7 @@ import unicodedata
 import urllib.error
 import urllib.request
 
-ROOT_PREFIXES = (".github/", "setup/", "scripts/")
+ROOT_PREFIXES = (".github/", "setup/", "scripts/", "standards/")
 # (^|/)prefix, at any depth. Matched without regard to case.
 NESTED_DIR_PREFIXES = (".pi/", ".agents/")
 AGENT_RULE_NAMES = {
@@ -216,6 +216,9 @@ def self_test():
         ("Setup/TESTING.md", False),
         (".mcp.json", False),
         ("src/app.py", False),
+        ("standards/rules.md", True),
+        ("standards/notes.md", True),
+        ("Standards/rules.md", True),
         ("", True),
         ("setup/../README.md", True),
         ("/etc/passwd", True),

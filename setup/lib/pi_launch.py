@@ -73,6 +73,59 @@ def skills_mount_mode():
     return "ro"  # skills-mount-ro
 
 
+def standards_roles():
+    return ("developer", "architect", "tester", "auditor", "design_reviewer")
+
+
+def standards_mount_mode():
+    return "ro"  # standards-mount-ro
+
+
+def standards_extra_skill():
+    return False  # standards-no-extra-skill
+
+
+def standards_mount_private():
+    return False  # standards-no-private-files
+
+
+def _harness_root():
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def install_standards_skill(dest, role):
+    """Copy this role's generated standards view into its skills snapshot.
+
+    Only keel-standards-<role> is added. The source, the generator, and the
+    other roles' views stay out of the snapshot.
+    """
+    if role not in standards_roles():
+        return
+    view = os.path.join(_harness_root(), "standards", "views", role, "SKILL.md")
+    if os.path.islink(view) or not os.path.isfile(view):
+        return
+    folder = os.path.join(dest, "keel-standards-" + role)
+    os.makedirs(folder)
+    with open(view, "rb") as incoming:
+        data = incoming.read()
+    with open(os.path.join(folder, "SKILL.md"), "wb") as outgoing:
+        outgoing.write(data)
+    if standards_extra_skill():
+        for other in standards_roles():
+            if other == role:
+                continue
+            extra = os.path.join(dest, "keel-standards-" + other)
+            os.makedirs(extra, exist_ok=True)
+            extra_file = os.path.join(extra, "SKILL.md")
+            if not os.path.exists(extra_file):
+                with open(extra_file, "w", encoding="utf-8") as handle:
+                    handle.write("extra\n")
+    if standards_mount_private():
+        for leaf in ("rules.md", "gen.py", "roles.py"):
+            with open(os.path.join(dest, leaf), "w", encoding="utf-8") as handle:
+                handle.write("private\n")
+
+
 def memory_mount_mode():
     return "ro"  # memory-mount-ro
 
@@ -461,6 +514,7 @@ def export_skills(repo, keel, task, work, role=None):
     else:
         _export_git(repo, dest, follow)
     _hide_memory_skill(dest, role)
+    install_standards_skill(dest, role)
     return dest
 
 

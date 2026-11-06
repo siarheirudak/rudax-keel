@@ -36,7 +36,7 @@ KEEL = [
     "M03", "M17", "M27", "M47", "M67", "M69",
     "M73", "M74", "M75", "M82", "M83", "M84", "M85", "M91",
 ]
-PI = mids(94, 98) + ["M101", "M103", "M107", "M109"] + mids(111, 118) + ["M123"]
+PI = mids(94, 98) + ["M101", "M103", "M107", "M109"] + mids(111, 118) + ["M123", "M224", "M225", "M226"]
 STEP5 = ["M{0}".format(n) for n in range(119, 139)]
 RESIDUAL = (
     "setup/tests/harness/fixtures/runtime-rootless.info",
@@ -94,14 +94,17 @@ def validate():
         for path in paths:
             if not os.path.isfile(os.path.join(ROOT, path)):
                 fail("missing " + path)
-    new_ids = ["M%d" % n for n in range(139, 177)]
-    if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93 + len(new_ids):
+    legacy_ids = ["M%d" % n for n in range(139, 177)]
+    step6_ids = ["M%d" % n for n in range(207, 233)]
+    if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93 + len(legacy_ids) + len(step6_ids):
         fail("CI id set changed")
-    if mf.CI_IDS[-len(new_ids):] != new_ids:
+    if mf.CI_IDS[-len(step6_ids):] != step6_ids:
+        fail("new CI ids are not M207-M232")
+    if mf.CI_IDS[-len(step6_ids) - len(legacy_ids):-len(step6_ids)] != legacy_ids:
         fail("new CI ids are not M139-M176")
     if len(mf.OFFLINE_IDS) != len(set(mf.OFFLINE_IDS)) or len(mf.OFFLINE_IDS) != 5:
         fail("offline id set changed")
-    if len(mf.CI_IDS) + len(mf.OFFLINE_IDS) != 98 + len(new_ids):
+    if len(mf.CI_IDS) + len(mf.OFFLINE_IDS) != 98 + len(legacy_ids) + len(step6_ids):
         fail("full id count drifted")
     if len(mf.FULL_ONLY) != 40 or set(mf.FULL_ONLY) & set(mf.CI_IDS + mf.OFFLINE_IDS):
         fail("FULL_ONLY is not the remaining ids")
@@ -251,7 +254,7 @@ def main():
     expect_exact(["setup/docker/ancestor-guard.sh"], ["M108"], "ancestor-guard")
     expect_exact(["setup/keel-doctor.sh"], ["M89", "M110", "M129"], "keel-doctor")
     expect_exact(["setup/lib/pi_launch.py"], with_dependents("setup/lib/pi_launch.py", PI), "pi_launch")
-    if "M99" in PI or "M01" in PI or len(PI) != 18:
+    if "M99" in PI or "M01" in PI or len(PI) != 21:
         fail("pi_launch CI list includes an offline id")
 
     for path in (

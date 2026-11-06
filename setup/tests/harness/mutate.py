@@ -184,6 +184,32 @@ M = {
  'M174': ('tests/harness/mutate_shards.py', 'check_tree_entries = True  # tree-entry-check', 'check_tree_entries = False  # tree-entry-check', 'tree entry checks are off', ['S-A29']),
  'M175': ('.github/workflows/mutate-pr.yml', '    permissions: # shard-readonly\n      contents: read', '    permissions: # shard-readonly\n      actions: write\n      contents: read', 'pull-request shard job can write actions', ['S-A35']),
  'M176': ('.github/workflows/mutate-full.yml', '    permissions: # shard-readonly\n      contents: read', '    permissions: # shard-readonly\n      actions: write\n      contents: read', 'full-run shard job can write actions', ['S-A35']),
+ 'M207': ('standards/gen.py', 'return True  # exclude-policy-ids', 'return False  # exclude-policy-ids', 'SEC-08 can be emitted', ['S6-A3', 'S6-A4']),
+ 'M208': ('standards/gen.py', 'return True  # apply-merges', 'return False  # apply-merges', 'merge validation skipped', ['S6-H6', 'S6-A6']),
+ 'M209': ('standards/gen.py', 'return True  # require-examples', 'return False  # require-examples', 'judgment rule without examples', ['S6-A5']),
+ 'M210': ('standards/gen.py', 'return True  # honor-author-only', 'return False  # honor-author-only', 'author-only ids reach reviewers', ['S6-H5', 'S6-H12']),
+ 'M211': ('standards/gen.py', 'return True  # check-extra-files', 'return False  # check-extra-files', 'drift check ignores extra files', ['S6-A2']),
+ 'M212': ('standards/gen.py', 'return True  # check-fails-on-drift', 'return False  # check-fails-on-drift', 'drift check always passes', ['S6-A1']),
+ 'M213': ('standards/gen.py', 'return True  # emit-severity', 'return False  # emit-severity', 'severity and bars dropped', ['S6-H7', 'S6-H13', 'S6-A15']),
+ 'M214': ('standards/gen.py', 'return True  # ids-exclude-nonreview', 'return False  # ids-exclude-nonreview', 'reviewer ids include gate-only ids', ['S6-H12']),
+ 'M215': ('standards/gen.py', 'return True  # stable-order', 'return False  # stable-order', 'view order follows set iteration', ['S6-H2', 'S6-H1']),
+ 'M216': ('standards/gen.py', 'return True  # auditor-keeps-typ03', 'return False  # auditor-keeps-typ03', 'auditor loses TYP-03', ['S6-H4']),
+ 'M217': ('standards/gen.py', 'return False  # architect-no-tst', 'return True  # architect-no-tst', 'architect gains TST-01', ['S6-H4']),
+ 'M218': ('standards/gen.py', 'return True  # auditor-tst02', 'return False  # auditor-tst02', 'auditor loses TST-02', ['S6-H9']),
+ 'M219': ('standards/gen.py', 'return True  # project-new-rules', 'return False  # project-new-rules', 'new ids lose their reviewers', ['S6-H10']),
+ 'M220': ('standards/gen.py', 'return False  # no-retired-ids', 'return True  # no-retired-ids', 'retired ids are emitted', ['S6-H6']),
+ 'M221': ('standards/gen.py', 'return True  # validate-assignments', 'return False  # validate-assignments', 'unknown role, orphan, and merge conflict pass', ['S6-A10', 'S6-A11', 'S6-A12']),
+ 'M222': ('standards/gen.py', 'return True  # reject-style-reviewer', 'return False  # reject-style-reviewer', 'a reviewer may cite a style id', ['S6-A13']),
+ 'M223': ('standards/gen.py', 'return None  # no-subset-matrix', 'return {"auditor": ["COR-01"], "architect": ["TST-01"]}  # no-subset-matrix', 'a subset matrix overrides the source', ['S6-A14', 'S6-H4'], [('return True  # source-assignments-only', 'return False  # source-assignments-only')]),
+ 'M224': ('lib/pi_launch.py', 'return "ro"  # standards-mount-ro', 'return "rw"  # standards-mount-ro', 'standards skill mount is writable', ['S6-H8']),
+ 'M225': ('lib/pi_launch.py', 'return False  # standards-no-extra-skill', 'return True  # standards-no-extra-skill', 'another role view is exported', ['S6-H8', 'S6-A9']),
+ 'M226': ('lib/pi_launch.py', 'return False  # standards-no-private-files', 'return True  # standards-no-private-files', 'source files are copied into the snapshot', ['S6-H8', 'S6-A9']),
+ 'M227': ('standards/gen.py', 'return True  # strict-schema', 'return False  # strict-schema', 'bad keys, ids, and families pass', ['S6-A7']),
+ 'M228': ('standards/gen.py', 'return True  # require-source', 'return False  # require-source', 'a rule without a source passes', ['S6-A8']),
+ 'M229': ('standards/gen.py', 'return True  # require-evidence-bar', 'return False  # require-evidence-bar', 'a block without a bar passes', ['S6-A17']),
+ 'M230': ('standards/gen.py', 'return True  # hide-mechanical', 'return False  # hide-mechanical', 'scanner text leaks into model views', ['S6-H11']),
+ 'M231': ('standards/gen.py', 'return True  # architect-cor05', 'return False  # architect-cor05', 'architect loses COR-05', ['S6-H14']),
+ 'M232': ('standards/gen.py', 'return True  # api01-role-severity', 'return False  # api01-role-severity', 'API-01 severity is swapped', ['S6-H15']),
 }
 SUITE_OF = {
     'M01': 'test-attacks.sh',
@@ -362,6 +388,32 @@ SUITE_OF = {
     'M174': 'test-mutate-shards.sh',
     'M175': 'test-mutate-shards.sh',
     'M176': 'test-mutate-shards.sh',
+    'M207': 'test-step6.sh',
+    'M208': 'test-step6.sh',
+    'M209': 'test-step6.sh',
+    'M210': 'test-step6.sh',
+    'M211': 'test-step6.sh',
+    'M212': 'test-step6.sh',
+    'M213': 'test-step6.sh',
+    'M214': 'test-step6.sh',
+    'M215': 'test-step6.sh',
+    'M216': 'test-step6.sh',
+    'M217': 'test-step6.sh',
+    'M218': 'test-step6.sh',
+    'M219': 'test-step6.sh',
+    'M220': 'test-step6.sh',
+    'M221': 'test-step6.sh',
+    'M222': 'test-step6.sh',
+    'M223': 'test-step6.sh',
+    'M224': 'test-step6.sh',
+    'M225': 'test-step6.sh',
+    'M226': 'test-step6.sh',
+    'M227': 'test-step6.sh',
+    'M228': 'test-step6.sh',
+    'M229': 'test-step6.sh',
+    'M230': 'test-step6.sh',
+    'M231': 'test-step6.sh',
+    'M232': 'test-step6.sh',
 }
 EXTRA_EDITS = {
     'M15': ['M14'],
@@ -567,6 +619,11 @@ def fill_repo(repo, temp_root, src):
                 if parent:
                     os.makedirs(parent, exist_ok=True)
                 shutil.copy2(os.path.join(dirpath, name), dest)
+    standards = os.path.join(repo, "standards")
+    if os.path.isdir(standards):
+        dest_std = os.path.join(temp_root, "standards")
+        if not os.path.exists(dest_std):
+            shutil.copytree(standards, dest_std)
 
 def run(mid):
     _f, _old, _new, what, exp = M[mid][:5]
