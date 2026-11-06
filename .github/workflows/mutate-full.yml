@@ -156,6 +156,8 @@ jobs:
             "SHA256=$(cat shard.sha)"
             "RAW_DIR=$PWD/raw-out"
             "JOBS=${JOBS}"
+            "PLAN_B64=$PLAN_B64"
+            "K=$K"
           )
           if [ -n "${DOCKER_HOST:-}" ]; then
             clean+=("DOCKER_HOST=$DOCKER_HOST")
