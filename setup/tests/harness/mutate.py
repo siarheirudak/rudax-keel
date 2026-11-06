@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Mutation audit: remove one protection at a time in a temp copy, rerun test-attacks.sh,
-and require that the guarding check(s) stop reporting BLOCKED/CONTAINED.
-Usage: DOCKER="sudo docker" python3 setup/tests/harness/mutate.py [ID ...]   (box/Linux only; ~40 s per mutant)"""
+"""Mutation audit: remove one protection at a time in a temp copy and rerun its suite.
+Usage: DOCKER="sudo docker" python3 setup/tests/harness/mutate.py [ID ...]"""
 import os, py_compile, re, shutil, subprocess, sys, tempfile, concurrent.futures as cf
 HARNESS = os.path.dirname(os.path.abspath(__file__))
 SETUP = os.path.abspath(os.path.join(HARNESS, os.pardir, os.pardir))
@@ -147,18 +146,275 @@ M = {
  'M136': ('lib/discovery_judge.py', 'isolated = True  # disc-judge-isolated', 'isolated = False  # disc-judge-isolated', 'a role can reach the judge', ['DISC-A21']),
  'M137': ('lib/discovery_judge.py', 'return marker  # disc-stub-ci-only', 'return True  # disc-stub-ci-only', 'stub allowed outside CI', ['DISC-A22']),
  'M138': ('lib/discovery_judge.py', 'return True  # disc-noul-strict', 'return False  # disc-noul-strict', 'loose Decisions JSON parse', ['DISC-A18']),
+ 'M139': ('tests/harness/mutant_defs.py', 'include_forced = True  # plan-forced', 'include_forced = False  # plan-forced', 'drop forced ids from the plan', ['S-H1', 'S-A3']),
+ 'M140': ('tests/harness/mutant_defs.py', 'use_main = True  # new-against-main', 'use_main = False  # new-against-main', 'new ids compared with the pull request', ['S-H1']),
+ 'M141': ('tests/harness/mutant_defs.py', 'compare_values = True  # compare-values', 'compare_values = False  # compare-values', 'modified compares keys only', ['S-A3']),
+ 'M142': ('tests/harness/mutant_defs.py', 'reject_computed = True  # parser-computed', 'reject_computed = False  # parser-computed', 'parser accepts computed keys', ['S-A2']),
+ 'M143': ('tests/harness/mutant_defs.py', 'reject_second = True  # parser-second', 'reject_second = False  # parser-second', 'parser accepts a second M assignment', ['S-A2']),
+ 'M144': ('tests/harness/mutant_defs.py', 'reject_names = True  # parser-names', 'reject_names = False  # parser-names', 'parser accepts an unknown name', ['S-A2']),
+ 'M145': ('tests/harness/mutant_defs.py', 'reject_removed = True  # reject-removed', 'reject_removed = False  # reject-removed', 'removed ids are allowed', ['S-A4']),
+ 'M146': ('tests/harness/mutant_defs.py', 'compare_suite = True  # compare-suite', 'compare_suite = False  # compare-suite', 'suite and extra edits are not modifications', ['S-A15']),
+ 'M147': ('tests/harness/mutant_defs.py', 'copy_widens = True  # copy-widens', 'copy_widens = False  # copy-widens', 'copy list changes do not widen', ['S-A16']),
+ 'M148': ('tests/harness/mutant_defs.py', 'reject_unknown_suite = True  # suite-known', 'reject_unknown_suite = False  # suite-known', 'unknown suite name accepted', ['S-A12']),
+ 'M149': ('tests/harness/mutant_files.py', 'unmapped_full = True  # unmapped-full', 'unmapped_full = False  # unmapped-full', 'unmapped setup path skips', ['S-A7']),
+ 'M150': ('tests/harness/mutant_files.py', 'use_depends = True  # depends-on', 'use_depends = False  # depends-on', 'dependents are ignored', ['S-H3']),
+ 'M151': ('tests/harness/mutant_files.py', 'dynamic_unresolved = True  # dynamic-unresolved', 'dynamic_unresolved = False  # dynamic-unresolved', 'dynamic imports look resolved', ['S-A8']),
+ 'M152': ('tests/harness/mutate_shards.py', 'keep_last = True  # shard-last', 'keep_last = False  # shard-last', 'round-robin drops the last id', ['S-H5']),
+ 'M153': ('tests/harness/mutate_shards.py', 'require_all_ids = True  # shard-complete', 'require_all_ids = False  # shard-complete', 'missing shard ids are accepted', ['S-A5']),
+ 'M154': ('tests/harness/mutate_shards.py', 'reject_foreign = True  # shard-foreign', 'reject_foreign = False  # shard-foreign', 'foreign shard ids are accepted', ['S-A5']),
+ 'M155': ('tests/harness/mutate_shards.py', 'require_success = True  # shard-success', 'require_success = False  # shard-success', 'shard result is ignored', ['S-A6']),
+ 'M156': ('tests/harness/mutate-full-state.py', 'skip_noise = True  # skip-noise', 'skip_noise = False  # skip-noise', 'cancelled and skip runs count as green', ['S-H7b', 'S-A13']),
+ 'M157': ('tests/harness/mutate-full-state.py', 'filter_runs = True  # filter-runs', 'filter_runs = False  # filter-runs', 'full-run filter is ignored', ['S-A17']),
+ 'M158': ('tests/harness/mutant_defs.py', 'check_classification = True  # class-check', 'check_classification = False  # class-check', 'classification check is off', ['S-A18']),
+ 'M159': ('tests/harness/mutate-full-state.py', 'fail_open = True  # fresh-api-run', 'fail_open = False  # fresh-api-run', 'freshness API error skips', ['S-A11']),
+ 'M160': ('tests/harness/mutant_defs.py', 'check_duplicates = True  # duplicate-def', 'check_duplicates = False  # duplicate-def', 'duplicate check is off', ['S-A9']),
+ 'M161': ('tests/harness/mutant_defs.py', '    use_exp = main_exp  # exp-from-main', '    use_exp = pr_exp  # exp-from-main', 'expected attacks come from the pull request', ['S-A20', 'S-A22']),
+ 'M162': ('tests/harness/mutant_defs.py', 'reject_new_masked = True  # new-masked', 'reject_new_masked = False  # new-masked', 'new empty exp is accepted', ['S-A21']),
+ 'M163': ('tests/harness/mutant_defs.py', 'run_coverage_safety = True  # coverage-safety', 'run_coverage_safety = False  # coverage-safety', 'coverage checks skipped', ['S-A23']),
+ 'M164': ('tests/harness/mutate_shards.py', '    names_ok = set(names) <= allowed  # artifact-allow', '    names_ok = True  # artifact-allow', 'artifact names are not checked', ['S-A24']),
+ 'M165': ('tests/harness/mutate_shards.py', 'check_main_moved = True  # main-moved', 'check_main_moved = False  # main-moved', 'selector movement is ignored', ['S-A26']),
+ 'M166': ('tests/harness/mutate-full-state.py', 'trust_state = True  # trust-state', 'trust_state = False  # trust-state', 'green is decided by the job name', ['S-A27']),
+ 'M167': ('tests/harness/mutate_shards.py', 'enforce_size = True  # extract-size', 'enforce_size = False  # extract-size', 'extract size cap is off', ['S-A25']),
+ 'M168': ('tests/harness/mutate_shards.py', 'enforce_paths = True  # extract-path', 'enforce_paths = False  # extract-path', 'extract paths are not checked', ['S-A25']),
+ 'M169': ('tests/harness/mutate_shards.py', 'enforce_symlink = True  # extract-symlink', 'enforce_symlink = False  # extract-symlink', 'extract symlinks are allowed', ['S-A25']),
+ 'M170': ('tests/harness/mutate_shards.py', 'enforce_line = True  # line-cap', 'enforce_line = False  # line-cap', 'result line cap is off', ['S-A25']),
+ 'M171': ('.github/workflows/mutate-pr.yml', '    timeout-minutes: 45 # shard-timeout', '    timeout-minutes: 0 # shard-timeout', 'shard timeout removed', ['S-A28']),
+ 'M172': ('tests/harness/mutate_shards.py', 'timeout_is_fail = True  # timeout-not-success', 'timeout_is_fail = False  # timeout-not-success', 'timed out shard counts as success', ['S-A34', 'S-A6']),
+ 'M173': ('tests/harness/mutate_shards.py', 'check_baseline = True  # baseline-check', 'check_baseline = False  # baseline-check', 'baseline check is off', ['S-A30', 'S-A31']),
+ 'M174': ('tests/harness/mutate_shards.py', 'check_tree_entries = True  # tree-entry-check', 'check_tree_entries = False  # tree-entry-check', 'tree entry checks are off', ['S-A29']),
+ 'M175': ('.github/workflows/mutate-pr.yml', '    permissions: # shard-readonly\n      contents: read', '    permissions: # shard-readonly\n      actions: write\n      contents: read', 'pull-request shard job can write actions', ['S-A35']),
+ 'M176': ('.github/workflows/mutate-full.yml', '    permissions: # shard-readonly\n      contents: read', '    permissions: # shard-readonly\n      actions: write\n      contents: read', 'full-run shard job can write actions', ['S-A35']),
 }
-STEP4 = {
-    'M94', 'M95', 'M96', 'M97', 'M98', 'M99', 'M100', 'M101', 'M102', 'M103',
-    'M104', 'M105', 'M106', 'M107', 'M108', 'M109', 'M110', 'M111', 'M112',
-    'M113', 'M114', 'M115', 'M116', 'M117', 'M118',
+SUITE_OF = {
+    'M01': 'test-attacks.sh',
+    'M02': 'test-attacks.sh',
+    'M03': 'test-attacks.sh',
+    'M04': 'test-attacks.sh',
+    'M05': 'test-attacks.sh',
+    'M06': 'test-attacks.sh',
+    'M07': 'test-attacks.sh',
+    'M08': 'test-attacks.sh',
+    'M09': 'test-attacks.sh',
+    'M10': 'test-attacks.sh',
+    'M11': 'test-attacks.sh',
+    'M12': 'test-attacks.sh',
+    'M13': 'test-attacks.sh',
+    'M14': 'test-attacks.sh',
+    'M15': 'test-attacks.sh',
+    'M16': 'test-attacks.sh',
+    'M17': 'test-attacks.sh',
+    'M18': 'test-attacks.sh',
+    'M19': 'test-attacks.sh',
+    'M20': 'test-attacks.sh',
+    'M21': 'test-attacks.sh',
+    'M22': 'test-attacks.sh',
+    'M23': 'test-attacks.sh',
+    'M24': 'test-attacks.sh',
+    'M25': 'test-attacks.sh',
+    'M26': 'test-attacks.sh',
+    'M27': 'test-attacks.sh',
+    'M28': 'test-attacks.sh',
+    'M29': 'test-attacks.sh',
+    'M30': 'test-attacks.sh',
+    'M31': 'test-attacks.sh',
+    'M32': 'test-attacks.sh',
+    'M33': 'test-attacks.sh',
+    'M34': 'test-attacks.sh',
+    'M35': 'test-attacks.sh',
+    'M36': 'test-attacks.sh',
+    'M37': 'test-attacks.sh',
+    'M38': 'test-attacks.sh',
+    'M39': 'test-attacks.sh',
+    'M40': 'test-attacks.sh',
+    'M41': 'test-attacks.sh',
+    'M42': 'test-attacks.sh',
+    'M43': 'test-attacks.sh',
+    'M44': 'test-attacks.sh',
+    'M45': 'test-attacks.sh',
+    'M46': 'test-attacks.sh',
+    'M47': 'test-attacks.sh',
+    'M48': 'test-attacks.sh',
+    'M49': 'test-attacks.sh',
+    'M50': 'test-attacks.sh',
+    'M51': 'test-attacks.sh',
+    'M52': 'test-attacks.sh',
+    'M53': 'test-attacks.sh',
+    'M54': 'test-attacks.sh',
+    'M55': 'test-attacks.sh',
+    'M56': 'test-attacks.sh',
+    'M57': 'test-attacks.sh',
+    'M58': 'test-attacks.sh',
+    'M59': 'test-attacks.sh',
+    'M60': 'test-attacks.sh',
+    'M61': 'test-attacks.sh',
+    'M62': 'test-attacks.sh',
+    'M63': 'test-attacks.sh',
+    'M64': 'test-attacks.sh',
+    'M65': 'test-attacks.sh',
+    'M66': 'test-attacks.sh',
+    'M67': 'test-attacks.sh',
+    'M68': 'test-attacks.sh',
+    'M69': 'test-attacks.sh',
+    'M70': 'test-attacks.sh',
+    'M71': 'test-attacks.sh',
+    'M72': 'test-attacks.sh',
+    'M73': 'test-attacks.sh',
+    'M74': 'test-attacks.sh',
+    'M75': 'test-attacks.sh',
+    'M76': 'test-attacks.sh',
+    'M77': 'test-attacks.sh',
+    'M78': 'test-attack-results.sh',
+    'M79': 'test-attacks.sh',
+    'M80': 'test-runtime.sh',
+    'M81': 'test-runtime.sh',
+    'M82': 'test-attacks.sh',
+    'M83': 'test-attacks.sh',
+    'M84': 'test-attacks.sh',
+    'M85': 'test-attacks.sh',
+    'M86': 'test-runtime.sh',
+    'M87': 'test-runtime.sh',
+    'M88': 'test-runtime.sh',
+    'M89': 'test-runtime.sh',
+    'M90': 'test-runtime.sh',
+    'M91': 'test-runtime.sh',
+    'M92': 'test-mutant-result.sh',
+    'M93': 'test-mutant-result.sh',
+    'M94': 'test-step4.sh',
+    'M95': 'test-step4.sh',
+    'M96': 'test-step4.sh',
+    'M97': 'test-step4.sh',
+    'M98': 'test-step4.sh',
+    'M99': 'test-step4.sh',
+    'M100': 'test-step4.sh',
+    'M101': 'test-step4.sh',
+    'M102': 'test-step4.sh',
+    'M103': 'test-step4.sh',
+    'M104': 'test-step4.sh',
+    'M105': 'test-step4.sh',
+    'M106': 'test-step4.sh',
+    'M107': 'test-step4.sh',
+    'M108': 'test-step4.sh',
+    'M109': 'test-step4.sh',
+    'M110': 'test-step4.sh',
+    'M111': 'test-step4.sh',
+    'M112': 'test-step4.sh',
+    'M113': 'test-step4.sh',
+    'M114': 'test-step4.sh',
+    'M115': 'test-step4.sh',
+    'M116': 'test-step4.sh',
+    'M117': 'test-step4.sh',
+    'M118': 'test-step4.sh',
+    'M119': 'test-step5.sh',
+    'M120': 'test-step5.sh',
+    'M121': 'test-step5.sh',
+    'M122': 'test-step5.sh',
+    'M123': 'test-step5.sh',
+    'M124': 'test-step5.sh',
+    'M125': 'test-step5.sh',
+    'M126': 'test-step5.sh',
+    'M127': 'test-step5.sh',
+    'M128': 'test-step5.sh',
+    'M129': 'test-step5.sh',
+    'M130': 'test-step5.sh',
+    'M131': 'test-step5.sh',
+    'M132': 'test-step5.sh',
+    'M133': 'test-step5.sh',
+    'M134': 'test-step5.sh',
+    'M135': 'test-step5.sh',
+    'M136': 'test-step5.sh',
+    'M137': 'test-step5.sh',
+    'M138': 'test-step5.sh',
+    'M139': 'test-mutant-select.py',
+    'M140': 'test-mutant-select.py',
+    'M141': 'test-mutant-select.py',
+    'M142': 'test-mutant-select.py',
+    'M143': 'test-mutant-select.py',
+    'M144': 'test-mutant-select.py',
+    'M145': 'test-mutant-select.py',
+    'M146': 'test-mutant-select.py',
+    'M147': 'test-mutant-select.py',
+    'M148': 'test-mutant-select.py',
+    'M149': 'test-mutant-select.py',
+    'M150': 'test-mutant-select.py',
+    'M151': 'test-mutant-select.py',
+    'M156': 'test-mutant-select.py',
+    'M157': 'test-mutant-select.py',
+    'M158': 'test-mutant-select.py',
+    'M159': 'test-mutant-select.py',
+    'M160': 'test-mutant-select.py',
+    'M161': 'test-mutant-select.py',
+    'M162': 'test-mutant-select.py',
+    'M163': 'test-mutant-select.py',
+    'M166': 'test-mutant-select.py',
+    'M152': 'test-mutate-shards.sh',
+    'M153': 'test-mutate-shards.sh',
+    'M154': 'test-mutate-shards.sh',
+    'M155': 'test-mutate-shards.sh',
+    'M164': 'test-mutate-shards.sh',
+    'M165': 'test-mutate-shards.sh',
+    'M167': 'test-mutate-shards.sh',
+    'M168': 'test-mutate-shards.sh',
+    'M169': 'test-mutate-shards.sh',
+    'M170': 'test-mutate-shards.sh',
+    'M171': 'test-mutate-shards.sh',
+    'M172': 'test-mutate-shards.sh',
+    'M173': 'test-mutate-shards.sh',
+    'M174': 'test-mutate-shards.sh',
+    'M175': 'test-mutate-shards.sh',
+    'M176': 'test-mutate-shards.sh',
 }
-STEP5 = {
-    'M119', 'M120', 'M121', 'M122', 'M123', 'M124', 'M125', 'M126', 'M127',
-    'M128', 'M129', 'M130', 'M131', 'M132', 'M133', 'M134', 'M135', 'M136',
-    'M137', 'M138',
+EXTRA_EDITS = {
+    'M15': ['M14'],
 }
-M['M15'] = (K, M['M13'][1], M['M13'][2], M['M15'][3], M['M15'][4])  # applied together with M14 below
+COPY_LIST = [
+    'keel.sh',
+    'check.sh',
+    'gitleaks.toml',
+    'keel-doctor.sh',
+    'lib',
+    'allow',
+    'deny',
+    'egress',
+    'pi',
+    'docker',
+    'tools',
+    'chrome/chromium-argv.sh',
+    'tests/harness/attack-results.sh',
+    'tests/harness/doctor-score.sh',
+    'tests/harness/fixtures',
+    'tests/harness/h3-verdict.sh',
+    'tests/harness/harness-keel.sh',
+    'tests/harness/mutant-result.py',
+    'tests/harness/mutant_defs.py',
+    'tests/harness/mutant_files.py',
+    'tests/harness/mutate-full-state.py',
+    'tests/harness/mutate-issue.py',
+    'tests/harness/mutate-plan.sh',
+    'tests/harness/mutate.py',
+    'tests/harness/mutate_shards.py',
+    'tests/harness/pi-oracle.mjs',
+    'tests/harness/pi-record.sh',
+    'tests/harness/resolve-mutant-target.py',
+    'tests/harness/run-tests.sh',
+    'tests/harness/speed_cases.py',
+    'tests/harness/runtime-stub.sh',
+    'tests/harness/step4_check.py',
+    'tests/harness/step5_check.py',
+    'tests/harness/test-attack-results.sh',
+    'tests/harness/test-attacks.sh',
+    'tests/harness/test-egress.sh',
+    'tests/harness/test-mutant-result.sh',
+    'tests/harness/test-mutant-select.py',
+    'tests/harness/test-mutate-parse.py',
+    'tests/harness/test-mutate-plan.sh',
+    'tests/harness/test-mutate-schedule.sh',
+    'tests/harness/test-mutate-shards.sh',
+    'tests/harness/test-runtime.sh',
+    'tests/harness/test-step4.sh',
+    'tests/harness/test-step5.sh',
+    'tests/harness/visibility-suite.sh',
+]
+
 GREEN = re.compile(r'^(BLOCKED|CONTAINED|PARTIAL|N/A)')
 PARSE_ERROR = 'mutated file does not parse'
 EMPTY_RESULT = 'empty RESULT'
@@ -225,102 +481,214 @@ def verdict_tag(exp, red):
 def cleanup_ns(mid):
     ns = mid.lower()
     docker = os.environ.get('DOCKER', 'docker').split()
-    subprocess.run(docker + ['rm', '-f', 'keel-proxy-' + ns, 'keel-mock-' + ns], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run(docker + ['network', 'rm', 'keel-egress-' + ns, 'keel-out-' + ns], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        subprocess.run(docker + ['rm', '-f', 'keel-proxy-' + ns, 'keel-mock-' + ns], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(docker + ['network', 'rm', 'keel-egress-' + ns, 'keel-out-' + ns], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        return
+
+def copy_listed(setup_root, dest, paths):
+    for rel in paths:
+        src_path = os.path.join(setup_root, rel)
+        dst_path = os.path.join(dest, rel)
+        if not os.path.exists(src_path):
+            raise SystemExit('copy list missing %s' % rel)
+        parent = os.path.dirname(dst_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        if os.path.isdir(src_path):
+            if os.path.exists(dst_path):
+                shutil.rmtree(dst_path)
+            shutil.copytree(src_path, dst_path)
+        else:
+            shutil.copy2(src_path, dst_path)
+
+def edit_pairs(mid, table=None, extras=None):
+    table = table or M
+    extras = EXTRA_EDITS if extras is None else extras
+    pairs_by_file = {}
+    specs = [mid] + list(extras.get(mid) or [])
+    for sid in specs:
+        spec = table[sid]
+        pairs = [(spec[1], spec[2])]
+        if len(spec) > 5:
+            pairs.extend(list(spec[5]))
+        pairs_by_file.setdefault(spec[0], []).extend(pairs)
+    return pairs_by_file
+
+def target_rels(mid):
+    rels = [M[mid][0]]
+    try:
+        import mutant_files as mf
+    except ImportError:
+        return rels
+    for path in mf.FILES.get(mid, []):
+        rel = path[len('setup/'):] if path.startswith('setup/') else path
+        if rel not in rels:
+            rels.append(rel)
+    return rels
+
+def place_for(rel, temp_root, src):
+    if rel.startswith('scripts/') or rel.startswith('.github/'):
+        return os.path.join(temp_root, rel)
+    return os.path.join(src, rel)
+
+def fill_repo(repo, temp_root, src):
+    """Repo layout around the setup snapshot, including workflow files."""
+    setup_root = os.path.join(repo, 'setup')
+    for dirpath, dirnames, filenames in os.walk(setup_root):
+        dirnames[:] = [name for name in dirnames if name != '__pycache__']
+        rel_dir = os.path.relpath(dirpath, setup_root)
+        for name in filenames:
+            rel = name if rel_dir == '.' else os.path.join(rel_dir, name)
+            dest = os.path.join(src, rel)
+            if os.path.lexists(dest):
+                continue
+            parent = os.path.dirname(dest)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            shutil.copy2(os.path.join(dirpath, name), dest)
+    link = os.path.join(temp_root, 'setup')
+    if not os.path.lexists(link):
+        os.symlink('p', link)
+    for top in ('.github', 'scripts'):
+        origin = os.path.join(repo, top)
+        if not os.path.isdir(origin):
+            continue
+        for dirpath, dirnames, filenames in os.walk(origin):
+            dirnames[:] = [name for name in dirnames if name != '__pycache__']
+            rel_dir = os.path.relpath(dirpath, origin)
+            for name in filenames:
+                rel = name if rel_dir == '.' else os.path.join(rel_dir, name)
+                dest = os.path.join(temp_root, top, rel)
+                if os.path.lexists(dest):
+                    continue
+                parent = os.path.dirname(dest)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                shutil.copy2(os.path.join(dirpath, name), dest)
 
 def run(mid):
-    f, old, new, what, exp = M[mid][:5]
-    d = tempfile.mkdtemp(prefix=f'mut-{mid}-', dir=os.path.expanduser('~'))
+    _f, _old, _new, what, exp = M[mid][:5]
+    d = tempfile.mkdtemp(prefix='mut-%s-' % mid, dir=os.path.expanduser('~'))
     src = os.path.join(d, 'p')
-    os.makedirs(os.path.join(src, 'tests', 'harness'))
-    shutil.copy2(os.path.join(SETUP, 'keel.sh'), os.path.join(src, 'keel.sh'))
-    shutil.copy2(os.path.join(SETUP, 'check.sh'), os.path.join(src, 'check.sh'))
-    shutil.copy2(os.path.join(SETUP, 'gitleaks.toml'), os.path.join(src, 'gitleaks.toml'))
-    shutil.copytree(os.path.join(SETUP, 'lib'), os.path.join(src, 'lib'))
-    shutil.copytree(os.path.join(SETUP, 'allow'), os.path.join(src, 'allow'))
-    shutil.copytree(os.path.join(SETUP, 'deny'), os.path.join(src, 'deny'))
-    shutil.copytree(os.path.join(SETUP, 'egress'), os.path.join(src, 'egress'))
-    shutil.copytree(os.path.join(SETUP, 'pi'), os.path.join(src, 'pi'))
-    shutil.copytree(os.path.join(SETUP, 'docker'), os.path.join(src, 'docker'))
-    shutil.copy2(os.path.join(HARNESS, 'test-attacks.sh'), os.path.join(src, 'tests', 'harness', 'test-attacks.sh'))
-    shutil.copy2(os.path.join(HARNESS, 'test-egress.sh'), os.path.join(src, 'tests', 'harness', 'test-egress.sh'))
-    shutil.copy2(os.path.join(HARNESS, 'h3-verdict.sh'), os.path.join(src, 'tests', 'harness', 'h3-verdict.sh'))
-    shutil.copy2(os.path.join(HARNESS, 'visibility-suite.sh'), os.path.join(src, 'tests', 'harness', 'visibility-suite.sh'))
-    shutil.copy2(os.path.join(HARNESS, 'attack-results.sh'), os.path.join(src, 'tests', 'harness', 'attack-results.sh'))
-    shutil.copy2(os.path.join(HARNESS, 'test-attack-results.sh'), os.path.join(src, 'tests', 'harness', 'test-attack-results.sh'))
-    shutil.copy2(os.path.join(HARNESS, 'test-runtime.sh'), os.path.join(src, 'tests', 'harness', 'test-runtime.sh'))
-    shutil.copy2(os.path.join(HARNESS, 'runtime-stub.sh'), os.path.join(src, 'tests', 'harness', 'runtime-stub.sh'))
-    shutil.copy2(os.path.join(HARNESS, 'harness-keel.sh'), os.path.join(src, 'tests', 'harness', 'harness-keel.sh'))
-    shutil.copy2(os.path.join(HARNESS, 'doctor-score.sh'), os.path.join(src, 'tests', 'harness', 'doctor-score.sh'))
-    shutil.copy2(os.path.join(HARNESS, 'mutant-result.py'), os.path.join(src, 'tests', 'harness', 'mutant-result.py'))
-    shutil.copy2(os.path.join(HARNESS, 'mutant_files.py'), os.path.join(src, 'tests', 'harness', 'mutant_files.py'))
-    shutil.copy2(os.path.join(HARNESS, 'test-mutant-result.sh'), os.path.join(src, 'tests', 'harness', 'test-mutant-result.sh'))
-    shutil.copy2(os.path.join(SETUP, 'keel-doctor.sh'), os.path.join(src, 'keel-doctor.sh'))
-    shutil.copy2(os.path.join(HARNESS, 'test-step4.sh'), os.path.join(src, 'tests', 'harness', 'test-step4.sh'))
-    shutil.copy2(os.path.join(HARNESS, 'step4_check.py'), os.path.join(src, 'tests', 'harness', 'step4_check.py'))
-    shutil.copy2(os.path.join(HARNESS, 'pi-oracle.mjs'), os.path.join(src, 'tests', 'harness', 'pi-oracle.mjs'))
-    shutil.copy2(os.path.join(HARNESS, 'pi-record.sh'), os.path.join(src, 'tests', 'harness', 'pi-record.sh'))
-    shutil.copy2(os.path.join(HARNESS, 'test-step5.sh'), os.path.join(src, 'tests', 'harness', 'test-step5.sh'))
-    shutil.copy2(os.path.join(HARNESS, 'run-tests.sh'), os.path.join(src, 'tests', 'harness', 'run-tests.sh'))
-    shutil.copy2(os.path.join(HARNESS, 'step5_check.py'), os.path.join(src, 'tests', 'harness', 'step5_check.py'))
-    shutil.copytree(os.path.join(SETUP, 'tools'), os.path.join(src, 'tools'))
-    os.makedirs(os.path.join(src, 'chrome'), exist_ok=True)
-    shutil.copy2(os.path.join(SETUP, 'chrome', 'chromium-argv.sh'), os.path.join(src, 'chrome', 'chromium-argv.sh'))
-    shutil.copytree(os.path.join(HARNESS, 'fixtures'), os.path.join(src, 'tests', 'harness', 'fixtures'))
+    os.makedirs(src, exist_ok=True)
     repo = os.path.dirname(SETUP)
-    if f.startswith('scripts/'):
-        p = os.path.join(d, f)
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        shutil.copy2(os.path.join(repo, f), p)
-    else:
-        p = os.path.join(src, f)
-    s = open(p).read()
-    edits = [(old, new)] + list(M[mid][5] if len(M[mid]) > 5 else []) + ([(M['M14'][1], M['M14'][2])] if mid == 'M15' else [])
+    copy_listed(SETUP, src, COPY_LIST)
+    fill_repo(repo, d, src)
     env = dict(os.environ, KEEL_ROOT=os.path.join(d, 'k'), KEEL_NS=mid)
     try:
-        text, applied_error = apply_edits(s, edits)
+        applied_error = None
+        touched = []
+        for rel, pairs in edit_pairs(mid).items():
+            for dest_rel in target_rels(mid) if rel == M[mid][0] else [rel]:
+                path = place_for(dest_rel, d, src)
+                if not os.path.isfile(path):
+                    origin = os.path.join(repo, dest_rel) if dest_rel.startswith(('scripts/', '.github/')) else os.path.join(SETUP, dest_rel)
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    if os.path.isfile(origin):
+                        shutil.copy2(origin, path)
+                if not os.path.isfile(path):
+                    applied_error = 'mutation did not apply (missing %s)' % dest_rel
+                    break
+                text = open(path, encoding='utf-8').read()
+                if text.count(pairs[0][0]) != 1 and dest_rel != rel:
+                    continue
+                updated, err = apply_edits(text, pairs)
+                if err or updated is None:
+                    applied_error = err
+                    break
+                open(path, 'w', encoding='utf-8').write(updated)
+                touched.append(path)
+            if applied_error:
+                break
         out = ''
         if applied_error:
             red, detail = judge(exp, out, applied_error, False)
             return mid, what, exp, red, detail
-        open(p, 'w').write(text)
-        if not mutated_file_parses(p):
+        if any(not mutated_file_parses(path) for path in touched):
             red, detail = judge(exp, out, None, True)
             return mid, what, exp, red, detail
+        script = SUITE_OF[mid]
+        suite_path = os.path.join(src, 'tests', 'harness', script)
+        runner = 'python3' if script.endswith('.py') else 'bash'
         try:
-            if mid == 'M78':
-                script = 'test-attack-results.sh'
-            elif mid in ('M92', 'M93'):
-                script = 'test-mutant-result.sh'
-            elif mid in ('M80', 'M81', 'M86', 'M87', 'M88', 'M89', 'M90', 'M91'):
-                script = 'test-runtime.sh'
-            elif mid in STEP4:
-                script = 'test-step4.sh'
-            elif mid in STEP5:
-                script = 'test-step5.sh'
-            else:
-                script = 'test-attacks.sh'
-            out = subprocess.run(['bash', os.path.join(src, 'tests', 'harness', script)], env=env, capture_output=True, text=True, timeout=900).stdout
+            out = subprocess.run([runner, suite_path], env=env, capture_output=True, text=True, timeout=900).stdout
         except subprocess.TimeoutExpired:
             return mid, what, exp, None, 'timeout'
-        open(os.path.join(HARNESS, 'logs', f'mutation-{mid}.log'), 'w').write(out)
+        open(os.path.join(HARNESS, 'logs', 'mutation-%s.log' % mid), 'w').write(out)
         red, detail = judge(exp, out, None, False)
         return mid, what, exp, red, detail
     finally:
         cleanup_ns(mid)
         subprocess.run(['sudo', 'rm', '-rf', d], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-if __name__ == '__main__':
-    ids = sys.argv[1:] or sorted(M)
-    os.makedirs(os.path.join(HARNESS, 'logs'), exist_ok=True)
-    with cf.ThreadPoolExecutor(int(os.environ.get('JOBS', '3'))) as ex:
-        rows = list(ex.map(run, ids))
+def _print_rows(rows):
     bad = 0
     print('| ID | protection removed | expected red | went red | caught |')
     print('|---|---|---|---|---|')
     for mid, what, exp, red, res in rows:
-        if red is None: print(f'| {mid} | {what} | {",".join(exp)} | ERROR: {res} | ERROR |'); bad += 1; continue
+        if red is None:
+            print('| %s | %s | %s | ERROR: %s | ERROR |' % (mid, what, ','.join(exp), res))
+            bad += 1
+            continue
         tag = verdict_tag(exp, red)
-        if tag == 'NO': bad += 1
-        print(f'| {mid} | {what} | {",".join(exp) or "(none: masked)"} | {",".join(red) or "-"} | {tag} |')
-    sys.exit(1 if bad else 0)
+        if tag == 'NO':
+            bad += 1
+        print('| %s | %s | %s | %s | %s |' % (mid, what, ','.join(exp) or '(none: masked)', ','.join(red) or '-', tag))
+    return bad
+
+def build_cmd(argv):
+    """Apply pull-request literals with this file's editor. The pull-request file is data."""
+    import mutant_defs as defs
+    defs_path = argv[argv.index('--defs') + 1]
+    tree = argv[argv.index('--tree') + 1]
+    out = argv[argv.index('--out') + 1]
+    source = open(defs_path, encoding='utf-8').read()
+    parsed = defs.load_mutate(source)
+    os.makedirs(out, exist_ok=True)
+    ids = [arg for arg in argv if arg.startswith('M')]
+    if not ids:
+        ids = sorted(parsed.ids, key=defs.id_key)
+    for mid in ids:
+        dest = os.path.join(out, mid)
+        if os.path.isdir(dest):
+            shutil.rmtree(dest)
+        shutil.copytree(tree, dest)
+        for rel, pairs in edit_pairs(mid, parsed.M, parsed.extra).items():
+            path = os.path.join(dest, rel if rel.startswith(('scripts/', '.github/')) else os.path.join('setup', rel))
+            text = open(path, encoding='utf-8').read()
+            updated, err = apply_edits(text, pairs)
+            if err or updated is None:
+                raise SystemExit('%s %s' % (mid, err or 'apply'))
+            open(path, 'w', encoding='utf-8').write(updated)
+    return 0
+
+def grade_cmd(argv):
+    """Grade captured stdout with this file's judge. Definitions are not executed."""
+    import json
+    import mutant_defs as defs
+    raw = argv[argv.index('grade') + 1]
+    plan_path = argv[argv.index('grade') + 2]
+    plan = json.load(open(plan_path, encoding='utf-8'))
+    bad = 0
+    for mid, exp in plan['exp'].items():
+        stdout = open(os.path.join(raw, mid + '.txt'), encoding='utf-8').read()
+        red, detail = judge(exp, stdout, None, False)
+        tag = verdict_tag(exp, red)
+        if tag in ('NO', 'ERROR'):
+            bad += 1
+        print('RESULT %s: %s' % (mid, tag))
+    return 1 if bad else 0
+
+if __name__ == '__main__':
+    if len(sys.argv) > 1 and sys.argv[1] == 'build':
+        sys.exit(build_cmd(sys.argv))
+    if len(sys.argv) > 1 and sys.argv[1] == 'grade':
+        sys.exit(grade_cmd(sys.argv))
+    ids = sys.argv[1:] or sorted(M)
+    os.makedirs(os.path.join(HARNESS, 'logs'), exist_ok=True)
+    # Setting: threads for a local mutant batch.
+    with cf.ThreadPoolExecutor(int(os.environ.get('JOBS', '3'))) as ex:
+        rows = list(ex.map(run, ids))
+    sys.exit(1 if _print_rows(rows) else 0)

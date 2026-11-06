@@ -8,15 +8,23 @@ pr=$ROOT/.github/workflows/mutate-pr.yml
 
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 
-cron=$(grep -E '^[[:space:]]*- cron:' "$full" || true)
-if [ "$cron" != '    - cron: "17 18 * * *"' ]; then
-  fail "cron is not 17 18 * * *"
+if ! grep -Fxq '    - cron: "17 18 * * *"' "$full"; then
+  fail "daily cron is not 17 18 * * *"
+fi
+if ! grep -Fxq '    - cron: "17 18 * * 1"' "$full"; then
+  fail "weekly cron is missing"
 fi
 if grep -q '17 6 \* \* \*' "$full"; then
   fail "old cron remains"
 fi
-if grep -Eq '^[[:space:]]*(matrix|strategy):' "$full"; then
-  fail "NIGHT-A1 matrix or strategy is present"
+if grep -q 'actions/cache' "$full" || grep -q 'actions/cache' "$pr"; then
+  fail "mutate workflows use a cache"
+fi
+if ! grep -q 'timeout-minutes: 45 # shard-timeout' "$full" || ! grep -q 'timeout-minutes: 45 # shard-timeout' "$pr"; then
+  fail "shard timeout is missing"
+fi
+if ! grep -q 'fail-fast: false' "$full" || ! grep -q 'fail-fast: false' "$pr"; then
+  fail "shard fail-fast is not false"
 fi
 
 python3 - "$full" << 'PY' || exit 1

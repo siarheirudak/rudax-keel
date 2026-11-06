@@ -74,12 +74,19 @@ jobs:
             -d "$payload" \
             "https://api.github.com/repos/${REPO}/actions/workflows/mutate-pr.yml/dispatches"
 
-  mutants:
+  resolve-plan:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.sha != ''
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 30
     permissions:
+      actions: read
       contents: read
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      plan_b64: ${{ steps.plan.outputs.plan_b64 }}
+      skip: ${{ steps.plan.outputs.skip }}
+      main_sha: ${{ steps.plan.outputs.main_sha }}
+      selector: ${{ steps.plan.outputs.selector }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -95,35 +102,94 @@ jobs:
           SHA: ${{ inputs.sha }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: python3 setup/tests/harness/resolve-mutant-target.py
-      - name: Check out that commit
+      - name: Fetch that commit
         env:
           SHA: ${{ steps.target.outputs.sha }}
-          BASE: ${{ steps.target.outputs.base }}
           PR: ${{ inputs.pr }}
         run: |
           set -eu
           printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$'
-          printf '%s' "$BASE" | grep -Eq '^[A-Za-z0-9._/-]+$'
-          git fetch --no-tags origin "$SHA"
+          git -c core.hooksPath=/dev/null fetch --no-tags origin "$SHA"
           if [ -n "$PR" ]; then
             printf '%s' "$PR" | grep -Eq '^[0-9]+$'
-            git fetch --no-tags origin "refs/pull/${PR}/head:refs/keel/pr-head"
+            git -c core.hooksPath=/dev/null fetch --no-tags origin "refs/pull/${PR}/head:refs/keel/pr-head"
             got=$(git rev-parse refs/keel/pr-head)
             if [ "$got" != "$SHA" ]; then
               echo "mutants: pull head does not match the sha" >&2
               exit 1
             fi
           fi
-          git checkout --detach "$SHA"
-          git fetch --no-tags origin "refs/heads/${BASE}:refs/remotes/origin/${BASE}"
-      - name: Run the selected mutants
+      - name: Build the plan
+        id: plan
         env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
           SHA: ${{ steps.target.outputs.sha }}
-          BASE: ${{ steps.target.outputs.base }}
+          BASE_REF: ${{ steps.target.outputs.base }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PLAN_DIR: ${{ github.workspace }}/plan-out
+          REPO_ROOT: ${{ github.workspace }}
+        run: python3 setup/tests/harness/mutate_shards.py resolve
+      - name: Upload the plan
+        if: steps.plan.outputs.skip != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: plan
+          path: plan-out/plan.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: hashFiles('plan-out/tree-0.tar.gz') != ''
+        with:
+          name: tree-0
+          path: plan-out/tree-0.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: hashFiles('plan-out/tree-1.tar.gz') != ''
+        with:
+          name: tree-1
+          path: plan-out/tree-1.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: hashFiles('plan-out/tree-2.tar.gz') != ''
+        with:
+          name: tree-2
+          path: plan-out/tree-2.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: hashFiles('plan-out/tree-3.tar.gz') != ''
+        with:
+          name: tree-3
+          path: plan-out/tree-3.tar.gz
+
+  shard:
+    needs: resolve-plan
+    if: needs.resolve-plan.outputs.skip != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45 # shard-timeout
+    permissions: # shard-readonly
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve-plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tree-${{ matrix.k }}
+          path: shard-in
+      - name: Run the shard
+        env:
+          PLAN_B64: ${{ needs.resolve-plan.outputs.plan_b64 }}
+          K: ${{ matrix.k }}
+          JOBS: "3" # setting
         run: |
           set -eu
-          printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$'
-          printf '%s' "$BASE" | grep -Eq '^[A-Za-z0-9._/-]+$'
+          python3 - << 'PY'
+          import base64, json, os
+          plan = json.loads(base64.b64decode(os.environ["PLAN_B64"]))
+          open("shard.sha", "w", encoding="utf-8").write(plan["sha256"][os.environ["K"]])
+          PY
+          tar=$(find shard-in -name 'tree-*.tar.gz' -print -quit)
+          test -n "$tar"
           clean=(
             "HOME=$HOME"
             "PATH=$PATH"
@@ -132,10 +198,42 @@ jobs:
             "SHELL=${SHELL:-/bin/bash}"
             "LANG=${LANG:-C.UTF-8}"
             "TMPDIR=${TMPDIR:-/tmp}"
-            "KEEL_MUTATE_BASE=origin/${BASE}"
-            "KEEL_CI=1"
+            "TAR=$tar"
+            "SHA256=$(cat shard.sha)"
+            "RAW_DIR=$PWD/raw-out"
+            "JOBS=${JOBS}"
           )
           if [ -n "${DOCKER_HOST:-}" ]; then
             clean+=("DOCKER_HOST=$DOCKER_HOST")
           fi
-          exec env -i "${clean[@]}" bash setup/tests/harness/run-tests.sh
+          env -i "${clean[@]}" python3 setup/tests/harness/mutate_shards.py run-shard
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: raw-${{ matrix.k }}
+          path: raw-out
+
+  mutants:
+    needs: [resolve-plan, shard]
+    if: always() && needs.resolve-plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Grade
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          PLAN_B64: ${{ needs.resolve-plan.outputs.plan_b64 }}
+          SHARD_RESULT: ${{ needs.shard.result }}
+          SELECTOR: ${{ needs.resolve-plan.outputs.selector }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          STATE_PATH: ${{ github.workspace }}/state.json
+        run: python3 setup/tests/harness/mutate_shards.py aggregate

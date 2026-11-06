@@ -62,6 +62,17 @@ def in_ci_order(ids):
     return [mid for mid in mf.CI_IDS if mid in want]
 
 
+def with_dependents(path, own):
+    extra = []
+    for owner, deps in mf.DEPENDS.items():
+        if path not in deps:
+            continue
+        for mid, paths in mf.FILES.items():
+            if owner in paths and mid in mf.CI_IDS:
+                extra.append(mid)
+    return in_ci_order(list(own) + extra)
+
+
 def validate():
     if set(mf.FILES) != set(mutate.M):
         fail("FILES and mutate.M differ")
@@ -69,19 +80,34 @@ def validate():
         if not paths:
             fail("empty map " + mid)
         rel = mutate.M[mid][0]
-        expect = [rel] if rel.startswith("scripts/") else ["setup/" + rel]
+        if rel.startswith("scripts/") or rel.startswith(".github/"):
+            expect = [rel]
+        else:
+            expect = ["setup/" + rel]
+        if mid == "M171":
+            expect = [
+                ".github/workflows/mutate-pr.yml",
+                ".github/workflows/mutate-full.yml",
+            ]
         if paths != expect:
             fail("%s map %s != %s" % (mid, paths, expect))
         for path in paths:
             if not os.path.isfile(os.path.join(ROOT, path)):
                 fail("missing " + path)
-    if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93:
+    new_ids = ["M%d" % n for n in range(139, 177)]
+    if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93 + len(new_ids):
         fail("CI id set changed")
+    if mf.CI_IDS[-len(new_ids):] != new_ids:
+        fail("new CI ids are not M139-M176")
     if len(mf.OFFLINE_IDS) != len(set(mf.OFFLINE_IDS)) or len(mf.OFFLINE_IDS) != 5:
         fail("offline id set changed")
-    if len(mf.CI_IDS) + len(mf.OFFLINE_IDS) != 98:
-        fail("full id count is not 98")
-    for mid in mf.CI_IDS + mf.OFFLINE_IDS:
+    if len(mf.CI_IDS) + len(mf.OFFLINE_IDS) != 98 + len(new_ids):
+        fail("full id count drifted")
+    if len(mf.FULL_ONLY) != 40 or set(mf.FULL_ONLY) & set(mf.CI_IDS + mf.OFFLINE_IDS):
+        fail("FULL_ONLY is not the remaining ids")
+    if set(mf.FILES) != set(mf.CI_IDS) | set(mf.OFFLINE_IDS) | set(mf.FULL_ONLY):
+        fail("an id is missing from the three lists")
+    for mid in mf.CI_IDS + mf.OFFLINE_IDS + mf.FULL_ONLY:
         if mid not in mf.FILES:
             fail("listed id not mapped " + mid)
     for path in mf.TRIGGERS:
@@ -97,8 +123,8 @@ def validate():
     ):
         if path not in mapped or path not in mf.TARGET_ONLY:
             fail("selective edit target missing " + path)
-    if BINDER not in mf.TRIGGERS or BINDER in mf.TARGET_ONLY:
-        fail("SEL-M4 binder must stay in TRIGGERS and off the selective targets")
+    if BINDER not in mf.GATE_PATHS or BINDER in mf.TARGET_ONLY:
+        fail("SEL-M4 binder must stay a gate path and off the selective targets")
     if set(mf.ORACLE_FILES) != set(RESIDUAL):
         fail("SEL-M6 ORACLE_FILES is not the residual fixture set")
     for path in mf.ORACLE_FILES:
@@ -106,8 +132,8 @@ def validate():
             fail("residual oracle listed as selective " + path)
         if not os.path.isfile(os.path.join(ROOT, path)):
             fail("missing oracle " + path)
-    if set(mf.ORACLE_SCRIPTS) != set(ORACLES):
-        fail("oracle script map changed")
+    if not set(ORACLES) <= set(mf.ORACLE_SCRIPTS):
+        fail("oracle script map dropped a suite")
     for path, ids in (
         ("VISIBILITY_CI", VIS),
         ("EGRESS_CI", EGRESS),
@@ -198,6 +224,8 @@ def cli_lists():
 
 
 def main():
+    import speed_cases
+    speed_rc = speed_cases.main(["speed_cases.py"])
     validate()
     for ids in (VIS, EGRESS, ATTACK, RUNTIME, STEP4, KEEL, PI):
         if ids != in_ci_order(ids):
@@ -206,21 +234,23 @@ def main():
     expect_exact(["setup/keel.sh"], KEEL, "SEL-H1")
     if "M03" not in KEEL or "M51" in KEEL:
         fail("SEL-H1 keel set")
-    expect_exact(["setup/lib/visibility.py"], VIS_FILE, "SEL-H1 visibility")
+    expect_exact(["setup/lib/visibility.py"], with_dependents("setup/lib/visibility.py", VIS_FILE), "SEL-H1 visibility")
     if set(KEEL) & set(VIS_FILE):
         fail("keel.sh and visibility.py share a CI mutant")
     both = mf.check_selection(["setup/keel.sh", "setup/lib/visibility.py"])
-    union = [mid for mid in mf.CI_IDS if mid in set(KEEL) | set(VIS_FILE)]
+    union = [mid for mid in mf.CI_IDS if mid in set(KEEL) | set(with_dependents("setup/lib/visibility.py", VIS_FILE))]
     if both != ("some", union):
         fail("combined selection %s" % (both,))
 
-    expect_exact(["setup/lib/egress.py"], [mid for mid in EGRESS if mid in ("M57", "M58", "M59", "M60", "M68", "M76")], "egress.py")
-    expect_exact(["setup/lib/egress.sh"], [mid for mid in EGRESS if mid not in ("M57", "M58", "M59", "M60", "M61", "M62", "M63", "M68", "M76")], "egress.sh")
+    egress_py = [mid for mid in EGRESS if mid in ("M57", "M58", "M59", "M60", "M68", "M76")]
+    egress_sh = [mid for mid in EGRESS if mid not in ("M57", "M58", "M59", "M60", "M61", "M62", "M63", "M68", "M76")]
+    expect_exact(["setup/lib/egress.py"], with_dependents("setup/lib/egress.py", egress_py), "egress.py")
+    expect_exact(["setup/lib/egress.sh"], with_dependents("setup/lib/egress.sh", egress_sh), "egress.sh")
     expect_exact(["setup/tests/harness/attack-results.sh"], ["M78"], "attack-results")
     expect_exact(["setup/check.sh"], ["M79"], "SEL-H6")
     expect_exact(["setup/docker/ancestor-guard.sh"], ["M108"], "ancestor-guard")
     expect_exact(["setup/keel-doctor.sh"], ["M89", "M110", "M129"], "keel-doctor")
-    expect_exact(["setup/lib/pi_launch.py"], PI, "pi_launch")
+    expect_exact(["setup/lib/pi_launch.py"], with_dependents("setup/lib/pi_launch.py", PI), "pi_launch")
     if "M99" in PI or "M01" in PI or len(PI) != 18:
         fail("pi_launch CI list includes an offline id")
 
@@ -263,7 +293,6 @@ def main():
     full_paths = [
         "setup/tests/harness/test-happy.sh",
         "setup/tests/harness/h3-verdict.sh",
-        "setup/lib/portable.sh",
         "setup/common.sh",
         "setup/lib/mock_model.py",
         "setup/docker/keel-git.Dockerfile",
@@ -272,8 +301,6 @@ def main():
         "setup/gitleaks-install.sh",
         "setup/gitleaks.ignore",
         "setup/not-a-mapped-target",
-        ".github/workflows/mutate-full.yml",
-        ".github/workflows/mutate-pr.yml",
         ".github/unknown.yml",
         "setup/allow/README.md",
         "setup/egress/README.md",
@@ -297,11 +324,15 @@ def main():
     for path in RESIDUAL:
         exists(path)
         expect_full(path, "SEL-A8")
-    for path in mf.TRIGGERS:
-        expect_full(path, "SEL-A2" if path.endswith("mutate.py") else "SEL-A5" if path == BINDER else "trigger")
-    for path in mf.FULL_PATHS:
+    for path in mf.MECHANISM:
+        got = mf.select_mutants([path])
+        if got[0] == "full":
+            fail("mechanism file widened to the full set: " + path)
+        if path == "setup/tests/harness/mutate.py" and got != ("skip", []):
+            fail("SEL-A2 mutate.py selected %s" % (got,))
+    for path in mf.GATE_PATHS:
         exists(path)
-        expect_full(path, "SEL-A4" if path.endswith("check-gate.sh") else "gate")
+        expect_exact([path], ["M92", "M93"], "SEL-A4" if path.endswith("check-gate.sh") else "gate")
     mixed = mf.select_mutants(["setup/keel.sh", "setup/tests/harness/test-happy.sh"])
     if mixed != ("full", list(mf.CI_IDS)):
         fail("SEL-A3 oracle next to a target must select the full set")
@@ -330,7 +361,7 @@ def main():
 
     catch(["setup/keel.sh"], always_none, "selection dropped every mutant", "always-none")
     catch(["setup/allow/developer.paths"], always_none, "selection dropped every mutant", "SEL-M1")
-    catch(["setup/lib/portable.sh"], always_none, "full set required", "SEL-M2")
+    catch(["setup/lib/portable.sh"], always_none, "selection dropped every mutant", "SEL-M2")
 
     def skip_allow(changed):
         if any(mf.path_matches(path, "setup/allow/*.paths") for path in changed):
@@ -344,7 +375,7 @@ def main():
             return ("some", ["M92"])
         return mf.select_mutants(changed)
 
-    catch([BINDER], binder_only, "full set required", "SEL-M4")
+    catch([BINDER], binder_only, "selection does not match the map", "SEL-M4")
 
     def directory_prefix(changed):
         if changed and all(
@@ -360,7 +391,7 @@ def main():
     def always_some(_changed):
         return ("some", ["M03"])
 
-    catch(["setup/tests/harness/mutate.py"], always_some, "full set required", "partial-on-trigger")
+    catch(["setup/tests/harness/mutate.py"], always_some, "selection does not match the map", "partial-on-trigger")
     catch(["setup/tests/harness/test-happy.sh"], always_some, "full set required", "partial-on-unknown")
     catch(["setup/tests/harness/test-runtime.sh"], always_some, "selection does not match the map", "SEL-M6")
 
@@ -372,6 +403,8 @@ def main():
         fail("id check")
     cli_lists()
     print("mutant select: SEL-H1 through SEL-M6 and M01-H2 hold")
+    if speed_rc != 0:
+        fail("speed cases")
 
 
 if __name__ == "__main__":
