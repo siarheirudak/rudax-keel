@@ -182,7 +182,8 @@ M = {
  'M172': ('tests/harness/mutate_shards.py', 'timeout_is_fail = True  # timeout-not-success', 'timeout_is_fail = False  # timeout-not-success', 'timed out shard counts as success', ['S-A34', 'S-A6']),
  'M173': ('tests/harness/mutate_shards.py', 'check_baseline = True  # baseline-check', 'check_baseline = False  # baseline-check', 'baseline check is off', ['S-A30', 'S-A31']),
  'M174': ('tests/harness/mutate_shards.py', 'check_tree_entries = True  # tree-entry-check', 'check_tree_entries = False  # tree-entry-check', 'tree entry checks are off', ['S-A29']),
- 'M175': ('.github/workflows/mutate-pr.yml', '    permissions: # shard-readonly\n      contents: read', '    permissions: # shard-readonly\n      actions: write\n      contents: read', 'shard job can write actions', ['S-A35']),
+ 'M175': ('.github/workflows/mutate-pr.yml', '    permissions: # shard-readonly\n      contents: read', '    permissions: # shard-readonly\n      actions: write\n      contents: read', 'pull-request shard job can write actions', ['S-A35']),
+ 'M176': ('.github/workflows/mutate-full.yml', '    permissions: # shard-readonly\n      contents: read', '    permissions: # shard-readonly\n      actions: write\n      contents: read', 'full-run shard job can write actions', ['S-A35']),
 }
 SUITE_OF = {
     'M01': 'test-attacks.sh',
@@ -360,6 +361,7 @@ SUITE_OF = {
     'M173': 'test-mutate-shards.sh',
     'M174': 'test-mutate-shards.sh',
     'M175': 'test-mutate-shards.sh',
+    'M176': 'test-mutate-shards.sh',
 }
 EXTRA_EDITS = {
     'M15': ['M14'],

@@ -473,30 +473,95 @@ def case_s_a34():
     return ms.result_ok("timed_out") is False and ms.bind_shard(["M01"], ["M01"], "timed_out") is False
 
 
-def _shard_job(text):
+def _workflow_jobs(text):
     lines = text.splitlines()
     start = None
     for index, line in enumerate(lines):
-        if line == "  shard:":
-            start = index
+        if line == "jobs:":
+            start = index + 1
             break
     if start is None:
-        return ""
-    end = len(lines)
-    for index in range(start + 1, len(lines)):
-        line = lines[index]
-        if line.startswith("  ") and not line.startswith("   ") and line.endswith(":"):
-            end = index
-            break
-    return "\n".join(lines[start:end])
+        return {}
+    jobs = {}
+    name = None
+    buf = []
+    for line in lines[start:]:
+        if (
+            line.startswith("  ")
+            and not line.startswith("   ")
+            and line.rstrip().endswith(":")
+            and not line.strip().startswith("#")
+        ):
+            if name is not None:
+                jobs[name] = "\n".join(buf)
+            name = line.strip()[:-1]
+            buf = [line]
+        elif name is not None:
+            buf.append(line)
+    if name is not None:
+        jobs[name] = "\n".join(buf)
+    return jobs
+
+
+def _permission_map(job):
+    """Return the shard permission map, or None when the block is missing."""
+    lines = job.splitlines()
+    for index, line in enumerate(lines):
+        code = line.split("#", 1)[0].strip()
+        if code == "permissions: write-all":
+            return {"write-all": "write-all"}
+        if code != "permissions:":
+            continue
+        base = len(line) - len(line.lstrip(" "))
+        found = {}
+        for nxt in lines[index + 1:]:
+            if not nxt.strip() or nxt.strip().startswith("#"):
+                continue
+            indent = len(nxt) - len(nxt.lstrip(" "))
+            if indent <= base:
+                break
+            body = nxt.split("#", 1)[0].strip()
+            if ":" not in body:
+                return {"bad": "bad"}
+            key, value = body.split(":", 1)
+            found[key.strip()] = value.strip().strip("\"'")
+        return found
+    return None
+
+
+def _other_job_fetches_tree(name, job):
+    if name == "shard":
+        return False
+    if "run-shard" in job:
+        return True
+    lines = job.splitlines()
+    downloading = False
+    for line in lines:
+        stripped = line.strip()
+        if "download-artifact" in line:
+            downloading = True
+            continue
+        if not downloading:
+            continue
+        if stripped.startswith("name:") and "tree-" in stripped:
+            return True
+        if stripped.startswith("- "):
+            downloading = "download-artifact" in line
+    return False
 
 
 def case_s_a35():
     for rel in (".github/workflows/mutate-pr.yml", ".github/workflows/mutate-full.yml"):
         text = open(os.path.join(ROOT, rel), encoding="utf-8").read()
-        job = _shard_job(text)
-        if "shard-readonly" not in job or "actions: write" in job:
+        jobs = _workflow_jobs(text)
+        shard = jobs.get("shard")
+        if shard is None:
             return False
+        if _permission_map(shard) != {"contents": "read"}:
+            return False
+        for name, job in jobs.items():
+            if _other_job_fetches_tree(name, job):
+                return False
     return True
 
 
@@ -585,6 +650,14 @@ def prove(suite):
             for name in os.listdir(HERE):
                 if name.endswith(".py"):
                     shutil.copy(os.path.join(HERE, name), os.path.join(tmp, name))
+            needs_workflows = any(rel.startswith(".github/") for rel in mf.FILES[mid])
+            if needs_workflows:
+                wf_src = os.path.join(ROOT, ".github", "workflows")
+                wf_dst = os.path.join(tmp, "repo", ".github", "workflows")
+                os.makedirs(wf_dst, exist_ok=True)
+                for name in os.listdir(wf_src):
+                    if name.endswith((".yml", ".yaml")):
+                        shutil.copy(os.path.join(wf_src, name), os.path.join(wf_dst, name))
             for rel in mf.FILES[mid]:
                 src = os.path.join(ROOT, rel)
                 if not os.path.isfile(src):
