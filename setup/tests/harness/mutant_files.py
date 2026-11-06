@@ -399,6 +399,7 @@ SUITES = (
     "test-runtime.sh",
     "test-step4.sh",
     "test-step5.sh",
+    "test-step6.sh",
     "test-egress.sh",
     "visibility-suite.sh",
     "test-mutant-select.py",

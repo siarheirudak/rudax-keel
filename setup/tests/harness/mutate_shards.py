@@ -510,16 +510,25 @@ def cmd_resolve(repo, sha, base_ref):
     if os.environ.get("PLAN_ALL") == "1":
         plan = sorted(main.ids, key=md.id_key)
         print("mutants: total %d, new 0, modified 0" % len(plan))
+        suite_defs = main
     else:
         plan = resolve_plan(names, main, pr, red, mf.SUITES, mf.select_mutants)
+        suite_defs = pr
     shards = assign_shards(plan)
     graded = {}
+    suites = {}
+    known_suites = set(mf.SUITES)
     for mid in plan:
+        suite = suite_defs.suite(mid)
+        if suite not in known_suites:  # plan-suite-assert
+            raise md.DefsError("suite")
+        suites[mid] = suite
         graded[mid] = md.grade_exp(mid, main, pr, main.masked) if mid in pr.M else list(mutate.M[mid][4])
     payload = {
         "ids": plan,
         "shards": {str(index): group for index, group in enumerate(shards)},
         "exp": graded,
+        "suite": suites,
         "main_sha": main_sha,
         "selector": selector_hash(repo),
         "skip": not plan,
@@ -591,7 +600,33 @@ def safe_untar(tar_path, dest):
         tar.extractall(dest)
 
 
-def cmd_run_shard(tar_path, expected_sha, out_dir):
+def plan_suite(plan, mid):
+    """Suite for one id from the trusted plan. No main-table fallback."""
+    if not isinstance(plan, dict):
+        raise ShardError("plan")
+    suites = plan.get("suite")
+    if not isinstance(suites, dict) or mid not in suites:  # plan-suite-key
+        raise ShardError("plan")
+    suite = suites[mid]
+    if suite not in mf.SUITES:  # plan-suite-known
+        raise ShardError("suite")
+    return suite
+
+
+def plan_exp(plan, mid):
+    """Expected attacks for one id from the trusted plan. No main-table fallback."""
+    if not isinstance(plan, dict):
+        raise ShardError("plan")
+    exps = plan.get("exp")
+    if not isinstance(exps, dict) or mid not in exps:  # plan-exp-key
+        raise ShardError("plan")
+    exp = exps[mid]
+    if not isinstance(exp, (list, tuple)) or not all(isinstance(item, str) for item in exp):
+        raise ShardError("plan")
+    return list(exp)
+
+
+def cmd_run_shard(tar_path, expected_sha, out_dir, suites, group):
     if not verify_sha256(tar_path, expected_sha):
         raise SystemExit("sha256")
     work = os.path.join(out_dir, "work")
@@ -599,10 +634,21 @@ def cmd_run_shard(tar_path, expected_sha, out_dir):
     baseline = os.path.join(work, "baseline")
     ids_root = os.path.join(work, "ids")
     ids = sorted(os.listdir(ids_root), key=md.id_key) if os.path.isdir(ids_root) else []
+    # An id stored in the tar that the plan suite map does not name fails closed.
+    for mid in ids:
+        if mid not in suites:
+            raise ShardError("plan")
+    # Tar ids must equal this shard group.
+    if not bind_shard(list(group), ids, "success"):  # shard-bind
+        raise ShardError("shard")
     os.makedirs(out_dir, exist_ok=True)
     seen = set()
-    for mid in ids:
-        suite = mutate.SUITE_OF[mid]
+    for mid in group:
+        if mid not in suites:
+            raise ShardError("plan")
+        suite = suites[mid]
+        if suite not in mf.SUITES:
+            raise ShardError("suite")
         if suite not in seen:
             stdout = run_suite(baseline, suite, "base")
             open(os.path.join(out_dir, "baseline-" + suite), "w", encoding="utf-8").write(stdout)
@@ -702,14 +748,17 @@ def cmd_aggregate():
             if name.startswith("baseline-"):
                 baselines[name[len("baseline-"):]] = open(os.path.join(folder, name), encoding="utf-8").read()
         for mid in group:
-            suite = mutate.SUITE_OF[mid]
-            exp = plan.get("exp", {}).get(mid, list(mutate.M[mid][4]))
+            # A missing or unknown plan suite fails closed before this id is graded.
+            plan_suite(plan, mid)
+            exp = plan_exp(plan, mid)
             stdout = open(os.path.join(folder, mid + ".txt"), encoding="utf-8").read()
             tag, _detail = grade_stdout(exp, stdout)
             if tag_fails(tag):
                 failures.append(mid)
-    graded_exp = {mid: plan.get("exp", {}).get(mid, list(mutate.M[mid][4])) for mid in plan["ids"]}
-    bad, missing = baseline_bad_ids(plan["ids"], mutate.SUITE_OF, graded_exp, baselines)
+    graded_exp = {mid: plan_exp(plan, mid) for mid in plan["ids"]}
+    bad, missing = baseline_bad_ids(
+        plan["ids"], lambda mid: plan_suite(plan, mid), graded_exp, baselines
+    )
     if missing or bad:
         print("baseline", file=sys.stderr)
         return 1
@@ -763,7 +812,32 @@ def main(argv):
         print("mutate shards: self-test holds")
         return 0
     if argv[1:2] == ["run-shard"]:
-        return cmd_run_shard(os.environ["TAR"], os.environ["SHA256"], os.environ.get("RAW_DIR") or "raw")
+        import base64
+        import json
+        blob = os.environ.get("PLAN_B64") or ""
+        key = os.environ.get("K")
+        if not blob or not key:
+            raise ShardError("plan")
+        try:
+            plan = json.loads(base64.b64decode(blob))
+        except Exception as err:
+            raise ShardError("plan") from err
+        if not isinstance(plan, dict):
+            raise ShardError("plan")
+        shards = plan.get("shards")
+        if not isinstance(shards, dict) or key not in shards:
+            raise ShardError("plan")
+        group = shards[key]
+        if not isinstance(group, list):
+            raise ShardError("plan")
+        suites = {mid: plan_suite(plan, mid) for mid in group}
+        return cmd_run_shard(
+            os.environ["TAR"],
+            os.environ["SHA256"],
+            os.environ.get("RAW_DIR") or "raw",
+            suites,
+            group,
+        )
     if argv[1:2] == ["aggregate"]:
         return cmd_aggregate()
     if argv[1:2] == ["resolve"]:
