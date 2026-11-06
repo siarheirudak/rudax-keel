@@ -10,6 +10,42 @@ SETUP=$(cd "$HERE/../.." && pwd -P)
 # shellcheck source=setup/lib/portable.sh
 . "$SETUP/lib/portable.sh"
 DOCKER=${DOCKER:-docker}; export DOCKER
+
+# Doctor 07b needs a key file outside KEEL_CI. That file is created only
+# under a fresh temp root. The caller's KEEL_ROOT and key path are not
+# created or overwritten. The EXIT trap removes the temp root.
+prepare_doctor_root() {
+  doc_real_root=${KEEL_ROOT:-$HOME/keel-proto}
+  doc_real_key=${KEEL_JUDGE_KEY_FILE:-$doc_real_root/.keel/keys/openrouter.key}
+  doc_root=$(mktemp -d "${TMPDIR:-/tmp}/keel-doctor.XXXXXX")
+  trap 'rm -rf "$doc_root"' EXIT
+  export KEEL_ROOT="$doc_root"
+  unset KEEL_JUDGE_KEY_FILE
+  if [ "${KEEL_CI:-}" != "1" ]; then
+    mkdir -p "$doc_root/.keel/keys"
+    (umask 077; printf '%s\n' 'local-doctor-placeholder' > "$doc_root/.keel/keys/openrouter.key")
+    chmod 600 "$doc_root/.keel/keys/openrouter.key"
+    export KEEL_JUDGE_KEY_FILE="$doc_root/.keel/keys/openrouter.key"
+  fi
+  if [ "${KEEL_JUDGE_KEY_FILE:-}" = "$doc_real_key" ]; then
+    echo "ERROR: doctor root would use the real key path" >&2
+    exit 1
+  fi
+  case $KEEL_ROOT in
+    "$doc_real_root"|"$doc_real_root"/*)
+      echo "ERROR: doctor root is inside the real KEEL_ROOT" >&2
+      exit 1
+      ;;
+  esac
+}
+
+if [ "${1:-}" = "--doctor-root" ]; then
+  prepare_doctor_root
+  printf '%s\n' "$KEEL_ROOT"
+  printf '%s\n' "${KEEL_JUDGE_KEY_FILE:-}"
+  exit 0
+fi
+
 echo "== script modes"
 bash "$SETUP/check.sh" || exit 1
 echo "== mutant select"
@@ -78,8 +114,24 @@ if [ -n "$open_step4" ]; then
   printf '%s\n' "$open_step4" >&2
   rc=1
 fi
+echo "== step 5     -> logs/step5-$TS.log"
+bash "$HERE/test-step5.sh" > "$HERE/logs/step5-$TS.log" 2>&1 || rc=1
+grep -a '^RESULT ' "$HERE/logs/step5-$TS.log" || true
+open_step5=$(attack_results_open "$HERE/logs/step5-$TS.log")
+if [ -n "$open_step5" ]; then
+  echo "ERROR: a step 5 check printed NOT BLOCKED, WRONG REASON, or ERROR" >&2
+  printf '%s\n' "$open_step5" >&2
+  rc=1
+fi
 echo "== keel-doctor (verdict last; on a fresh throwaway repo, the suites wiped theirs)"
-[ -n "${KEEL_REPO:-}" ] || "$SETUP/keel.sh" init-repo >/dev/null
+# The key file, when one is required, is created only inside this temp root.
+saved_repo=${KEEL_REPO:-}
+prepare_doctor_root
+if [ -n "$saved_repo" ]; then
+  export KEEL_REPO="$saved_repo"
+else
+  "$SETUP/keel.sh" init-repo >/dev/null
+fi
 # The live daemon stays rootful. Bring egress up through the test entrypoint
 # so the doctor can score every other critical check.
 if ! "$HERE/harness-keel.sh" egress-up >/dev/null; then
