@@ -50,6 +50,9 @@ echo "== script modes"
 bash "$SETUP/check.sh" || exit 1
 echo "== mutant select"
 python3 "$HERE/test-mutant-select.py" || exit 1
+echo "== mutate shards"
+bash "$HERE/test-mutate-shards.sh" || exit 1
+python3 "$HERE/mutate-full-state.py" --self-test || exit 1
 python3 "$HERE/test-mutate-parse.py" || exit 1
 python3 "$HERE/mutate-issue.py" --self-test || exit 1
 echo "== mutate plan"
@@ -151,7 +154,7 @@ echo "== mutate"
 . "$HERE/mutate-plan.sh"
 decision_file=$(mktemp)
 mutate_ok=1
-if [ "${KEEL_MUTATE_FORCE:-}" = 1 ]; then
+if [ "${KEEL_MUTATE_FORCE:-}" = 1 ] || [ "${KEEL_MUTATE_ALL:-}" = 1 ]; then
   printf '%s\n' "RESULT mutate: run" >"$decision_file"
   mutate_ok=0
 elif mutate_plan >"$decision_file"; then
@@ -164,7 +167,13 @@ if [ "$mutate_ok" -eq 0 ]; then
   ids=
   case $decision in
     "RESULT mutate: run")
-      if [ "${KEEL_MUTATE_FORCE:-}" = 1 ]; then
+      if [ "${KEEL_MUTATE_ALL:-}" = 1 ]; then
+        ids=$(python3 "$HERE/mutant_files.py" --all) || {
+          echo "ERROR: mutate: all list failed" >&2
+          rc=1
+          ids=
+        }
+      elif [ "${KEEL_MUTATE_FORCE:-}" = 1 ]; then
         ids=$(python3 "$HERE/mutant_files.py" --full) || {
           echo "ERROR: mutate: full list failed" >&2
           rc=1

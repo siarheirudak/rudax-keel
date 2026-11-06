@@ -7,6 +7,7 @@ import urllib.parse
 import urllib.request
 
 TITLE = "Full mutant set failed"
+BOOTSTRAP_TITLE = "Mutant bootstrap is overdue"
 
 
 def matching_issue(issues, title):
@@ -73,9 +74,10 @@ def open_issues(token, repo):
     raise SystemExit("too many open issues to scan")
 
 
-def file_issue(token, repo, run_url):
-    numbers = matching_issue(open_issues(token, repo), TITLE)
-    body = "Full mutant set failed.\n\n%s\n" % run_url
+def file_issue(token, repo, run_url, title=TITLE, body=None):
+    numbers = matching_issue(open_issues(token, repo), title)
+    if body is None:
+        body = "Full mutant set failed.\n\n%s\n" % run_url
     if numbers:
         _request(
             token,
@@ -88,13 +90,27 @@ def file_issue(token, repo, run_url):
         token,
         "POST",
         "/repos/%s/issues" % repo,
-        {"title": TITLE, "body": body},
+        {"title": title, "body": body},
     )
 
 
 def main(argv):
     if argv[1:2] == ["--self-test"]:
         self_test()
+        return 0
+    if argv[1:2] == ["--bootstrap"]:
+        path = os.environ.get("STATE_PATH") or ""
+        token = os.environ.get("GH_TOKEN") or ""
+        repo = os.environ.get("REPO") or ""
+        run_url = os.environ.get("RUN_URL") or ""
+        if not path or not token or not repo or not run_url:
+            print("ERROR: mutate issue: missing bootstrap inputs", file=sys.stderr)
+            return 1
+        state = json.load(open(path, encoding="utf-8"))
+        if not state.get("bootstrap_overdue"):
+            return 0
+        body = "The configured bootstrap limit was reached before a green run of every id.\n\n%s\n" % run_url
+        file_issue(token, repo, run_url, BOOTSTRAP_TITLE, body)
         return 0
     token = os.environ.get("GH_TOKEN") or ""
     repo = os.environ.get("REPO") or ""

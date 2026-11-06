@@ -3,6 +3,7 @@ name: mutate-full
 on:
   schedule:
     - cron: "17 18 * * *"
+    - cron: "17 18 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -13,24 +14,137 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  mutants:
+  fresh:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 10
     permissions:
+      actions: read
       contents: read
+    outputs:
+      mode: ${{ steps.fresh.outputs.mode }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Install gitleaks
-        run: bash setup/gitleaks-install.sh
-      - name: Run the full mutant set
-        # The runner sets GITHUB_* names. keel-doctor treats any GH_* or GITHUB_* name as a token,
-        # so those names are not forwarded. KEEL_MUTATE_FORCE runs the full set on main,
-        # where a diff against origin/main is empty.
+      - name: Decide whether this run grades every id
+        id: fresh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_SCHEDULE: ${{ github.event.schedule || '' }}
+          MAIN_SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python3 setup/tests/harness/mutate-full-state.py fresh
+      - name: Record a skip
+        if: steps.fresh.outputs.mode == 'skip'
+        run: |
+          python3 - << 'PY'
+          import json
+          json.dump({
+              "mode": "skip",
+              "full_plan": False,
+              "green_all": False,
+              "bootstrap_overdue": False,
+          }, open("state.json", "w", encoding="utf-8"))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.fresh.outputs.mode == 'skip'
+        with:
+          name: state
+          path: state.json
+
+  resolve-plan:
+    needs: fresh
+    if: needs.fresh.outputs.mode == 'run'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: write
+      contents: read
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      plan_b64: ${{ steps.plan.outputs.plan_b64 }}
+      skip: ${{ steps.plan.outputs.skip }}
+      main_sha: ${{ steps.plan.outputs.main_sha }}
+      selector: ${{ steps.plan.outputs.selector }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Build the full plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          BASE_REF: HEAD
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PLAN_ALL: "1"
+          PLAN_DIR: ${{ github.workspace }}/plan-out
+          REPO_ROOT: ${{ github.workspace }}
+        run: python3 setup/tests/harness/mutate_shards.py resolve
+      - name: Upload the plan
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: plan
+          path: plan-out/plan.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: hashFiles('plan-out/tree-0.tar.gz') != ''
+        with:
+          name: tree-0
+          path: plan-out/tree-0.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: hashFiles('plan-out/tree-1.tar.gz') != ''
+        with:
+          name: tree-1
+          path: plan-out/tree-1.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: hashFiles('plan-out/tree-2.tar.gz') != ''
+        with:
+          name: tree-2
+          path: plan-out/tree-2.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: hashFiles('plan-out/tree-3.tar.gz') != ''
+        with:
+          name: tree-3
+          path: plan-out/tree-3.tar.gz
+
+  shard:
+    needs: resolve-plan
+    if: needs.resolve-plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45 # shard-timeout
+    permissions:
+      actions: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve-plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tree-${{ matrix.k }}
+          path: shard-in
+      - name: Run the shard
+        env:
+          PLAN_B64: ${{ needs.resolve-plan.outputs.plan_b64 }}
+          K: ${{ matrix.k }}
+          JOBS: "3"
         run: |
           set -eu
+          python3 - << 'PY'
+          import base64, json, os
+          plan = json.loads(base64.b64decode(os.environ["PLAN_B64"]))
+          open("shard.sha", "w", encoding="utf-8").write(plan["sha256"][os.environ["K"]])
+          PY
+          tar=$(find shard-in -name 'tree-*.tar.gz' -print -quit)
+          test -n "$tar"
           clean=(
             "HOME=$HOME"
             "PATH=$PATH"
@@ -39,16 +153,78 @@ jobs:
             "SHELL=${SHELL:-/bin/bash}"
             "LANG=${LANG:-C.UTF-8}"
             "TMPDIR=${TMPDIR:-/tmp}"
-            "KEEL_MUTATE_FORCE=1"
-            "KEEL_CI=1"
+            "TAR=$tar"
+            "SHA256=$(cat shard.sha)"
+            "RAW_DIR=$PWD/raw-out"
+            "JOBS=${JOBS}"
           )
           if [ -n "${DOCKER_HOST:-}" ]; then
             clean+=("DOCKER_HOST=$DOCKER_HOST")
           fi
-          exec env -i "${clean[@]}" bash setup/tests/harness/run-tests.sh
+          env -i "${clean[@]}" python3 setup/tests/harness/mutate_shards.py run-shard
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: raw-${{ matrix.k }}
+          path: raw-out
+
+  mutants:
+    needs: [fresh, resolve-plan, shard]
+    if: always() && needs.fresh.outputs.mode == 'run' && needs.resolve-plan.result == 'success' && needs.shard.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Grade
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          PLAN_B64: ${{ needs.resolve-plan.outputs.plan_b64 }}
+          SHARD_RESULT: ${{ needs.shard.result }}
+          SELECTOR: ${{ needs.resolve-plan.outputs.selector }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          HEAD_SHA: ${{ github.sha }}
+          STATE_PATH: ${{ github.workspace }}/state.json
+        run: python3 setup/tests/harness/mutate_shards.py aggregate
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: state
+          path: state.json
+
+  notice:
+    needs: mutants
+    if: needs.mutants.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: state
+          path: state-in
+      - name: File the bootstrap notice
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          STATE_PATH: state-in/state.json
+        run: python3 setup/tests/harness/mutate-issue.py --bootstrap
 
   report:
-    needs: mutants
+    needs: [fresh, resolve-plan, shard, mutants]
     if: failure()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

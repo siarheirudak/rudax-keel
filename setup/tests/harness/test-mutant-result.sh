@@ -45,7 +45,7 @@ fi
 # shellcheck disable=SC2016
 need .github/workflows/mutate-pr.yml 'run-name: mutants ${{ inputs.sha }}'
 need .github/workflows/mutate-pr.yml 'github.event.repository.default_branch'
-need .github/workflows/mutate-full.yml 'KEEL_MUTATE_FORCE=1'
+need .github/workflows/mutate-full.yml 'PLAN_ALL: "1"'
 if grep -q 'KEEL_MUTATE_DEFER' "$ROOT/.github/workflows/mutate-full.yml"; then
   echo "daily run defers mutants" >&2
   fail=1

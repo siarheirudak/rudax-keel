@@ -3,7 +3,10 @@
 
 The map is data. test-mutant-select.py checks it against mutate.M.
 """
+import ast
 import fnmatch
+import os
+import re
 import sys
 
 FILES = {
@@ -145,6 +148,42 @@ FILES = {
     "M136": ["setup/lib/discovery_judge.py"],
     "M137": ["setup/lib/discovery_judge.py"],
     "M138": ["setup/lib/discovery_judge.py"],
+    "M139": ["setup/tests/harness/mutant_defs.py"],
+    "M140": ["setup/tests/harness/mutant_defs.py"],
+    "M141": ["setup/tests/harness/mutant_defs.py"],
+    "M142": ["setup/tests/harness/mutant_defs.py"],
+    "M143": ["setup/tests/harness/mutant_defs.py"],
+    "M144": ["setup/tests/harness/mutant_defs.py"],
+    "M145": ["setup/tests/harness/mutant_defs.py"],
+    "M146": ["setup/tests/harness/mutant_defs.py"],
+    "M147": ["setup/tests/harness/mutant_defs.py"],
+    "M148": ["setup/tests/harness/mutant_defs.py"],
+    "M149": ["setup/tests/harness/mutant_files.py"],
+    "M150": ["setup/tests/harness/mutant_files.py"],
+    "M151": ["setup/tests/harness/mutant_files.py"],
+    "M152": ["setup/tests/harness/mutate_shards.py"],
+    "M153": ["setup/tests/harness/mutate_shards.py"],
+    "M154": ["setup/tests/harness/mutate_shards.py"],
+    "M155": ["setup/tests/harness/mutate_shards.py"],
+    "M156": ["setup/tests/harness/mutate-full-state.py"],
+    "M157": ["setup/tests/harness/mutate-full-state.py"],
+    "M158": ["setup/tests/harness/mutant_defs.py"],
+    "M159": ["setup/tests/harness/mutate-full-state.py"],
+    "M160": ["setup/tests/harness/mutant_defs.py"],
+    "M161": ["setup/tests/harness/mutant_defs.py"],
+    "M162": ["setup/tests/harness/mutant_defs.py"],
+    "M163": ["setup/tests/harness/mutant_defs.py"],
+    "M164": ["setup/tests/harness/mutate_shards.py"],
+    "M165": ["setup/tests/harness/mutate_shards.py"],
+    "M166": ["setup/tests/harness/mutate-full-state.py"],
+    "M167": ["setup/tests/harness/mutate_shards.py"],
+    "M168": ["setup/tests/harness/mutate_shards.py"],
+    "M169": ["setup/tests/harness/mutate_shards.py"],
+    "M170": ["setup/tests/harness/mutate_shards.py"],
+    "M171": [".github/workflows/mutate-pr.yml", ".github/workflows/mutate-full.yml"],
+    "M172": ["setup/tests/harness/mutate_shards.py"],
+    "M173": ["setup/tests/harness/mutate_shards.py"],
+    "M174": ["setup/tests/harness/mutate_shards.py"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -242,6 +281,42 @@ CI_IDS = [
     "M136",
     "M137",
     "M138",
+    "M139",
+    "M140",
+    "M141",
+    "M142",
+    "M143",
+    "M144",
+    "M145",
+    "M146",
+    "M147",
+    "M148",
+    "M149",
+    "M150",
+    "M151",
+    "M152",
+    "M153",
+    "M154",
+    "M155",
+    "M156",
+    "M157",
+    "M158",
+    "M159",
+    "M160",
+    "M161",
+    "M162",
+    "M163",
+    "M164",
+    "M165",
+    "M166",
+    "M167",
+    "M168",
+    "M169",
+    "M170",
+    "M171",
+    "M172",
+    "M173",
+    "M174",
 ]
 
 # Docker mount probes, plus M01. Pull-request CI skips these. The daily full run includes them.
@@ -252,6 +327,164 @@ OFFLINE_IDS = [
     "M102",
     "M106",
 ]
+
+# Ids that are not in the CI or offline lists. The scheduled run grades every id.
+FULL_ONLY = [
+    "M02",
+    "M04",
+    "M05",
+    "M06",
+    "M07",
+    "M08",
+    "M09",
+    "M10",
+    "M11",
+    "M12",
+    "M13",
+    "M14",
+    "M15",
+    "M16",
+    "M18",
+    "M19",
+    "M20",
+    "M21",
+    "M22",
+    "M23",
+    "M24",
+    "M25",
+    "M26",
+    "M28",
+    "M29",
+    "M30",
+    "M31",
+    "M32",
+    "M33",
+    "M34",
+    "M35",
+    "M36",
+    "M37",
+    "M38",
+    "M39",
+    "M40",
+    "M41",
+    "M42",
+    "M43",
+    "M44",
+]
+
+# Known masked ids. Each entry carries a reason. A new empty exp is refused
+# until the id is listed here on the default branch.
+EXPECTED_MASKED = {
+    "M14": "paired with the merge-base edit and masked until that edit is applied",
+    "M21": "bundle verify stays masked behind a later gate check",
+    "M33": "prune expiry stays masked behind a later gate check",
+    "M40": "nested git path rule stays masked until fetch fsck is removed with it",
+    "M44": "orphan commit check stays masked behind a later gate check",
+}
+
+# Which ids block a full run. A reviewed change sets this to "all".
+RED_COUNTS = "ci+offline"
+
+# Setting: full runs before a missing green all-id run is called out.
+BOOTSTRAP_FULL_RUNS = 7
+
+SUITES = (
+    "test-attacks.sh",
+    "test-attack-results.sh",
+    "test-mutant-result.sh",
+    "test-runtime.sh",
+    "test-step4.sh",
+    "test-step5.sh",
+    "test-egress.sh",
+    "visibility-suite.sh",
+    "test-mutant-select.py",
+    "test-mutate-shards.sh",
+)
+
+# Frozen pairs. Growing this list fails the duplicate check.
+KNOWN_DUPLICATES = (
+    ("M23", "M82"),
+    ("M24", "M83"),
+    ("M25", "M84"),
+)
+
+# Direct imports and sourced files the scanner must agree with.
+DEPENDS = {
+    "setup/chrome/chromium-argv.sh": ("setup/lib/runtime.sh",),
+    "setup/keel-doctor.sh": (
+        "setup/lib/egress.sh",
+        "setup/lib/portable.sh",
+        "setup/lib/runtime.sh",
+    ),
+    "setup/keel.sh": (
+        "setup/lib/egress.sh",
+        "setup/lib/portable.sh",
+        "setup/lib/runtime.sh",
+    ),
+    "setup/lib/discovery_filter.py": (
+        "setup/lib/discovery_judge.py",
+        "setup/lib/pi_launch.py",
+        "setup/lib/visibility.py",
+    ),
+    "setup/lib/egress_proxy.py": ("setup/lib/egress.py",),
+    "setup/lib/pi_launch.py": ("setup/lib/visibility.py",),
+    "setup/lib/visibility.py": ("setup/lib/pi_launch.py",),
+}
+
+SCAN_FILES = (
+    "setup/lib/discovery_filter.py",
+    "setup/lib/discovery_judge.py",
+    "setup/lib/egress.py",
+    "setup/lib/egress_proxy.py",
+    "setup/lib/mock_model.py",
+    "setup/lib/pi_launch.py",
+    "setup/lib/visibility.py",
+    "setup/lib/egress.sh",
+    "setup/lib/portable.sh",
+    "setup/lib/runtime.sh",
+    "setup/keel.sh",
+    "setup/keel-doctor.sh",
+    "setup/chrome/chromium-argv.sh",
+)
+
+META = {
+    "M139": ("plan-forced", "mechanism"),
+    "M140": ("new-against-main", "mechanism"),
+    "M141": ("compare-values", "mechanism"),
+    "M142": ("parser-computed", "mechanism"),
+    "M143": ("parser-second", "mechanism"),
+    "M144": ("parser-names", "mechanism"),
+    "M145": ("reject-removed", "mechanism"),
+    "M146": ("compare-suite", "mechanism"),
+    "M147": ("copy-widens", "mechanism"),
+    "M148": ("suite-known", "mechanism"),
+    "M149": ("unmapped-full", "mechanism"),
+    "M150": ("depends-on", "mechanism"),
+    "M151": ("dynamic-unresolved", "mechanism"),
+    "M152": ("shard-last", "mechanism"),
+    "M153": ("shard-complete", "mechanism"),
+    "M154": ("shard-foreign", "mechanism"),
+    "M155": ("shard-success", "mechanism"),
+    "M156": ("skip-noise", "mechanism"),
+    "M157": ("filter-runs", "mechanism"),
+    "M158": ("class-check", "mechanism"),
+    "M159": ("fresh-api-run", "mechanism"),
+    "M160": ("duplicate-def", "mechanism"),
+    "M161": ("exp-from-main", "mechanism"),
+    "M162": ("new-masked", "mechanism"),
+    "M163": ("coverage-safety", "mechanism"),
+    "M164": ("artifact-allow", "mechanism"),
+    "M165": ("main-moved", "mechanism"),
+    "M166": ("trust-state", "mechanism"),
+    "M167": ("extract-size", "mechanism"),
+    "M168": ("extract-path", "mechanism"),
+    "M169": ("extract-symlink", "mechanism"),
+    "M170": ("line-cap", "mechanism"),
+    "M171": ("shard-timeout", "mechanism"),
+    "M172": ("timeout-not-success", "mechanism"),
+    "M173": ("baseline-check", "mechanism"),
+    "M174": ("tree-entry-check", "mechanism"),
+}
 
 # CI ids, in CI_IDS order. Pull-request selection never includes OFFLINE_IDS.
 VISIBILITY_CI = (
@@ -413,17 +646,27 @@ POLICY_SELECT = (
     ("setup/egress/*.allow", EGRESS_CI),
 )
 
+def _oracle_scripts():
+    """CI ids whose suite is that script, plus the two shared oracle scripts."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import mutate
+
+    found = {}
+    for mid in CI_IDS:
+        suite = mutate.SUITE_OF[mid]
+        found.setdefault(suite, []).append(mid)
+    scripts = {}
+    for suite, ids in found.items():
+        scripts["setup/tests/harness/" + suite] = tuple(mid for mid in CI_IDS if mid in set(ids))
+    scripts["setup/tests/harness/test-egress.sh"] = EGRESS_CI
+    scripts["setup/tests/harness/visibility-suite.sh"] = VISIBILITY_CI
+    return scripts
+
+
 # Exact oracle scripts. A change selects this CI list, not the full set.
-ORACLE_SCRIPTS = {
-    "setup/tests/harness/test-attacks.sh": ATTACK_CI,
-    "setup/tests/harness/test-attack-results.sh": ("M78",),
-    "setup/tests/harness/test-mutant-result.sh": ("M92", "M93"),
-    "setup/tests/harness/test-runtime.sh": RUNTIME_CI,
-    "setup/tests/harness/test-step4.sh": STEP4_CI,
-    "setup/tests/harness/test-step5.sh": STEP5_CI,
-    "setup/tests/harness/test-egress.sh": EGRESS_CI,
-    "setup/tests/harness/visibility-suite.sh": VISIBILITY_CI,
-}
+ORACLE_SCRIPTS = _oracle_scripts()
 
 # Fixtures and helpers that stay on the full CI set through the setup/ rule.
 # test-runtime.sh and test-mutant-result.sh are selective oracle scripts.
@@ -435,25 +678,34 @@ ORACLE_FILES = (
     "setup/tests/harness/harness-keel.sh",
 )
 
-# Gate and binder paths outside setup/ and .github/. A change here is not a skip.
-FULL_PATHS = frozenset((
+# Gate paths select the mapped gate ids. They do not widen to the full CI set.
+GATE_PATHS = frozenset((
     "scripts/check-gate.sh",
     "scripts/gate-jobs.txt",
     "scripts/tests/test_gate_jobs.py",
+    "setup/tests/harness/mutant-result.py",
 ))
+FULL_PATHS = GATE_PATHS
 
-# Selector and binder files. A change here runs the full CI set.
-TRIGGERS = [
-    "setup/egress/discovery-judge.allow",
+# Mechanism files do not widen to the full CI set. Mapped ids still run.
+MECHANISM = frozenset((
     "setup/tests/harness/mutate.py",
     "setup/tests/harness/run-tests.sh",
     "setup/tests/harness/mutant_files.py",
     "setup/tests/harness/mutate-plan.sh",
     "setup/tests/harness/test-mutant-select.py",
     "setup/tests/harness/test-mutate-parse.py",
-    "setup/tests/harness/mutant-result.py",
+    "setup/tests/harness/mutant_defs.py",
+    "setup/tests/harness/mutate_shards.py",
+    "setup/tests/harness/mutate-full-state.py",
+    "setup/tests/harness/mutate-issue.py",
+    "setup/tests/harness/speed_cases.py",
+    "setup/tests/harness/test-mutate-shards.sh",
     ".github/workflows/checks.yml",
-]
+    ".github/workflows/mutate-pr.yml",
+    ".github/workflows/mutate-full.yml",
+))
+TRIGGERS = MECHANISM
 
 SKIP_LINE = "RESULT mutate: skipped (no harness files changed)"
 FULL_LINE = "RESULT mutate: run"
@@ -488,17 +740,151 @@ def policy_ids(path):
     return found
 
 
-def is_selective(path):
-    """True when this path selects a CI list instead of the full set.
+unmapped_full = True  # unmapped-full
+use_depends = True  # depends-on
+dynamic_unresolved = True  # dynamic-unresolved
 
-    A trigger or a gate path is never selective, even if it is also a mutant
-    edit target.
-    """
-    if path in TRIGGERS or path in FULL_PATHS:
+_SOURCE_RE = re.compile(r"^(?:source|\.)[ \t]+(\S+)")
+_DYNAMIC_RE = re.compile(r"(importlib|__import__|\bexec\s*\()")
+
+
+def _shell_token(script, token):
+    token = token.strip().strip("\"'")
+    if token.startswith("$HERE/"):
+        rest = token[len("$HERE/"):]
+        if "$" in rest:
+            return None
+        parent = script.rsplit("/", 1)[0]
+        return parent + "/" + rest
+    if token.startswith("$SETUP/"):
+        rest = token[len("$SETUP/"):]
+        if "$" in rest:
+            return None
+        return "setup/" + rest
+    if "$" in token or token.startswith("/"):
+        return None
+    parent = script.rsplit("/", 1)[0]
+    return parent + "/" + token
+
+
+def scan_text(path, text):
+    """Return a sorted tuple of repo paths, or None when the file is unresolvable."""
+    if path.endswith(".py"):
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            return None
+        parent = path.rsplit("/", 1)[0]
+        deps = set()
+        dynamic = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                name = ""
+                if isinstance(func, ast.Name):
+                    name = func.id
+                elif isinstance(func, ast.Attribute):
+                    name = func.attr
+                if name in ("import_module", "__import__") or (isinstance(func, ast.Name) and func.id == "exec"):
+                    dynamic = True
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    sibling = parent + "/" + alias.name.split(".")[0] + ".py"
+                    if os.path.isfile(os.path.join(_repo_root(), sibling)) or alias.name in (
+                        "visibility",
+                        "egress",
+                        "discovery_judge",
+                        "discovery_filter",
+                        "pi_launch",
+                    ):
+                        deps.add(parent + "/" + alias.name.split(".")[0] + ".py")
+            if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                sibling = parent + "/" + node.module.split(".")[0] + ".py"
+                base = node.module.split(".")[0]
+                if base in ("visibility", "egress", "discovery_judge", "discovery_filter", "pi_launch"):
+                    deps.add(sibling)
+        if dynamic and dynamic_unresolved:
+            return None
+        if _DYNAMIC_RE.search(text) and dynamic_unresolved and dynamic:
+            return None
+        return tuple(sorted(deps))
+    deps = set()
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = _SOURCE_RE.match(line)
+        if not match:
+            continue
+        resolved = _shell_token(path, match.group(1))
+        if resolved is None:
+            if dynamic_unresolved:
+                return None
+            continue
+        if resolved.startswith("setup/"):
+            deps.add(resolved)
+    return tuple(sorted(deps))
+
+
+def _repo_root():
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.abspath(os.path.join(here, os.pardir, os.pardir, os.pardir))
+
+
+def scan_repo(root=None):
+    root = root or _repo_root()
+    found = {}
+    for rel in SCAN_FILES:
+        path = os.path.join(root, rel)
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        deps = scan_text(rel, text)
+        if deps is None:
+            return None
+        if deps:
+            found[rel] = deps
+    return found
+
+
+def depends_covers(path):
+    if path in DEPENDS:
+        return True
+    return any(path in deps for deps in DEPENDS.values())
+
+
+def dependent_ids(path):
+    if not use_depends:
+        return []
+    found = []
+    for owner, deps in DEPENDS.items():
+        if path in deps:
+            found.extend(mid for mid in CI_IDS if owner in FILES[mid])
+    return found
+
+
+def path_is_unresolvable(path, root=None):
+    if path not in SCAN_FILES and not path.startswith("setup/lib/"):
         return False
+    root = root or _repo_root()
+    full = os.path.join(root, path)
+    if not os.path.isfile(full):
+        return False
+    with open(full, encoding="utf-8") as handle:
+        text = handle.read()
+    return scan_text(path, text) is None
+
+
+def is_selective(path):
+    """True when this path selects a CI list instead of the full set."""
+    if path in MECHANISM or path in GATE_PATHS:
+        return True
     if path in TARGET_ONLY or path in ORACLE_SCRIPTS:
         return True
-    return bool(policy_ids(path))
+    if policy_ids(path):
+        return True
+    if path.startswith("setup/lib/") and depends_covers(path):
+        return True
+    return False
 
 
 def ids_for_path(path):
@@ -506,28 +892,31 @@ def ids_for_path(path):
     if not is_selective(path):
         return []
     found = []
-    if path in TARGET_ONLY:
-        found.extend(mid for mid in CI_IDS if path in FILES[mid])
+    if path in GATE_PATHS:
+        found.extend(mid for mid in ("M92", "M93") if mid in CI_IDS)
+    if path in TARGET_ONLY or path in MECHANISM or path in FILES.values() or True:
+        found.extend(mid for mid in CI_IDS if path in FILES.get(mid, ()))
     script_ids = ORACLE_SCRIPTS.get(path)
     if script_ids:
         found.extend(script_ids)
     found.extend(policy_ids(path))
-    return found
+    found.extend(dependent_ids(path))
+    return [mid for mid in CI_IDS if mid in set(found)]
 
 
 def needs_full_set(changed):
     """True when the diff must run the full CI set.
 
-    A selective edit target, an exact policy path, or a listed oracle script
-    does not. A trigger, a gate path, or any other path under setup/ or
-    .github/ does. A pull request that only edits a gate path is not a skip.
+    A mapped target, a mechanism file, a gate path, or a listed oracle script
+    does not. An unmapped path under setup/ or .github/ does. A module whose
+    imports cannot be resolved does too.
     """
     for path in changed:
+        if path_is_unresolvable(path):
+            return True
         if is_selective(path):
             continue
-        if path in FULL_PATHS or path in TRIGGERS:
-            return True
-        if path.startswith("setup/") or path.startswith(".github/"):
+        if unmapped_full and (path.startswith("setup/") or path.startswith(".github/")):
             return True
     return False
 
@@ -594,6 +983,10 @@ def main(argv):
     if argv[1:2] == ["--full"]:
         print(" ".join(list(CI_IDS) + list(OFFLINE_IDS)))
         return 0
+    if argv[1:2] == ["--all"]:
+        ordered = sorted(FILES, key=lambda mid: int(mid[1:]))
+        print(" ".join(ordered))
+        return 0
     if argv[1:2] == ["--decide"]:
         names = [line.strip() for line in sys.stdin if line.strip()]
         print(decision_line(names))
@@ -601,7 +994,7 @@ def main(argv):
     if argv[1:2] == ["--check-ids"]:
         return 0 if ids_accepted(argv[2:]) else 1
     print(
-        "usage: mutant_files.py --ci | --full | --decide | --check-ids ID...",
+        "usage: mutant_files.py --ci | --full | --all | --decide | --check-ids ID...",
         file=sys.stderr,
     )
     return 2

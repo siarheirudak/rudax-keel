@@ -159,12 +159,31 @@ expect_selective() {
   done
 }
 
-expect_full setup/tests/harness/mutate.py
-expect_full .github/workflows/checks.yml
-expect_full setup/tests/harness/mutate-plan.sh
-expect_full setup/tests/harness/mutant-result.py
+expect_skip() {
+  local file=$1 repo out
+  repo=$root/skip-$(printf '%s' "$file" | tr '/' '-')
+  mkdir -p "$repo/$(dirname "$file")"
+  git_repo "$repo"
+  printf 'a\n' >"$repo/$file"
+  git -C "$repo" add -- "$file"
+  git -C "$repo" commit -qm base
+  git -C "$repo" branch -M main
+  git -C "$repo" update-ref refs/remotes/origin/main HEAD
+  git -C "$repo" checkout -q -b feature
+  printf 'b\n' >"$repo/$file"
+  git -C "$repo" add -- "$file"
+  git -C "$repo" commit -qm change
+  out=$(env -u GITHUB_BASE_REF KEEL_MUTATE_BASE=origin/main KEEL_MUTATE_REPO="$repo" bash "$PLAN")
+  if [ "$out" != "RESULT mutate: skipped (no harness files changed)" ]; then
+    echo "expected skip for $file, got: $out" >&2
+    exit 1
+  fi
+}
+
+expect_skip setup/tests/harness/mutate.py
+expect_skip .github/workflows/checks.yml
+expect_skip setup/tests/harness/mutate-plan.sh
 expect_full setup/docker/keel-git.Dockerfile
-expect_full .github/workflows/mutate-full.yml
 expect_full setup/not-a-mapped-target
 expect_full setup/allow/README.md
 expect_full setup/egress/README.md
@@ -185,9 +204,11 @@ expect_selective setup/tests/harness/test-step5.sh M119 '!M03' '!M99'
 expect_selective setup/tests/harness/test-egress.sh M53 '!M45'
 expect_selective setup/tests/harness/visibility-suite.sh M45 '!M53'
 # A scripts-only edit of the gate is not a skip. Other scripts files still are.
-expect_full scripts/check-gate.sh
-expect_full scripts/gate-jobs.txt
-expect_full scripts/tests/test_gate_jobs.py
+expect_selective setup/tests/harness/mutant-result.py M92 M93 '!M03'
+expect_selective .github/workflows/mutate-full.yml M171 '!M03'
+expect_selective scripts/check-gate.sh M92 M93 '!M03'
+expect_selective scripts/gate-jobs.txt M92 M93 '!M03'
+expect_selective scripts/tests/test_gate_jobs.py M92 M93 '!M03'
 
 other=$root/scripts-other
 mkdir -p "$other/scripts"
