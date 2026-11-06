@@ -1425,3 +1425,131 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 **If it fails.** FAIL, including when the row is missing. The verdict is not ready.
 
 **How to fix.** Keep the recorded not-applicable row. Do not pass `-e`.
+
+## Discoveries
+
+<a id="disc-01"></a>
+
+### DISC-01 Accepted directories only
+
+**Level.** CRITICAL
+
+**Check.** The memory index walks `.keel/memory/discoveries/` and `.keel/memory/adr/` only. It does not add a sibling candidates directory.
+
+**Why.** A candidate is untrusted until the host accepts it. Indexing it would put one role’s draft into the next role’s prompt.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Keep the index on those two directories.
+
+<a id="disc-02"></a>
+
+### DISC-02 Candidates are excluded
+
+**Level.** CRITICAL
+
+**Check.** A file under `.keel/candidates/` is not listed in the index, and the candidates directory exists as a place the host can scan at the end of the iteration.
+
+**Why.** Discarded and pending notes are not memory.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Do not point the index at `.keel/candidates/`.
+
+<a id="disc-03"></a>
+
+### DISC-03 Accepted memory is read-only
+
+**Level.** CRITICAL
+
+**Check.** The `.keel/memory` mount for a role is read-only.
+
+**Why.** An accepted note is changed only by the harness.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Keep the memory mount read-only.
+
+<a id="disc-04"></a>
+
+### DISC-04 Filter entrypoint
+
+**Level.** CRITICAL
+
+**Check.** `setup/lib/discovery_filter.py` is present and is not a symlink.
+
+**Why.** Promotion has to go through the host filter.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Restore that file from the harness tree.
+
+<a id="disc-05"></a>
+
+### DISC-05 Tools mount
+
+**Level.** CRITICAL
+
+**Check.** `setup/tools/write-memory-candidate.py` is present, and the tools mount mode is read-only.
+
+**Why.** Append roles share one script. They must not be able to replace it.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Keep the script in `setup/tools/` and mount that snapshot read-only.
+
+<a id="disc-06"></a>
+
+### DISC-06 Skill visibility
+
+**Level.** CRITICAL
+
+**Check.** The skills snapshot for the developer and the orchestrator includes `keel-write-memory`. The snapshot for another role does not.
+
+**Why.** Other roles are not candidate writers. A skill they can read is an instruction they should not have.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Drop that skill directory when exporting a non-append role.
+
+<a id="disc-07a"></a>
+
+### DISC-07a Stub and Decisions pin (CI)
+
+**Level.** CRITICAL
+
+**Check.** The stub is refused when the CI marker is unset, and it is allowed when `CI=true`. The judge allow file names only `openrouter.ai`. The broker accepts `POST /api/alpha/decisions` and refuses a chat-completions path. The model id is `typesafe/jev-1.14`. A live key is not required for this row.
+
+**Why.** CI must not call the paid API, and a production promote must not silently keep the stub. The broker must not become a generic proxy.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Keep the stub tied to the CI marker, and keep the host and path pin.
+
+<a id="disc-07b"></a>
+
+### DISC-07b Key file outside CI
+
+**Level.** CRITICAL
+
+**Check.** When the CI marker is set, the row passes because the stub needs no live key. Otherwise the configured key path must exist, must not be a symlink, and must not be group- or world-accessible. The check does not read the file.
+
+**Why.** A promote outside CI needs a key the broker can open, and a loose file is visible to other users. Printing the value would copy it into the doctor output.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Point `KEEL_JUDGE_KEY_FILE` at a regular file with mode `0600` or `0400`, or place that file at `$KEEL_ROOT/.keel/keys/openrouter.key`. Do not commit a real key.
+
+<a id="disc-08"></a>
+
+### DISC-08 Judge is not reachable from a role
+
+**Level.** CRITICAL
+
+**Check.** A role cannot reach the judge. The judge network is `keel-judge`, not `keel-egress`, and the launch spec publishes no port and passes no key in the environment.
+
+**Why.** A role that can open the broker can ask it to spend the key.
+
+**If it fails.** FAIL. The verdict is not ready.
+
+**How to fix.** Keep the judge off the role network. Do not publish a port and do not put the key in the environment.

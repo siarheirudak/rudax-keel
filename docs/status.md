@@ -2,7 +2,7 @@
 
 This page is the line between what the repository does and what the v1 design specifies. When another page describes a link, a role mount, or a log, the behaviour is planned unless this page lists it under [Shipped](#shipped).
 
-Nothing in the L0–L11 chain runs. There is no `standards/rules.md`, no committed task decisions, no `.agents/skills/` directory, and no envelope. The harness creates `.keel/logs/` and `.keel/runs/` at runtime. The bot is a real GitHub account used with the rules below. The pipeline’s “bot opens the pull request” step is still the push stub.
+Nothing in the L0–L11 chain runs. There is no `standards/rules.md`, no committed task decisions, and no envelope. `.agents/skills/keel-write-memory/` is the skill that appends a discovery or ADR candidate. The harness creates `.keel/logs/` and `.keel/runs/` at runtime, and it creates candidate and accepted-memory directories when a task needs them. Those notes are not committed in this repository. The bot is a real GitHub account used with the rules below. The pipeline’s “bot opens the pull request” step is still the push stub.
 
 ## Shipped
 
@@ -63,6 +63,20 @@ The proxy does not intercept TLS, so it does not read SNI inside an allowed tunn
 
 How the roles differ, and the allowlist grammar, are in [Roles and visibility](roles.md#network).
 
+### Discoveries and ADRs
+
+Implemented in `setup/lib/discovery_filter.py`, `setup/lib/discovery_judge.py`, `setup/tools/write-memory-candidate.py`, and `.agents/skills/keel-write-memory/`.
+
+The developer and the orchestrator may append a candidate under `.keel/candidates/`. The preferred path is the skill, which calls one shared read-only script. A raw file in that directory is still checked. No role reads candidates during the task. The memory index lists only accepted files under `.keel/memory/discoveries/` and `.keel/memory/adr/`.
+
+The host promotes after the iteration, or discards. The order is format, a phrase pre-filter, a mechanical significance check, then the judge. A discard deletes the candidate. There is no queue of rejected notes. `severity: critical` waits for an owner yes before promotion. An abort-cause file is written only by the dossier helper. An owner answer goes to an ADR, `docs/owner-decisions.md`, or a discovery.
+
+The judge asks one fixed question through the OpenRouter Decisions API, model `typesafe/jev-1.14`. The candidate text is only in `state`. A typed score promotes when it is at least 0.70. That threshold is our choice, to tune from the audit log, not a measured result. Below the threshold, or on error, timeout, or a malformed answer, the candidate is discarded. Every accept, reject, error, and timeout appends one line to `$KEEL_ROOT/.keel/logs/discovery-filter.jsonl`. The line has no secret values.
+
+CI and `keel-gate` use a stub transport and do not call the live API. The stub is refused outside CI. The broker in `setup/lib/discovery_judge.py` is the only process that reads the key file and the only one that adds `Authorization`. It calls `POST https://openrouter.ai/api/alpha/decisions` only. The doctor checks DISC-01 through DISC-08. In CI, DISC-07a does not need a live key. Outside CI, DISC-07b needs the key file to be present with private permissions and does not read the value.
+
+The candidate size cap starts at 32 KiB, and a note that relies on a rule instead of a path needs a body of at least 40 characters. Both numbers are our choice. They apply to candidates only, not to briefs or the append file.
+
 ### Runtime boundary
 
 Implemented in `setup/lib/runtime.sh`, `setup/keel-doctor.sh`, and `setup/chrome/`.
@@ -75,7 +89,7 @@ DISK-02 is the soft free-space check. Hard filesystem quotas are optional on the
 
 ## Specified and not built
 
-The v1 build is a sequence of steps. Each one is intended to land as its own pull request, opened by the bot, and merged by the owner. Process-file and skill changes land as separate pull requests labelled `process-files`, after the owner approves them. Step 1’s folder mounts, Step 2’s developer egress proxy, and the runtime boundary below are in the harness. The later steps in the table are not started. The Step 7 design (dispatcher and warm orchestrator) is in [Harness design](harness/README.md).
+The v1 build is a sequence of steps. Each one is intended to land as its own pull request, opened by the bot, and merged by the owner. Process-file and skill changes land as separate pull requests labelled `process-files`, after the owner approves them. Step 1’s folder mounts, Step 2’s developer egress proxy, the runtime boundary, what a role sees at launch, and the discoveries filter are in the harness. The later steps in the table are not started. The Step 7 design (dispatcher and warm orchestrator) is in [Harness design](harness/README.md).
 
 The order is the dependency order from the v1 plan. Steps later in the list need earlier ones. Parallel reading is fine. Parallel merging still has to respect the dependencies.
 
@@ -83,8 +97,6 @@ The order is the dependency order from the v1 plan. Steps later in the list need
 |---|---|---|
 | 1 | Folder allowlists, unified deny, tester pinned to the setup commit, launch JSONL. Content fencing stays on the backlog | The harness that exists |
 | 3 remainder | A separate OS account for secret files, and a Chromium process running under rootless | The runtime boundary above; the QA step for the browser |
-| 4 | What a role sees at launch | Step 1 |
-| 5 | The discoveries store and the accept-or-discard filter | Step 4 |
 | 6 | `standards/rules.md` and the generator for per-role views | The rule text, which is an input, not code in this repo |
 | 7 | The host dispatcher and the warm Pi orchestrator (task state, transitions, `keel_request`). A process-files pull request. Grilling behaviour is Step 8 | Step 1, and Step 2 when the orchestrator container needs the model API |
 | 8 | L0 grilling, including size and estimated cost | Steps 4 and 7 |
