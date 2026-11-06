@@ -387,12 +387,17 @@ def _role_write(mounts):
     return False, "unexpected"
 
 
+def probe_roles():
+    return ("developer", "architect", "tester", "auditor", "design_reviewer")  # probe-five-roles
+
+
 def check_h8():
     root = tempfile.mkdtemp(prefix="s6-h8-")
     try:
         repo, work, keel = step4_check.make_tree(root)
         rows = []
         bad = False
+        probed = []
         for role in visibility.LAUNCHABLE:
             dest = pi_launch.export_skills(repo, keel, "h8-" + role, work, role)
             problems = _snapshot_problems(dest, role)
@@ -400,7 +405,8 @@ def check_h8():
             item = step4_check.mount_named(mounts, "/work/.agents/skills")
             if item is None:
                 problems.append("mount missing")
-            elif role in pi_launch.standards_roles():
+            elif role in probe_roles():
+                probed.append(role)
                 held, detail = _role_write(mounts)
                 if held:
                     rows.append(role + ": " + detail)
@@ -409,6 +415,10 @@ def check_h8():
             if problems:
                 bad = True
                 rows.append(role + ": " + ",".join(problems))
+        required = ("developer", "architect", "tester", "auditor", "design_reviewer")
+        if len(probed) != 5 or set(probed) != set(required):
+            bad = True
+            rows.append("probed {0}".format(len(probed)))
         detail = "; ".join(rows)
         if bad:
             return say("S6-H8", "NOT BLOCKED", detail)

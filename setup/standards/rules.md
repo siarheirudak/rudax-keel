@@ -361,7 +361,7 @@ reviewers: auditor
 rule: Authentication and session handling on a sensitive path must match the threat model. That includes cookie and token attributes the project requires, and a fresh check before a sensitive action when the project requires one.
 flag: A sensitive transfer accepts a session token after the project's required re-authentication step was removed.
 noflag: The change keeps the existing session check and does not alter token storage.
-source: OWASP ASVS v5.0.0-7.2.1, https://github.com/OWASP/ASVS/blob/v5.0.0/5.0/en/0x16-V7-Session-Management.md; OWASP ASVS v5.0.0-3.3.4, https://github.com/OWASP/ASVS/blob/v5.0.0/5.0/en/0x12-V3-Web-Frontend-Security.md
+source: OWASP ASVS v5.0.0-7.5.3, https://github.com/OWASP/ASVS/blob/v5.0.0/5.0/en/0x16-V7-Session-Management.md; OWASP ASVS v5.0.0-3.3.4, https://github.com/OWASP/ASVS/blob/v5.0.0/5.0/en/0x12-V3-Web-Frontend-Security.md
 ```
 
 ### SEC-06 — Dependency identity

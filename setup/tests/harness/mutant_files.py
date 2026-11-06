@@ -212,6 +212,7 @@ FILES = {
     "M230": ["setup/standards/gen.py"],
     "M231": ["setup/standards/gen.py"],
     "M232": ["setup/standards/gen.py"],
+    "M233": ["setup/tests/harness/step6_check.py"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -373,6 +374,7 @@ CI_IDS = [
     "M230",
     "M231",
     "M232",
+    "M233",
 ]
 
 # Docker mount probes, plus M01. Pull-request CI skips these. The daily full run includes them.
@@ -569,6 +571,7 @@ META = {
     "M230": ("hide-mechanical", "fail-closed"),
     "M231": ("architect-cor05", "fail-closed"),
     "M232": ("api01-role-severity", "fail-closed"),
+    "M233": ("probe-five-roles", "visibility"),
 }
 
 # CI ids, in CI_IDS order. Pull-request selection never includes OFFLINE_IDS.

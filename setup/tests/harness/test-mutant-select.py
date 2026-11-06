@@ -95,11 +95,11 @@ def validate():
             if not os.path.isfile(os.path.join(ROOT, path)):
                 fail("missing " + path)
     legacy_ids = ["M%d" % n for n in range(139, 177)]
-    step6_ids = ["M%d" % n for n in range(207, 233)]
+    step6_ids = ["M%d" % n for n in range(207, 234)]
     if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93 + len(legacy_ids) + len(step6_ids):
         fail("CI id set changed")
     if mf.CI_IDS[-len(step6_ids):] != step6_ids:
-        fail("new CI ids are not M207-M232")
+        fail("new CI ids are not M207-M233")
     if mf.CI_IDS[-len(step6_ids) - len(legacy_ids):-len(step6_ids)] != legacy_ids:
         fail("new CI ids are not M139-M176")
     if len(mf.OFFLINE_IDS) != len(set(mf.OFFLINE_IDS)) or len(mf.OFFLINE_IDS) != 5:

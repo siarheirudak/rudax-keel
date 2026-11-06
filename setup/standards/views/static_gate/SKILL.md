@@ -7,7 +7,7 @@ description: Mechanical gate facets from the quality standard.
 
 Generated from setup/standards/rules.md — do not edit
 
-source-sha256: 17717924e35ed68a58cb2f1054a9f6e36640bf6e6d188bcf7cff84c6220c0128
+source-sha256: 04feb405582bc76cae27af8ecf6d0b219c242aa2082635a54ce7c8ae1ccc7225
 
 A required adapter with no tool behind it blocks. An optional adapter that is not supported is advice and is not a passing check.
 

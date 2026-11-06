@@ -210,6 +210,7 @@ M = {
  'M230': ('standards/gen.py', 'return True  # hide-mechanical', 'return False  # hide-mechanical', 'scanner text leaks into model views', ['S6-H11']),
  'M231': ('standards/gen.py', 'return True  # architect-cor05', 'return False  # architect-cor05', 'architect loses COR-05', ['S6-H14']),
  'M232': ('standards/gen.py', 'return True  # api01-role-severity', 'return False  # api01-role-severity', 'API-01 severity is swapped', ['S6-H15']),
+ 'M233': ('tests/harness/step6_check.py', 'return ("developer", "architect", "tester", "auditor", "design_reviewer")  # probe-five-roles', 'return ("developer",)  # probe-five-roles', 'the mount probe skips roles', ['S6-H8']),
 }
 SUITE_OF = {
     'M01': 'test-attacks.sh',
@@ -414,6 +415,7 @@ SUITE_OF = {
     'M230': 'test-step6.sh',
     'M231': 'test-step6.sh',
     'M232': 'test-step6.sh',
+    'M233': 'test-step6.sh',
 }
 EXTRA_EDITS = {
     'M15': ['M14'],
