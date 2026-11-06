@@ -34,7 +34,7 @@ Skills are a side path, triggered rather than numbered.
 
 **Result names.** `SKILLS_APPROVED`, `SKILLS_REJECTED`, `WAITING_SKILL_APPROVAL`, `WAITING_SUSPICIOUS_SKILL_D2`.
 
-The developer, the tester, QA, and the architect receive project skills. The critic checklist and the reviewer checklists are the exception: they are generated from `standards/rules.md` and mounted read-only by the harness. See [Quality standard](quality.md).
+The developer, the tester, QA, and the architect receive project skills. The critic checklist and the reviewer checklists are the exception: they are generated from `standards/rules.md` and mounted read-only by the harness, one view per role. See [Quality standard](quality.md).
 
 ## L0. Grilling
 

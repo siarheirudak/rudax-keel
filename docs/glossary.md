@@ -89,7 +89,7 @@ Short definitions for this repository. The first time a longer page needs a word
 
 **Rule id.** A short code for one entry in the quality standard, such as `DES-01`.
 
-**Quality standard.** The single file `standards/rules.md`, which a generator splits into per-role views. The file is not in the repository yet.
+**Quality standard.** The single file `standards/rules.md`. A generator splits it into per-role views. Each view is mounted read-only for its own role.
 
 **CRAP.** A score that rises when a function has many branches and tests do not cover them. The design blocks at 30 and above. The warn band from 10 up to 30 is a configurable project default.
 
