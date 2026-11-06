@@ -29,7 +29,7 @@ SELECT_CASES = (
 )
 SHARD_CASES = (
     "S-H5", "S-A5", "S-A6", "S-A14", "S-A19", "S-A24", "S-A25", "S-A26",
-    "S-A28", "S-A29", "S-A30", "S-A31", "S-A34", "S-A35",
+    "S-A28", "S-A29", "S-A30", "S-A31", "S-A34", "S-A35", "S-A36",
     "H1", "H2", "H3", "H4",
     "A1", "A2", "A3", "A4", "A5", "A6",
 )
@@ -593,6 +593,99 @@ def case_s_a35():
             if _other_job_fetches_tree(name, job):
                 return False
     return True
+
+
+def _redirected_request(old, new, headers):
+    import urllib.request
+    req = urllib.request.Request(old, headers=dict(headers), method="GET")
+    return ms.NoForeignAuthRedirect().redirect_request(req, None, 302, "Found", {}, new)
+
+
+def case_s_a36():
+    """Auth stays on api.github.com and is dropped on a storage redirect."""
+    import urllib.request
+    headers = {
+        "Authorization": "Bearer secret",
+        "Proxy-Authorization": "Basic x",
+        "Cookie": "session=1",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "rudax-keel-mutants",
+    }
+    origin = "https://api.github.com/repos/a/b/actions/artifacts/1/zip"
+    cross = _redirected_request(origin, "https://objects.githubusercontent.com/artifact.zip", headers)
+    same = _redirected_request(origin, "https://api.github.com/repos/a/b/actions/artifacts/1/zip?redirected=1", headers)
+    if cross is None or same is None:
+        return False
+    cross_names = {key.lower() for key in cross.headers}
+    if "authorization" in cross_names or "proxy-authorization" in cross_names or "cookie" in cross_names:
+        return False
+    if "accept" not in cross_names:
+        return False
+    if same.get_header("Authorization") != "Bearer secret":
+        return False
+    if same.get_header("Proxy-authorization") != "Basic x":
+        return False
+    if same.get_header("Cookie") != "session=1":
+        return False
+    recorded = {}
+    real_open = urllib.request.OpenerDirector.open
+
+    def fake_open(self, fullurl, data=None, timeout=None):
+        recorded["handlers"] = [type(item) for item in self.handlers]
+        recorded["auth"] = fullurl.get_header("Authorization") if hasattr(fullurl, "get_header") else None
+        raise RuntimeError("no-network")
+
+    urllib.request.OpenerDirector.open = fake_open
+    try:
+        try:
+            ms.github_bytes("https://api.github.com/repos/a/b/actions/artifacts/9/zip", "sekrit")
+        except RuntimeError as err:
+            if str(err) != "no-network":
+                return False
+        else:
+            return False
+    finally:
+        urllib.request.OpenerDirector.open = real_open
+    if recorded.get("auth") != "Bearer sekrit":
+        return False
+    if ms.NoForeignAuthRedirect not in recorded.get("handlers", []):
+        return False
+    state = state_mod()
+    seen = {}
+    old_api = state._api_json
+    old_bytes = ms.github_bytes
+
+    def fake_api(_url, _token):
+        return {
+            "artifacts": [{
+                "name": "state",
+                "expired": False,
+                "archive_download_url": "https://api.github.com/repos/o/r/actions/artifacts/9/zip",
+            }],
+        }
+
+    def fake_bytes(url, token, timeout=60):
+        seen["url"] = url
+        seen["token"] = token
+        raise RuntimeError("no-network")
+
+    state._api_json = fake_api
+    ms.github_bytes = fake_bytes
+    try:
+        try:
+            state.fetch_one_state("o/r", "sekrit", 9)
+        except RuntimeError as err:
+            if str(err) != "no-network":
+                return False
+        else:
+            return False
+    finally:
+        state._api_json = old_api
+        ms.github_bytes = old_bytes
+    return (
+        seen.get("url") == "https://api.github.com/repos/o/r/actions/artifacts/9/zip"
+        and seen.get("token") == "sekrit"
+    )
 
 
 def _push_env(updates):
@@ -1200,6 +1293,7 @@ CASES = {
     "S-A33": case_s_a33,
     "S-A34": case_s_a34,
     "S-A35": case_s_a35,
+    "S-A36": case_s_a36,
     "H1": case_h1,
     "H2": case_h2,
     "H3": case_h3,

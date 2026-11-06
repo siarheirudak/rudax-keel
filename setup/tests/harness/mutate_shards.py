@@ -9,6 +9,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.parse
+import urllib.request
 import zipfile
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -789,8 +791,35 @@ def cmd_aggregate():
     return 1 if blocking else 0
 
 
-def _github_bytes(url, token):
-    import urllib.request
+def _request_host(url):
+    return (urllib.parse.urlsplit(url).hostname or "").lower()
+
+
+def _auth_header(name):
+    lowered = name.lower()
+    return lowered == "authorization" or lowered.endswith("-authorization") or lowered == "cookie"
+
+
+class NoForeignAuthRedirect(urllib.request.HTTPRedirectHandler):
+    """Drop auth headers when a redirect leaves the original host.
+
+    An artifact zip redirects to signed storage. That host rejects a
+    forwarded Authorization header.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is None:
+            return None
+        if _request_host(req.full_url) != _request_host(newurl):
+            for key in list(new.headers):
+                if _auth_header(key):  # redirect-auth
+                    new.remove_header(key)
+        return new
+
+
+def github_bytes(url, token, timeout=60):
+    """Download one GitHub URL. Auth is removed when a redirect changes host."""
     req = urllib.request.Request(
         url,
         headers={
@@ -799,8 +828,13 @@ def _github_bytes(url, token):
             "User-Agent": "rudax-keel-mutants",
         },
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    opener = urllib.request.build_opener(NoForeignAuthRedirect)
+    with opener.open(req, timeout=timeout) as resp:
         return resp.read()
+
+
+def _github_bytes(url, token):
+    return github_bytes(url, token)
 
 
 def main(argv):
