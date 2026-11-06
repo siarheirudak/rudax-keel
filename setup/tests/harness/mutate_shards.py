@@ -36,7 +36,6 @@ keep_last = True  # shard-last
 require_all_ids = True  # shard-complete
 reject_foreign = True  # shard-foreign
 require_success = True  # shard-success
-allow_artifacts = True  # artifact-allow
 check_main_moved = True  # main-moved
 enforce_size = True  # extract-size
 enforce_paths = True  # extract-path
@@ -93,9 +92,16 @@ def allowed_artifact_names(shard_keys):
 
 
 def artifact_names_ok(names, shard_keys):
-    if not allow_artifacts:
-        return True
-    return set(names) <= allowed_artifact_names(shard_keys)
+    allowed = allowed_artifact_names(shard_keys)
+    names_ok = set(names) <= allowed  # artifact-allow
+    return names_ok
+
+
+def skipped_shard_ok(shard_result, plan_skip):
+    """A skipped shard is success only when the trusted plan says skip."""
+    if shard_result != "skipped":
+        return False
+    return bool(plan_skip)
 
 
 def bad_zip_path(name):
@@ -397,6 +403,8 @@ def self_test():
         return "timed out shard accepted"
     if artifact_names_ok(["plan", "raw-0", "tree-0", "evil"], ["0"]):
         return "extra artifact accepted"
+    if skipped_shard_ok("skipped", True) is not True or skipped_shard_ok("skipped", False) is not False:
+        return "skipped shard"
     if artifact_names_ok(["raw-9"], ["0"]):
         return "raw-9 accepted"
     sample = [{"name": "../x", "mode": "file", "size": 1}]
@@ -639,9 +647,16 @@ def cmd_aggregate():
     import base64
     import json
     plan = json.loads(base64.b64decode(os.environ["PLAN_B64"]))
+    shard_result = os.environ.get("SHARD_RESULT") or "success"
+    # plan_b64 is resolve-plan's job output. A skipped shard is success only
+    # when that trusted output says the plan itself is a skip.
+    if shard_result == "skipped":
+        if skipped_shard_ok(shard_result, plan.get("skip")):
+            return 0
+        print("shard skipped without a skip plan", file=sys.stderr)
+        return 1
     if plan.get("skip"):
         return 0
-    shard_result = os.environ.get("SHARD_RESULT") or "success"
     if not result_ok(shard_result):
         print("shard result %s" % shard_result, file=sys.stderr)
         return 1
@@ -664,7 +679,8 @@ def cmd_aggregate():
             print("artifact name rejected", file=sys.stderr)
             return 1
         for item in artifacts:
-            if not item["name"].startswith("raw-"):
+            # tree-* is the shard input. The aggregate never reads that content.
+            if item["name"].startswith("tree-") or not item["name"].startswith("raw-"):
                 continue
             blob_resp = _github_bytes(item["archive_download_url"], token)
             dest = os.path.join(os.environ.get("RAW_DIR") or "raw", item["name"])
@@ -717,6 +733,8 @@ def cmd_aggregate():
     out = os.environ.get("STATE_PATH") or "state.json"
     with open(out, "w", encoding="utf-8") as handle:
         json.dump(state, handle)
+    if plan.get("full_plan"):
+        print("bootstrap-overdue: does not feed red state")
     if state["bootstrap_overdue"]:
         print("bootstrap overdue")
     return 1 if blocking else 0

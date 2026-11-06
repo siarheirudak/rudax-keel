@@ -184,6 +184,7 @@ FILES = {
     "M172": ["setup/tests/harness/mutate_shards.py"],
     "M173": ["setup/tests/harness/mutate_shards.py"],
     "M174": ["setup/tests/harness/mutate_shards.py"],
+    "M175": [".github/workflows/mutate-pr.yml", ".github/workflows/mutate-full.yml"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -317,6 +318,7 @@ CI_IDS = [
     "M172",
     "M173",
     "M174",
+    "M175",
 ]
 
 # Docker mount probes, plus M01. Pull-request CI skips these. The daily full run includes them.
@@ -484,6 +486,7 @@ META = {
     "M172": ("timeout-not-success", "mechanism"),
     "M173": ("baseline-check", "mechanism"),
     "M174": ("tree-entry-check", "mechanism"),
+    "M175": ("shard-readonly", "mechanism"),
 }
 
 # CI ids, in CI_IDS order. Pull-request selection never includes OFFLINE_IDS.

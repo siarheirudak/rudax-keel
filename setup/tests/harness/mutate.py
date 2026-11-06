@@ -168,10 +168,10 @@ M = {
  'M158': ('tests/harness/mutant_defs.py', 'check_classification = True  # class-check', 'check_classification = False  # class-check', 'classification check is off', ['S-A18']),
  'M159': ('tests/harness/mutate-full-state.py', 'fail_open = True  # fresh-api-run', 'fail_open = False  # fresh-api-run', 'freshness API error skips', ['S-A11']),
  'M160': ('tests/harness/mutant_defs.py', 'check_duplicates = True  # duplicate-def', 'check_duplicates = False  # duplicate-def', 'duplicate check is off', ['S-A9']),
- 'M161': ('tests/harness/mutant_defs.py', 'exp_from_main = True  # exp-from-main', 'exp_from_main = False  # exp-from-main', 'expected attacks come from the pull request', ['S-A20', 'S-A22']),
+ 'M161': ('tests/harness/mutant_defs.py', '    use_exp = main_exp  # exp-from-main', '    use_exp = pr_exp  # exp-from-main', 'expected attacks come from the pull request', ['S-A20', 'S-A22']),
  'M162': ('tests/harness/mutant_defs.py', 'reject_new_masked = True  # new-masked', 'reject_new_masked = False  # new-masked', 'new empty exp is accepted', ['S-A21']),
  'M163': ('tests/harness/mutant_defs.py', 'run_coverage_safety = True  # coverage-safety', 'run_coverage_safety = False  # coverage-safety', 'coverage checks skipped', ['S-A23']),
- 'M164': ('tests/harness/mutate_shards.py', 'allow_artifacts = True  # artifact-allow', 'allow_artifacts = False  # artifact-allow', 'artifact names are not checked', ['S-A24']),
+ 'M164': ('tests/harness/mutate_shards.py', '    names_ok = set(names) <= allowed  # artifact-allow', '    names_ok = True  # artifact-allow', 'artifact names are not checked', ['S-A24']),
  'M165': ('tests/harness/mutate_shards.py', 'check_main_moved = True  # main-moved', 'check_main_moved = False  # main-moved', 'selector movement is ignored', ['S-A26']),
  'M166': ('tests/harness/mutate-full-state.py', 'trust_state = True  # trust-state', 'trust_state = False  # trust-state', 'green is decided by the job name', ['S-A27']),
  'M167': ('tests/harness/mutate_shards.py', 'enforce_size = True  # extract-size', 'enforce_size = False  # extract-size', 'extract size cap is off', ['S-A25']),
@@ -182,6 +182,7 @@ M = {
  'M172': ('tests/harness/mutate_shards.py', 'timeout_is_fail = True  # timeout-not-success', 'timeout_is_fail = False  # timeout-not-success', 'timed out shard counts as success', ['S-A34', 'S-A6']),
  'M173': ('tests/harness/mutate_shards.py', 'check_baseline = True  # baseline-check', 'check_baseline = False  # baseline-check', 'baseline check is off', ['S-A30', 'S-A31']),
  'M174': ('tests/harness/mutate_shards.py', 'check_tree_entries = True  # tree-entry-check', 'check_tree_entries = False  # tree-entry-check', 'tree entry checks are off', ['S-A29']),
+ 'M175': ('.github/workflows/mutate-pr.yml', '    permissions: # shard-readonly\n      contents: read', '    permissions: # shard-readonly\n      actions: write\n      contents: read', 'shard job can write actions', ['S-A35']),
 }
 SUITE_OF = {
     'M01': 'test-attacks.sh',
@@ -358,6 +359,7 @@ SUITE_OF = {
     'M172': 'test-mutate-shards.sh',
     'M173': 'test-mutate-shards.sh',
     'M174': 'test-mutate-shards.sh',
+    'M175': 'test-mutate-shards.sh',
 }
 EXTRA_EDITS = {
     'M15': ['M14'],
@@ -477,8 +479,11 @@ def verdict_tag(exp, red):
 def cleanup_ns(mid):
     ns = mid.lower()
     docker = os.environ.get('DOCKER', 'docker').split()
-    subprocess.run(docker + ['rm', '-f', 'keel-proxy-' + ns, 'keel-mock-' + ns], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run(docker + ['network', 'rm', 'keel-egress-' + ns, 'keel-out-' + ns], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        subprocess.run(docker + ['rm', '-f', 'keel-proxy-' + ns, 'keel-mock-' + ns], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(docker + ['network', 'rm', 'keel-egress-' + ns, 'keel-out-' + ns], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        return
 
 def copy_listed(setup_root, dest, paths):
     for rel in paths:
@@ -526,6 +531,41 @@ def place_for(rel, temp_root, src):
         return os.path.join(temp_root, rel)
     return os.path.join(src, rel)
 
+def fill_repo(repo, temp_root, src):
+    """Repo layout around the setup snapshot, including workflow files."""
+    setup_root = os.path.join(repo, 'setup')
+    for dirpath, dirnames, filenames in os.walk(setup_root):
+        dirnames[:] = [name for name in dirnames if name != '__pycache__']
+        rel_dir = os.path.relpath(dirpath, setup_root)
+        for name in filenames:
+            rel = name if rel_dir == '.' else os.path.join(rel_dir, name)
+            dest = os.path.join(src, rel)
+            if os.path.lexists(dest):
+                continue
+            parent = os.path.dirname(dest)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            shutil.copy2(os.path.join(dirpath, name), dest)
+    link = os.path.join(temp_root, 'setup')
+    if not os.path.lexists(link):
+        os.symlink('p', link)
+    for top in ('.github', 'scripts'):
+        origin = os.path.join(repo, top)
+        if not os.path.isdir(origin):
+            continue
+        for dirpath, dirnames, filenames in os.walk(origin):
+            dirnames[:] = [name for name in dirnames if name != '__pycache__']
+            rel_dir = os.path.relpath(dirpath, origin)
+            for name in filenames:
+                rel = name if rel_dir == '.' else os.path.join(rel_dir, name)
+                dest = os.path.join(temp_root, top, rel)
+                if os.path.lexists(dest):
+                    continue
+                parent = os.path.dirname(dest)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                shutil.copy2(os.path.join(dirpath, name), dest)
+
 def run(mid):
     _f, _old, _new, what, exp = M[mid][:5]
     d = tempfile.mkdtemp(prefix='mut-%s-' % mid, dir=os.path.expanduser('~'))
@@ -533,6 +573,7 @@ def run(mid):
     os.makedirs(src, exist_ok=True)
     repo = os.path.dirname(SETUP)
     copy_listed(SETUP, src, COPY_LIST)
+    fill_repo(repo, d, src)
     env = dict(os.environ, KEEL_ROOT=os.path.join(d, 'k'), KEEL_NS=mid)
     try:
         applied_error = None
@@ -645,6 +686,7 @@ if __name__ == '__main__':
         sys.exit(grade_cmd(sys.argv))
     ids = sys.argv[1:] or sorted(M)
     os.makedirs(os.path.join(HARNESS, 'logs'), exist_ok=True)
+    # Setting: threads for a local mutant batch.
     with cf.ThreadPoolExecutor(int(os.environ.get('JOBS', '3'))) as ex:
         rows = list(ex.map(run, ids))
     sys.exit(1 if _print_rows(rows) else 0)

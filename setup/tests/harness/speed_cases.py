@@ -25,7 +25,7 @@ SELECT_CASES = (
 )
 SHARD_CASES = (
     "S-H5", "S-A5", "S-A6", "S-A14", "S-A19", "S-A24", "S-A25", "S-A26",
-    "S-A28", "S-A29", "S-A30", "S-A31", "S-A34",
+    "S-A28", "S-A29", "S-A30", "S-A31", "S-A34", "S-A35",
 )
 
 
@@ -473,6 +473,33 @@ def case_s_a34():
     return ms.result_ok("timed_out") is False and ms.bind_shard(["M01"], ["M01"], "timed_out") is False
 
 
+def _shard_job(text):
+    lines = text.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if line == "  shard:":
+            start = index
+            break
+    if start is None:
+        return ""
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line.startswith("  ") and not line.startswith("   ") and line.endswith(":"):
+            end = index
+            break
+    return "\n".join(lines[start:end])
+
+
+def case_s_a35():
+    for rel in (".github/workflows/mutate-pr.yml", ".github/workflows/mutate-full.yml"):
+        text = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+        job = _shard_job(text)
+        if "shard-readonly" not in job or "actions: write" in job:
+            return False
+    return True
+
+
 CASES = {
     "S-H1": case_s_h1,
     "S-H2": case_s_h2,
@@ -518,13 +545,24 @@ CASES = {
     "S-A32": case_s_a32,
     "S-A33": case_s_a33,
     "S-A34": case_s_a34,
+    "S-A35": case_s_a35,
 }
 
 
 def report(names):
     bad = []
+    pending = list(names)
     for name in names:
-        ok = CASES[name]()
+        pending.pop(0)
+        try:
+            ok = CASES[name]()
+        except Exception:
+            print("RESULT %s: ERROR" % name)
+            for rest in pending:
+                print("RESULT %s: ERROR" % rest)
+            bad.append(name)
+            bad.extend(pending)
+            return bad
         print("RESULT %s: %s" % (name, "BLOCKED" if ok else "NOT BLOCKED"))
         if not ok:
             bad.append(name)
@@ -595,7 +633,11 @@ def main(argv):
         if os.environ.get("SPEED_ROOT"):
             ROOT = os.environ["SPEED_ROOT"]
         name = argv[2]
-        ok = CASES[name]()
+        try:
+            ok = CASES[name]()
+        except Exception:
+            print("RESULT %s: ERROR" % name)
+            return 0
         print("RESULT %s: %s" % (name, "BLOCKED" if ok else "NOT BLOCKED"))
         return 0
     suite = "select"

@@ -205,7 +205,7 @@ expect_selective setup/tests/harness/test-egress.sh M53 '!M45'
 expect_selective setup/tests/harness/visibility-suite.sh M45 '!M53'
 # A scripts-only edit of the gate is not a skip. Other scripts files still are.
 expect_selective setup/tests/harness/mutant-result.py M92 M93 '!M03'
-expect_selective .github/workflows/mutate-full.yml M171 '!M03'
+expect_selective .github/workflows/mutate-full.yml M171 M175 '!M03'
 expect_selective scripts/check-gate.sh M92 M93 '!M03'
 expect_selective scripts/gate-jobs.txt M92 M93 '!M03'
 expect_selective scripts/tests/test_gate_jobs.py M92 M93 '!M03'

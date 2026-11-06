@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      actions: write
+      actions: read
       contents: read
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -117,8 +117,7 @@ jobs:
     if: needs.resolve-plan.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 45 # shard-timeout
-    permissions:
-      actions: write
+    permissions: # shard-readonly
       contents: read
     strategy:
       fail-fast: false
@@ -135,7 +134,7 @@ jobs:
         env:
           PLAN_B64: ${{ needs.resolve-plan.outputs.plan_b64 }}
           K: ${{ matrix.k }}
-          JOBS: "3"
+          JOBS: "3" # setting
         run: |
           set -eu
           python3 - << 'PY'
@@ -169,7 +168,7 @@ jobs:
 
   mutants:
     needs: [fresh, resolve-plan, shard]
-    if: always() && needs.fresh.outputs.mode == 'run' && needs.resolve-plan.result == 'success' && needs.shard.result == 'success'
+    if: always() && needs.fresh.outputs.mode == 'run' && needs.resolve-plan.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:

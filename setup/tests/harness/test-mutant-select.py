@@ -84,7 +84,7 @@ def validate():
             expect = [rel]
         else:
             expect = ["setup/" + rel]
-        if mid == "M171":
+        if mid in ("M171", "M175"):
             expect = [
                 ".github/workflows/mutate-pr.yml",
                 ".github/workflows/mutate-full.yml",
@@ -94,11 +94,11 @@ def validate():
         for path in paths:
             if not os.path.isfile(os.path.join(ROOT, path)):
                 fail("missing " + path)
-    new_ids = ["M%d" % n for n in range(139, 175)]
+    new_ids = ["M%d" % n for n in range(139, 176)]
     if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93 + len(new_ids):
         fail("CI id set changed")
     if mf.CI_IDS[-len(new_ids):] != new_ids:
-        fail("new CI ids are not M139-M174")
+        fail("new CI ids are not M139-M175")
     if len(mf.OFFLINE_IDS) != len(set(mf.OFFLINE_IDS)) or len(mf.OFFLINE_IDS) != 5:
         fail("offline id set changed")
     if len(mf.CI_IDS) + len(mf.OFFLINE_IDS) != 98 + len(new_ids):
@@ -224,6 +224,8 @@ def cli_lists():
 
 
 def main():
+    import speed_cases
+    speed_rc = speed_cases.main(["speed_cases.py"])
     validate()
     for ids in (VIS, EGRESS, ATTACK, RUNTIME, STEP4, KEEL, PI):
         if ids != in_ci_order(ids):
@@ -401,8 +403,7 @@ def main():
         fail("id check")
     cli_lists()
     print("mutant select: SEL-H1 through SEL-M6 and M01-H2 hold")
-    import speed_cases
-    if speed_cases.main(["speed_cases.py"]) != 0:
+    if speed_rc != 0:
         fail("speed cases")
 
 

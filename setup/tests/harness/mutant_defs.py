@@ -58,7 +58,6 @@ compare_suite = True  # compare-suite
 copy_widens = True  # copy-widens
 reject_unknown_suite = True  # suite-known
 check_duplicates = True  # duplicate-def
-exp_from_main = True  # exp-from-main
 reject_new_masked = True  # new-masked
 run_coverage_safety = True  # coverage-safety
 check_classification = True  # class-check
@@ -246,11 +245,10 @@ def grade_exp(mid, main, pr, masked):
             raise DefsError("empty exp")
         return list(pr_exp)
     main_exp = _exp(main.M[mid])
-    if not exp_from_main:
-        return list(pr_exp)
-    if set(pr_exp) < set(main_exp):
+    use_exp = main_exp  # exp-from-main
+    if set(pr_exp) < set(use_exp):
         raise DefsError("shrunk exp")
-    return sorted(set(main_exp) | set(pr_exp))
+    return sorted(set(use_exp) | set(pr_exp))
 
 
 def counts_used(main_counts, pr_counts):
