@@ -127,11 +127,36 @@ M = {
  'M116': ('lib/pi_launch.py', 'return True  # memory-fence', 'return False  # memory-fence', 'memory headers not fenced', ['PI-A-meminj']),
  'M117': ('lib/pi_launch.py', 'return True  # memory-superseded', 'return False  # memory-superseded', 'superseded entries unmarked', ['PI-H5']),
  'M118': ('lib/pi_launch.py', 'return True  # memory-fingerprint', 'return False  # memory-fingerprint', 'memory fingerprint not logged', ['PI-H5']),
+ 'M119': ('lib/discovery_filter.py', 'return True  # disc-pattern-on', 'return False  # disc-pattern-on', 'skip the bypass pre-filter', ['DISC-A1', 'DISC-A19']),
+ 'M120': ('lib/discovery_filter.py', 'return True  # disc-significance-on', 'return False  # disc-significance-on', 'skip the significance check', ['DISC-A2']),
+ 'M121': ('lib/discovery_filter.py', 'return True  # disc-path-check', 'return False  # disc-path-check', 'accept a path outside the tree', ['DISC-A3']),
+ 'M122': ('lib/discovery_filter.py', 'return True  # disc-size-cap', 'return False  # disc-size-cap', 'drop the candidate size cap', ['DISC-A4']),
+ 'M123': ('lib/pi_launch.py', 'return []  # disc-no-candidate-scan', 'return [os.path.join(os.path.dirname(memory_dir), "candidates")]  # disc-no-candidate-scan', 'index scans candidates', ['DISC-H4']),
+ 'M124': ('lib/discovery_filter.py', 'return True  # disc-symlink-refuse', 'return False  # disc-symlink-refuse', 'follow a candidate symlink', ['DISC-A6']),
+ 'M125': ('lib/discovery_filter.py', 'return True  # disc-no-queue', 'return False  # disc-no-queue', 'keep a proposed queue', ['DISC-A7']),
+ 'M126': ('lib/discovery_filter.py', 'return True  # disc-audit-redact', 'return False  # disc-audit-redact', 'write secret values into the audit', ['DISC-A8']),
+ 'M127': ('lib/discovery_filter.py', 'return True  # disc-schema-on', 'return False  # disc-schema-on', 'skip the schema check', ['DISC-A15']),
+ 'M128': ('lib/visibility.py', 'return "ro"  # discovery-memory-ro', 'return "rw"  # discovery-memory-ro', 'accepted memory mount is writable', ['DISC-A5', 'DISC-A11']),
+ 'M129': ('keel-doctor.sh', 'local disc_rows_required=1 # disc-rows-required', 'local disc_rows_required=0 # disc-rows-required', 'skip a failed discovery row', ['DISC-A12']),
+ 'M130': ('lib/discovery_judge.py', 'return True  # disc-judge-enabled', 'return False  # disc-judge-enabled', 'promote without the judge', ['DISC-A16', 'DISC-A17', 'DISC-A18']),
+ 'M131': ('lib/discovery_judge.py', 'return True  # disc-fail-closed', 'return False  # disc-fail-closed', 'judge errors fail open', ['DISC-A16', 'DISC-A17', 'DISC-A18']),
+ 'M132': ('lib/discovery_filter.py', 'return True  # disc-audit-failures', 'return False  # disc-audit-failures', 'drop the audit line on reject', ['DISC-A1', 'DISC-A16', 'DISC-A17']),
+ 'M133': ('lib/discovery_judge.py', 'return True  # disc-judge-host', 'return False  # disc-judge-host', 'judge destination check widened', ['DISC-A20']),
+ 'M134': ('lib/discovery_filter.py', 'return True  # disc-promote-order', 'return False  # disc-promote-order', 'promote before the iteration ends', ['DISC-A13']),
+ 'M135': ('lib/discovery_filter.py', 'return True  # disc-critical-d2', 'return False  # disc-critical-d2', 'critical candidate skips D2', ['DISC-H11']),
+ 'M136': ('lib/discovery_judge.py', 'isolated = True  # disc-judge-isolated', 'isolated = False  # disc-judge-isolated', 'a role can reach the judge', ['DISC-A21']),
+ 'M137': ('lib/discovery_judge.py', 'return marker  # disc-stub-ci-only', 'return True  # disc-stub-ci-only', 'stub allowed outside CI', ['DISC-A22']),
+ 'M138': ('lib/discovery_judge.py', 'return True  # disc-noul-strict', 'return False  # disc-noul-strict', 'loose Decisions JSON parse', ['DISC-A18']),
 }
 STEP4 = {
     'M94', 'M95', 'M96', 'M97', 'M98', 'M99', 'M100', 'M101', 'M102', 'M103',
     'M104', 'M105', 'M106', 'M107', 'M108', 'M109', 'M110', 'M111', 'M112',
     'M113', 'M114', 'M115', 'M116', 'M117', 'M118',
+}
+STEP5 = {
+    'M119', 'M120', 'M121', 'M122', 'M123', 'M124', 'M125', 'M126', 'M127',
+    'M128', 'M129', 'M130', 'M131', 'M132', 'M133', 'M134', 'M135', 'M136',
+    'M137', 'M138',
 }
 M['M15'] = (K, M['M13'][1], M['M13'][2], M['M15'][3], M['M15'][4])  # applied together with M14 below
 GREEN = re.compile(r'^(BLOCKED|CONTAINED|PARTIAL|N/A)')
@@ -235,6 +260,10 @@ def run(mid):
     shutil.copy2(os.path.join(HARNESS, 'step4_check.py'), os.path.join(src, 'tests', 'harness', 'step4_check.py'))
     shutil.copy2(os.path.join(HARNESS, 'pi-oracle.mjs'), os.path.join(src, 'tests', 'harness', 'pi-oracle.mjs'))
     shutil.copy2(os.path.join(HARNESS, 'pi-record.sh'), os.path.join(src, 'tests', 'harness', 'pi-record.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'test-step5.sh'), os.path.join(src, 'tests', 'harness', 'test-step5.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'run-tests.sh'), os.path.join(src, 'tests', 'harness', 'run-tests.sh'))
+    shutil.copy2(os.path.join(HARNESS, 'step5_check.py'), os.path.join(src, 'tests', 'harness', 'step5_check.py'))
+    shutil.copytree(os.path.join(SETUP, 'tools'), os.path.join(src, 'tools'))
     os.makedirs(os.path.join(src, 'chrome'), exist_ok=True)
     shutil.copy2(os.path.join(SETUP, 'chrome', 'chromium-argv.sh'), os.path.join(src, 'chrome', 'chromium-argv.sh'))
     shutil.copytree(os.path.join(HARNESS, 'fixtures'), os.path.join(src, 'tests', 'harness', 'fixtures'))
@@ -267,6 +296,8 @@ def run(mid):
                 script = 'test-runtime.sh'
             elif mid in STEP4:
                 script = 'test-step4.sh'
+            elif mid in STEP5:
+                script = 'test-step5.sh'
             else:
                 script = 'test-attacks.sh'
             out = subprocess.run(['bash', os.path.join(src, 'tests', 'harness', script)], env=env, capture_output=True, text=True, timeout=900).stdout

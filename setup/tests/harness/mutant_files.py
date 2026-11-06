@@ -125,6 +125,26 @@ FILES = {
     "M116": ["setup/lib/pi_launch.py"],
     "M117": ["setup/lib/pi_launch.py"],
     "M118": ["setup/lib/pi_launch.py"],
+    "M119": ["setup/lib/discovery_filter.py"],
+    "M120": ["setup/lib/discovery_filter.py"],
+    "M121": ["setup/lib/discovery_filter.py"],
+    "M122": ["setup/lib/discovery_filter.py"],
+    "M123": ["setup/lib/pi_launch.py"],
+    "M124": ["setup/lib/discovery_filter.py"],
+    "M125": ["setup/lib/discovery_filter.py"],
+    "M126": ["setup/lib/discovery_filter.py"],
+    "M127": ["setup/lib/discovery_filter.py"],
+    "M128": ["setup/lib/visibility.py"],
+    "M129": ["setup/keel-doctor.sh"],
+    "M130": ["setup/lib/discovery_judge.py"],
+    "M131": ["setup/lib/discovery_judge.py"],
+    "M132": ["setup/lib/discovery_filter.py"],
+    "M133": ["setup/lib/discovery_judge.py"],
+    "M134": ["setup/lib/discovery_filter.py"],
+    "M135": ["setup/lib/discovery_filter.py"],
+    "M136": ["setup/lib/discovery_judge.py"],
+    "M137": ["setup/lib/discovery_judge.py"],
+    "M138": ["setup/lib/discovery_judge.py"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -202,6 +222,26 @@ CI_IDS = [
     "M116",
     "M117",
     "M118",
+    "M119",
+    "M120",
+    "M121",
+    "M122",
+    "M123",
+    "M124",
+    "M125",
+    "M126",
+    "M127",
+    "M128",
+    "M129",
+    "M130",
+    "M131",
+    "M132",
+    "M133",
+    "M134",
+    "M135",
+    "M136",
+    "M137",
+    "M138",
 ]
 
 # Docker mount probes, plus M01. Pull-request CI skips these. The daily full run includes them.
@@ -323,6 +363,28 @@ STEP4_CI = (
     "M117",
     "M118",
 )
+STEP5_CI = (
+    "M119",
+    "M120",
+    "M121",
+    "M122",
+    "M123",
+    "M124",
+    "M125",
+    "M126",
+    "M127",
+    "M128",
+    "M129",
+    "M130",
+    "M131",
+    "M132",
+    "M133",
+    "M134",
+    "M135",
+    "M136",
+    "M137",
+    "M138",
+)
 
 # A change to one of these files selects only the CI mutants mapped to it.
 # Exact policy paths and listed oracle scripts are selective too.
@@ -340,6 +402,8 @@ TARGET_ONLY = frozenset((
     "setup/check.sh",
     "setup/docker/ancestor-guard.sh",
     "setup/keel-doctor.sh",
+    "setup/lib/discovery_filter.py",
+    "setup/lib/discovery_judge.py",
 ))
 
 # Whole path, or one basename glob under that directory. Not a directory prefix.
@@ -356,6 +420,7 @@ ORACLE_SCRIPTS = {
     "setup/tests/harness/test-mutant-result.sh": ("M92", "M93"),
     "setup/tests/harness/test-runtime.sh": RUNTIME_CI,
     "setup/tests/harness/test-step4.sh": STEP4_CI,
+    "setup/tests/harness/test-step5.sh": STEP5_CI,
     "setup/tests/harness/test-egress.sh": EGRESS_CI,
     "setup/tests/harness/visibility-suite.sh": VISIBILITY_CI,
 }
@@ -379,6 +444,7 @@ FULL_PATHS = frozenset((
 
 # Selector and binder files. A change here runs the full CI set.
 TRIGGERS = [
+    "setup/egress/discovery-judge.allow",
     "setup/tests/harness/mutate.py",
     "setup/tests/harness/run-tests.sh",
     "setup/tests/harness/mutant_files.py",

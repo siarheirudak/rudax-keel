@@ -69,6 +69,14 @@ MODEL_KEY_ENV = (
     "OPENROUTER_API_KEY",
 )
 LAUNCH_DENY_ENV = SECRET_ENV + tuple(name for name in MODEL_KEY_ENV if name not in SECRET_ENV)
+
+
+def discovery_memory_mode():
+    return "ro"  # discovery-memory-ro
+
+
+def tools_mount_mode():
+    return "ro"  # disc-tools-ro
 LOG_FIELDS = (
     "ts",
     "event",
@@ -684,7 +692,7 @@ def build_mounts(role, work, harness, keel, task, repo, env):
             raise PolicyError("allow_denied", "setup/allow/" + role + ".paths", line, rel)  # allow-root-loud
         if folded == fold_key(".agents/skills"):
             import pi_launch
-            host = pi_launch.export_skills(repo, keel, task, work)
+            host = pi_launch.export_skills(repo, keel, task, work, role)
             mode = pi_launch.skills_mount_mode()
             if not os.path.isdir(host) or os.path.islink(host):
                 raise PolicyError("skills_export", ".agents/skills", line, rel)
@@ -728,7 +736,20 @@ def build_mounts(role, work, harness, keel, task, repo, env):
     mem_host = os.path.join(work, ".keel", "memory")
     if os.path.islink(mem_host) or not os.path.isdir(mem_host):
         raise PolicyError("memory_missing", ".keel/memory", 0, "")
-    mounts.append((mem_host, "/work/.keel/memory", pi_launch.memory_mount_mode()))
+    mem_mode = pi_launch.memory_mount_mode()
+    if discovery_memory_mode() == "rw":
+        mem_mode = "rw"
+    mounts.append((mem_host, "/work/.keel/memory", mem_mode))
+    if role in ("developer", "orchestrator"):
+        cand = os.path.join(work, ".keel", "candidates")
+        if os.path.islink(cand):
+            raise PolicyError("candidates_symlink", cand, 0, "")
+        os.makedirs(cand, exist_ok=True)
+        mounts.append((cand, "/work/.keel/candidates", "rw"))
+        tools_src = os.path.join(harness, "tools")
+        if os.path.isdir(tools_src):
+            tools_host = pi_launch.export_tools(harness, keel, task)
+            mounts.append((tools_host, "/work/.keel/tools", tools_mount_mode()))
     detail = ""
     if absent:
         detail = "absent " + ",".join(absent)

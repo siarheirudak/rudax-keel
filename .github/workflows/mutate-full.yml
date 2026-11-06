@@ -40,6 +40,7 @@ jobs:
             "LANG=${LANG:-C.UTF-8}"
             "TMPDIR=${TMPDIR:-/tmp}"
             "KEEL_MUTATE_FORCE=1"
+            "KEEL_CI=1"
           )
           if [ -n "${DOCKER_HOST:-}" ]; then
             clean+=("DOCKER_HOST=$DOCKER_HOST")
