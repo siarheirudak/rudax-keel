@@ -190,16 +190,8 @@ def fetch_one_state(repo, token, run_id):
     url = chosen.get("archive_download_url") or ""
     if not url:
         return {"missing": True}
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Authorization": "Bearer " + token,
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "rudax-keel-mutants",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        blob = resp.read()
+    import mutate_shards
+    blob = mutate_shards.github_bytes(url, token)
     with zipfile.ZipFile(io.BytesIO(blob)) as archive:
         name = next((info.filename for info in archive.infolist() if info.filename.endswith("state.json")), None)
         if name is None:
