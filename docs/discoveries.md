@@ -1,6 +1,6 @@
 # Discoveries and ADRs
 
-The pipeline keeps two kinds of notes between tasks. Both are specified for v1 and neither exists in this repository. There is no `.keel/` directory, no discoveries directory, and no ADR directory.
+The pipeline keeps two kinds of notes between tasks. The host filter that accepts or discards them is in the harness. This repository does not commit the notes themselves. Candidates live under `.keel/candidates/` at runtime. Accepted files live under `.keel/memory/discoveries/` and `.keel/memory/adr/`.
 
 ## Two kinds of memory
 
@@ -8,7 +8,7 @@ A **discovery** is a note about a pitfall: something that went wrong, or nearly 
 
 An **ADR** (architecture decision record) is a note about a decision: a choice later tasks have to respect, with the context that led to it.
 
-Agents may propose a discovery. They do not approve one. A host script accepts the candidate or discards it. An ADR is packaged for later tasks the same way, one file per decision.
+The developer and the orchestrator may propose a discovery or an ADR. They do not approve one. A host script accepts the candidate or discards it after every role in the iteration has finished. An accepted ADR is packaged for later tasks the same way, one file per decision.
 
 ## File shape
 
@@ -20,29 +20,34 @@ One file per entry. The filename starts with the date. The front matter carries:
 - paths in the repository the note refers to
 - a severity
 
-The body is the note. When L1 builds a context package, an entry is included in full if it matches the task’s paths or tags, or if it is marked critical. Other entries become a single index line, newest first. The index is built in memory and is not written to disk. The body is fenced as data, so the note cannot act as a fresh instruction to the agent. [Pipeline](pipeline.md#l1-context-packaging).
+The body is the note. `kind` is `discovery`, `adr`, or `abort-cause`. `severity` is `critical`, `normal`, or `low`. An ADR body has the headings Context, Decision, and Consequences.
 
-A CI check watches the paths named in the front matter.
+When a role starts, the harness builds an index from accepted files only and fences each line as data. Candidates are not in that index. The fuller L1 package, which would include a matching note in full, is still specified and not built. [Pipeline](pipeline.md#l1-context-packaging).
 
-- The path must exist.
-- If the file was renamed, the check suggests the new path from `git log --follow`.
-- If the path was deleted, the entry is stale.
+The host filter refuses a candidate whose paths do not exist. A later CI check is specified, and not built, to watch those paths after acceptance: suggest a rename from `git log --follow`, and mark the entry stale if the path was deleted.
 
 ## Who may write
 
-The developer, and other agents that see a pitfall, may submit a candidate. The host filter accepts it only when all of the following hold:
+The developer and the orchestrator may submit a candidate. The skill `keel-write-memory` tells them to call `.keel/tools/write-memory-candidate.py`. That script only writes the candidate. Other roles do not see the skill, and they do not receive the candidates directory. A file written without the script is still checked. The host filter does not trust the path the bytes arrived by.
 
-- The file matches the schema.
-- The paths it names exist.
-- The size is within the filter’s limit. The design names a size check and does not fix a number in the planning notes, so this page does not invent one.
-- The text does not contain an instruction to bypass a gate.
-- The note is significant: it points at concrete paths or at a rule, and it describes a pitfall or a decision that would not be obvious from the code alone.
+The filter accepts a non-critical candidate only when all of the following hold:
 
-A candidate that fails is discarded. The filter does not keep a list of rejected proposals for a person to approve later.
+- The file matches the schema, including the date and the enums above.
+- The paths it names exist in the work tree and do not escape it.
+- The file is at most 32 KiB. That cap is our choice. It applies to candidates only, not to briefs or the append file.
+- The text does not contain a phrase that tells a role to bypass a gate.
+- The note is significant: it names at least one existing path, or it names a rule and the body is at least 40 characters. The 40-character floor is our choice.
+- The judge returns a typed score of at least 0.70. That threshold is our choice, to tune from the audit log, not a measured result.
 
-An accepted file is edited or deleted only by the harness, not by an agent role.
+The judge is `typesafe/jev-1.14` through the Decisions API. The question is fixed by the harness. The candidate is only the text being scored. A score below 0.70, an error, a timeout, or a response that is not a typed number in the expected shape is a discard. CI uses a stub of that call and does not contact the API. The stub is refused outside CI.
 
-When a cycle aborts, the dossier script writes the abort-cause entry. The agent that was running does not write it.
+A candidate that fails is deleted. The filter does not keep a list of rejected proposals. `severity: critical` is not promoted until the owner says yes. Silence is not a yes.
+
+An accepted file is edited or deleted only by the harness, not by an agent role. The harness may set `superseded_by`.
+
+When a cycle aborts, the dossier helper writes the abort-cause entry. The agent that was running does not write it.
+
+Every accept, reject, error, and timeout appends one JSON line under `$KEEL_ROOT/.keel/logs/`. The line records the verdict and, when the judge ran, the score. It does not record a key or an environment value.
 
 The same pitfall accepted twice is one of the triggers for the skills side path: improve the skill that should have prevented it, or propose a new skill. That proposal still waits for the owner. [Human decisions](owner-decisions.md#approvals).
 
