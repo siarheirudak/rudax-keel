@@ -32,14 +32,15 @@ h2_classify(){
 }
 h2_attribute(){
   local started=$1 denied=$2 ev0=$3 ev1=$4 cur=$5
-  h2_uint "$started" || { echo infra; return; }
-  h2_uint "$cur" || { echo infra; return; }
-  [ "$denied" = 0 ] || [ "$denied" = 1 ] || { echo infra; return; }
-  [ "$started" -le 160 ] || { echo infra; return; }
-  if [ "$cur" -gt 128 ] || [ "$started" -gt 128 ]; then echo not_enforced; return; fi
-  if ! h2_uint "$ev0" || ! h2_uint "$ev1"; then echo infra; return; fi
-  if [ "$ev1" -gt "$ev0" ] && [ "$cur" -le 128 ] && [ "$started" -le 128 ]; then echo contained; return; fi
-  if [ "$started" -eq 160 ] && [ "$denied" = 0 ] && [ "$ev1" -eq "$ev0" ]; then echo not_enforced; return; fi
+  h2_uint "$started" || { h2_attr=bad-record; echo infra; return; }
+  h2_uint "$cur" || { h2_attr=bad-record; echo infra; return; }
+  [ "$denied" = 0 ] || [ "$denied" = 1 ] || { h2_attr=bad-record; echo infra; return; }
+  [ "$started" -le 160 ] || { h2_attr=bad-record; echo infra; return; }
+  if [ "$cur" -gt 128 ] || [ "$started" -gt 128 ]; then h2_attr=not-enforced; echo not_enforced; return; fi
+  if ! h2_uint "$ev0" || ! h2_uint "$ev1"; then h2_attr=events-missing; echo infra; return; fi
+  if [ "$ev1" -gt "$ev0" ] && [ "$cur" -le 128 ] && [ "$started" -le 128 ]; then h2_attr=contained; echo contained; return; fi
+  if [ "$started" -eq 160 ] && [ "$denied" = 0 ] && [ "$ev1" -eq "$ev0" ]; then h2_attr=not-enforced; echo not_enforced; return; fi
+  h2_attr=no-delta
   echo infra
 }
 h2_ms(){
@@ -129,6 +130,7 @@ h2_acquire_call(){
   if h2_past_acquire; then
     if [ "$h2_status" -eq 0 ]; then
       h2_status=124
+      h2_acquire_why=late
     fi
   fi
   return "$h2_status"
@@ -197,6 +199,28 @@ h2_reset_run(){
   h2_cid=
   h2_dir=
   h2_cidfile=
+  h2_stage=
+  h2_reason=
+  h2_acquire_why="no-cid"
+  h2_attr=
+}
+h2_set_diag(){
+  local stage=$1 reason=$2
+  case $stage in
+    acquire|cap|probe|attribute|cleanup|trap|verdict) ;;
+    *) stage=unknown ;;
+  esac
+  case $reason in
+    no-cid|cid-shape|id-mismatch|not-running|timeout|late|deadline|cfg-unreadable|eff-unreadable|disagree|absent|wrong|no-result|bad-record|events-missing|no-delta|not-enforced|contained|unverified|term|int|unknown) ;;
+    *) reason=unknown ;;
+  esac
+  h2_stage=$stage
+  h2_reason=$reason
+}
+h2_emit_diag(){
+  h2_set_diag "${h2_stage:-unknown}" "${h2_reason:-unknown}"
+  printf 'h2-diag: stage=%s reason=%s\n' "$h2_stage" "$h2_reason"
+  h2_note "diag-$h2_stage-$h2_reason"
 }
 h2_kill_pidfile(){
   local f=$1 pid
@@ -298,12 +322,14 @@ h2_cleanup(){
 h2_say_infra(){
   [ "${h2_emitted:-0}" = 1 ] && return 0
   h2_emitted=1
+  h2_emit_diag
   h2_note verdict-infra
   res H2-INFRA "ERROR"
 }
 h2_say_h2(){
   [ "${h2_emitted:-0}" = 1 ] && return 0
   h2_emitted=1
+  h2_emit_diag
   h2_note verdict
   res H2 "$1"
 }
@@ -312,6 +338,7 @@ h2_after_cleanup(){
   h2_note cleanup-begin
   if ! h2_cleanup; then
     h2_note cleanup-fail
+    h2_set_diag cleanup unverified
     h2_say_infra
     return 1
   fi
@@ -331,6 +358,11 @@ h2_trap(){
   h2_note "trap-$why"
   h2_cleanup || true
   if [ "$why" != EXIT ]; then
+    case $why in
+      TERM) h2_set_diag trap term ;;
+      INT) h2_set_diag trap int ;;
+      *) h2_set_diag trap unknown ;;
+    esac
     h2_say_infra
     exit 1
   fi
@@ -354,27 +386,41 @@ h2_wait_cid(){
   local got run rc
   h2_phase=acquire
   h2_clock_start
+  h2_acquire_why=deadline
   rc=1
   while true; do
     if [ "$(h2_call_seconds "${H2_CID_DEADLINE:-15}" "${H2_CLEANUP_RESERVE:-3}")" -le 0 ] || h2_past_acquire; then
       break
     fi
     if [ ! -f "$h2_cidfile" ]; then
+      h2_acquire_why="no-cid"
       sleep 0.1
       continue
     fi
     h2_cid=$(tr -d '[:space:]' < "$h2_cidfile")
     if ! h2_cid_hex "$h2_cid"; then
+      h2_acquire_why="cid-shape"
       sleep 0.1
       continue
     fi
     h2_acquire_call inspect -f '{{.Id}}' "$h2_cid"
+    if [ "$h2_acquire_why" = late ]; then
+      break
+    fi
     if [ "$h2_status" -eq 124 ] || [ "$h2_status" -eq 137 ] || [ "$h2_status" -eq 143 ]; then
+      h2_acquire_why=timeout
       break
     fi
     got=$(printf '%s' "$h2_out" | tr -d '[:space:]')
+    if [ "$h2_status" -eq 0 ] && [ "$got" != "$h2_cid" ]; then
+      h2_acquire_why="id-mismatch"
+    fi
     h2_acquire_call inspect -f '{{.State.Running}}' "$h2_cid"
+    if [ "$h2_acquire_why" = late ]; then
+      break
+    fi
     if [ "$h2_status" -eq 124 ] || [ "$h2_status" -eq 137 ] || [ "$h2_status" -eq 143 ]; then
+      h2_acquire_why=timeout
       break
     fi
     run=$(printf '%s' "$h2_out" | tr -d '[:space:]')
@@ -383,7 +429,11 @@ h2_wait_cid(){
       rc=0
       break
     fi
+    if [ "$h2_status" -eq 0 ] && [ "$run" != true ]; then
+      h2_acquire_why="not-running"
+    fi
     if h2_past_acquire; then
+      h2_acquire_why=late
       break
     fi
     sleep 0.1
@@ -443,6 +493,7 @@ h2_execute(){
   mkdir -p "$W"
   h2_start_target
   if ! h2_wait_cid; then
+    h2_set_diag acquire "${h2_acquire_why:-deadline}"
     h2_after_cleanup infra ""
     h2_rc=1
   else
@@ -451,14 +502,20 @@ h2_execute(){
     class=$(h2_classify "$h2_cfg" "$h2_eff")
     case $class in
       infra)
+        if [ "$h2_cfg" = unreadable ]; then h2_set_diag cap cfg-unreadable
+        elif [ "$h2_eff" = unreadable ]; then h2_set_diag cap eff-unreadable
+        else h2_set_diag cap disagree
+        fi
         h2_after_cleanup infra ""
         h2_rc=1
         ;;
       not_blocked)
         h2_note no-release
         if [ "$h2_cfg" = 0 ]; then
+          h2_set_diag verdict absent
           h2_after_cleanup not_blocked "no product pids limit" && h2_rc=0
         else
+          h2_set_diag verdict wrong
           h2_after_cleanup not_blocked "product pids limit wrong" && h2_rc=0
         fi
         ;;
@@ -474,6 +531,9 @@ h2_execute(){
         done
         line=$(head -n 1 "$W/h2-result" 2>/dev/null || true)
         if ! printf '%s' "$line" | grep -Eq '^started=[0-9]{1,4} denied=[01] ev0=([0-9]{1,7}|missing) ev1=([0-9]{1,7}|missing) cur=([0-9]{1,7}|missing)$'; then
+          if [ -z "$line" ]; then h2_set_diag probe no-result
+          else h2_set_diag probe bad-record
+          fi
           h2_after_cleanup infra ""
           h2_rc=1
         else
@@ -482,15 +542,26 @@ h2_execute(){
           ev0=$(h2_field "$line" ev0) || ev0=
           ev1=$(h2_field "$line" ev1) || ev1=
           cur=$(h2_field "$line" cur) || cur=
-          attr=$(h2_attribute "$started" "$denied" "$ev0" "$ev1" "$cur")
+          h2_attribute "$started" "$denied" "$ev0" "$ev1" "$cur" >"$h2_dir/attr.out"
+          attr=$(cat "$h2_dir/attr.out")
           case $attr in
-            contained) h2_after_cleanup contained "" && h2_rc=0;;
-            not_enforced) h2_after_cleanup not_blocked "pids limit 128 not enforced" && h2_rc=0;;
-            *) h2_after_cleanup infra "" || true;;
+            contained)
+              h2_set_diag verdict contained
+              h2_after_cleanup contained "" && h2_rc=0
+              ;;
+            not_enforced)
+              h2_set_diag attribute not-enforced
+              h2_after_cleanup not_blocked "pids limit 128 not enforced" && h2_rc=0
+              ;;
+            *)
+              h2_set_diag attribute "${h2_attr:-no-delta}"
+              h2_after_cleanup infra "" || true
+              ;;
           esac
         fi
         ;;
       *)
+        h2_set_diag cap disagree
         h2_after_cleanup infra ""
         h2_rc=1
         ;;
@@ -738,6 +809,7 @@ h2_self_test(){
   saved_w=$W
   set +e
   h2_expect(){ if [ "$2" != "$3" ]; then h2_fail "$1 got [$2] want [$3]"; fi; }
+  h2_pair(){ printf '%s\n%s' "$1" "$2"; }
   h2_expect class128 "$(h2_classify 128 128)" probe
   h2_expect class-max "$(h2_classify 0 max)" not_blocked
   h2_expect class-low "$(h2_classify 64 64)" not_blocked
@@ -765,35 +837,36 @@ h2_self_test(){
   }
   h2_run_case 128
   h2_expect live128-rc "$h2_case_rc" 0
-  h2_expect live128-out "$h2_case_out" "RESULT H2: CONTAINED (pids limit 128, controller denied)"
+  h2_expect live128-out "$h2_case_out" "$(h2_pair 'h2-diag: stage=verdict reason=contained' 'RESULT H2: CONTAINED (pids limit 128, controller denied)')"
   printf '%s\n' "$h2_case_trace" | grep -q '^release$' || h2_fail "live128 no release"
   printf '%s\n' "$h2_case_trace" | awk 'BEGIN{ok=0} /^cleanup-ok$/{ok=1} /^verdict$/{if(!ok) bad=1} END{exit bad+0}' || h2_fail "live128 verdict before cleanup"
   printf '%s\n' "$h2_case_log" | grep -q 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' && h2_fail "live128 touched other cid"
   h2_run_case unlimited
   h2_expect live-max-rc "$h2_case_rc" 0
-  h2_expect live-max-out "$h2_case_out" "RESULT H2: NOT BLOCKED (no product pids limit)"
+  h2_expect live-max-out "$h2_case_out" "$(h2_pair 'h2-diag: stage=verdict reason=absent' 'RESULT H2: NOT BLOCKED (no product pids limit)')"
   printf '%s\n' "$h2_case_trace" | grep -q '^no-release$' || h2_fail "unlimited released a load"
   printf '%s\n' "$h2_case_log" | grep -q 'go-before-cid' && h2_fail "go before cid"
   h2_run_case lower
-  h2_expect live-low "$h2_case_out" "RESULT H2: NOT BLOCKED (product pids limit wrong)"
+  h2_expect live-low "$h2_case_out" "$(h2_pair 'h2-diag: stage=verdict reason=wrong' 'RESULT H2: NOT BLOCKED (product pids limit wrong)')"
   h2_run_case higher
-  h2_expect live-high "$h2_case_out" "RESULT H2: NOT BLOCKED (product pids limit wrong)"
+  h2_expect live-high "$h2_case_out" "$(h2_pair 'h2-diag: stage=verdict reason=wrong' 'RESULT H2: NOT BLOCKED (product pids limit wrong)')"
   h2_run_case unreadable
   h2_expect unread-rc "$h2_case_rc" 1
-  h2_expect unread-out "$h2_case_out" "RESULT H2-INFRA: ERROR"
+  h2_expect unread-out "$h2_case_out" "$(h2_pair 'h2-diag: stage=cap reason=cfg-unreadable' 'RESULT H2-INFRA: ERROR')"
   printf '%s\n' "$h2_case_out" | grep -q '^RESULT H2:' && h2_fail "unreadable emitted H2"
   H2_CID_DEADLINE_CASE=4
   H2_CLEANUP_RESERVE_CASE=1
   h2_run_case delay-cid
   H2_CID_DEADLINE_CASE=3
   H2_CLEANUP_RESERVE_CASE=1
-  h2_expect delay-out "$h2_case_out" "RESULT H2: NOT BLOCKED (no product pids limit)"
+  h2_expect delay-out "$h2_case_out" "$(h2_pair 'h2-diag: stage=verdict reason=absent' 'RESULT H2: NOT BLOCKED (no product pids limit)')"
   printf '%s\n' "$h2_case_log" | grep -q 'go-before-cid' && h2_fail "delay go before cid"
   H2_CID_DEADLINE_CASE=1
   h2_run_case nocid
   H2_CID_DEADLINE_CASE=3
   h2_expect nocid-rc "$h2_case_rc" 1
   printf '%s\n' "$h2_case_out" | grep -q '^RESULT H2:' && h2_fail "nocid emitted H2"
+  printf '%s\n' "$h2_case_out" | grep -qx 'h2-diag: stage=acquire reason=deadline' || h2_fail "nocid diag"
   printf '%s\n' "$h2_case_out" | grep -q '^RESULT H2-INFRA: ERROR$' || h2_fail "nocid missing infra"
   h2_run_case rm-fail
   h2_expect rmfail-rc "$h2_case_rc" 1
@@ -802,7 +875,7 @@ h2_self_test(){
   h2_expect rmlie-rc "$h2_case_rc" 1
   printf '%s\n' "$h2_case_out" | grep -q '^RESULT H2:' && h2_fail "rm-lie emitted H2"
   h2_run_case client-dead
-  h2_expect dead-out "$h2_case_out" "RESULT H2: NOT BLOCKED (no product pids limit)"
+  h2_expect dead-out "$h2_case_out" "$(h2_pair 'h2-diag: stage=verdict reason=absent' 'RESULT H2: NOT BLOCKED (no product pids limit)')"
   printf '%s\n' "$h2_case_log" | grep -q 'rm -f 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' || h2_fail "client-dead did not remove cid"
   H2_DOCKER_DEADLINE_CASE=1
   H2_CLEANUP_CALL_CASE=1
@@ -843,6 +916,32 @@ sys.path.insert(0, sys.argv[1])
 import mutate
 import mutate_shards as ms
 text = open(sys.argv[2], encoding="utf-8").read()
+allowed = {
+    "h2-diag: stage=acquire reason=no-cid",
+    "h2-diag: stage=acquire reason=cid-shape",
+    "h2-diag: stage=acquire reason=id-mismatch",
+    "h2-diag: stage=acquire reason=not-running",
+    "h2-diag: stage=acquire reason=timeout",
+    "h2-diag: stage=acquire reason=late",
+    "h2-diag: stage=acquire reason=deadline",
+    "h2-diag: stage=cap reason=cfg-unreadable",
+    "h2-diag: stage=cap reason=eff-unreadable",
+    "h2-diag: stage=cap reason=disagree",
+    "h2-diag: stage=probe reason=no-result",
+    "h2-diag: stage=probe reason=bad-record",
+    "h2-diag: stage=attribute reason=events-missing",
+    "h2-diag: stage=attribute reason=no-delta",
+    "h2-diag: stage=attribute reason=not-enforced",
+    "h2-diag: stage=cleanup reason=unverified",
+    "h2-diag: stage=trap reason=term",
+    "h2-diag: stage=trap reason=int",
+    "h2-diag: stage=verdict reason=contained",
+    "h2-diag: stage=verdict reason=absent",
+    "h2-diag: stage=verdict reason=wrong",
+}
+diags = [line for line in text.splitlines() if line.startswith("h2-diag:")]
+if len(diags) != 1 or diags[0] not in allowed:
+    raise SystemExit("diag missing or unsafe")
 for line in text.splitlines():
     if line.startswith("RESULT H2:"):
         raise SystemExit("captured definitive H2")
@@ -861,11 +960,13 @@ PY
   }
   h2_run_case nearcap
   h2_expect near-rc "$h2_case_rc" 1
+  printf '%s\n' "$h2_case_out" | grep -qx 'h2-diag: stage=attribute reason=no-delta' || h2_fail "nearcap diag"
   printf '%s\n' "$h2_case_out" | grep -q '^RESULT H2:' && h2_fail "nearcap emitted H2"
   h2_save_case
   h2_grade_captured "$h2_case_file"
   h2_run_case events-missing
   h2_expect miss-rc "$h2_case_rc" 1
+  printf '%s\n' "$h2_case_out" | grep -qx 'h2-diag: stage=attribute reason=events-missing' || h2_fail "missing events diag"
   printf '%s\n' "$h2_case_out" | grep -q '^RESULT H2:' && h2_fail "missing events emitted H2"
   h2_save_case
   h2_grade_captured "$h2_case_file"
@@ -910,7 +1011,7 @@ PY
   h2_grade_captured "$h2_case_file"
   h2_run_case rm-retry
   h2_expect retry-rc "$h2_case_rc" 0
-  h2_expect retry-out "$h2_case_out" "RESULT H2: CONTAINED (pids limit 128, controller denied)"
+  h2_expect retry-out "$h2_case_out" "$(h2_pair 'h2-diag: stage=verdict reason=contained' 'RESULT H2: CONTAINED (pids limit 128, controller denied)')"
   h2_retry_n=$(printf '%s\n' "$h2_case_log" | grep -c 'rm -f' || true)
   [ "$h2_retry_n" -ge 2 ] || h2_fail "retry did not remove twice"
   # Acquisition budget 4s, cleanup reserve 1s, per-call cap 4s, kill-after 1s.
@@ -931,6 +1032,7 @@ PY
     H2_CLEANUP_CALL_CASE=4
     [ "$elapsed" -le "$allowance" ] || h2_fail "$mode took ${elapsed}ms allowance ${allowance}ms"
     [ "$h2_case_rc" -ne 0 ] || h2_fail "$mode rc 0"
+    printf '%s\n' "$h2_case_out" | grep -qx 'h2-diag: stage=acquire reason=timeout' || h2_fail "$mode diag"
     printf '%s\n' "$h2_case_out" | grep -q '^RESULT H2:' && h2_fail "$mode emitted H2"
     printf '%s\n' "$h2_case_out" | grep -q '^RESULT H2-INFRA: ERROR$' || h2_fail "$mode missing infra"
     printf '%s\n' "$h2_case_log" | grep -q 'rm -f' || h2_fail "$mode skipped cleanup"
@@ -1008,6 +1110,7 @@ PY
     if [ "$sig_rc" -ne 0 ] \
       && [ "$elapsed" -lt 3000 ] \
       && grep -qx "trap-$sig" "$H2_TRACE" \
+      && printf '%s\n' "$sig_out" | grep -qx "h2-diag: stage=trap reason=$(printf '%s' "$sig" | tr '[:upper:]' '[:lower:]')" \
       && ! printf '%s\n' "$sig_out" | grep -q '^RESULT H2:' \
       && printf '%s\n' "$sig_out" | grep -q '^RESULT H2-INFRA: ERROR$' \
       && printf '%s\n' "$sig_log" | grep -q 'rm -f 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' \
