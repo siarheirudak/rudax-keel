@@ -29,6 +29,7 @@ h2_diag_allowed() {
     'h2-diag: stage=cap reason=disagree'|\
     'h2-diag: stage=probe reason=no-result'|\
     'h2-diag: stage=probe reason=bad-record'|\
+    'h2-diag: stage=attribute reason=bad-record'|\
     'h2-diag: stage=attribute reason=events-missing'|\
     'h2-diag: stage=attribute reason=no-delta'|\
     'h2-diag: stage=attribute reason=not-enforced'|\
@@ -156,6 +157,19 @@ EOF
   pub_want=$(printf '%s\n' 'RESULT A1: BLOCKED (read-only mount)' 'RESULT H2-INFRA: ERROR' 'h2-diag: stage=acquire reason=timeout')
   [ "$(cat "$pub_tmp/fail.out")" = "$pub_want" ] || pub_fail "failure stdout [$(cat "$pub_tmp/fail.out")]"
   grep -E -q 'leaked-secret|GH_TOKEN|unknown|disagree' "$pub_tmp/fail.out" && pub_fail "reflected untrusted diagnostic"
+  cat > "$pub_tmp/bad.log" << 'EOF'
+h2-diag: stage=attribute reason=bad-record
+h2-diag: stage=attribute reason=bad-record extra
+RESULT H2-INFRA: ERROR
+EOF
+  bash "$HERE/run-tests.sh" --attacks-record "$pub_tmp/bad.log" 1 > "$pub_tmp/bad.out" 2> "$pub_tmp/bad.err"
+  pub_ec=$?
+  [ "$pub_ec" -ne 0 ] || pub_fail "bad-record path exited 0"
+  grep -q 'ERROR: an attack printed NOT BLOCKED, WRONG REASON, or ERROR' "$pub_tmp/bad.err" || pub_fail "bad-record dropped the error"
+  grep -qx 'RESULT H2-INFRA: ERROR' "$pub_tmp/bad.err" || pub_fail "bad-record dropped H2-INFRA"
+  pub_want=$(printf '%s\n' 'RESULT H2-INFRA: ERROR' 'h2-diag: stage=attribute reason=bad-record')
+  [ "$(cat "$pub_tmp/bad.out")" = "$pub_want" ] || pub_fail "bad-record stdout [$(cat "$pub_tmp/bad.out")]"
+  grep -q 'extra' "$pub_tmp/bad.out" && pub_fail "bad-record reflected a suffix"
   printf '%s\n' 'RESULT A1: BLOCKED (read-only mount)' 'h2-diag: stage=verdict reason=contained' > "$pub_tmp/ok.log"
   bash "$HERE/run-tests.sh" --attacks-record "$pub_tmp/ok.log" 0 > "$pub_tmp/ok.out" 2> "$pub_tmp/ok.err"
   pub_ec=$?
@@ -185,7 +199,7 @@ EOF
   [ "$(grep -c '^h2-diag: stage=cleanup reason=unverified$' "$pub_tmp/many.out")" -eq 32 ] || pub_fail "kept count"
   grep -q '^h2-diag: stage=acquire reason=deadline$' "$pub_tmp/many.out" && pub_fail "kept an older record"
   grep -qx 'h2-publish: omitted=8' "$pub_tmp/many.out" || pub_fail "omitted count"
-  python3 - "$HERE" "$pub_tmp/fail.log" "$pub_tmp/fail.out" << 'PY' || pub_fail "grader"
+  python3 - "$HERE" "$pub_tmp/fail.log" "$pub_tmp/fail.out" "$pub_tmp/bad.log" "$pub_tmp/bad.out" << 'PY' || pub_fail "grader"
 import sys
 sys.path.insert(0, sys.argv[1])
 import mutate
