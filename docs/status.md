@@ -2,7 +2,7 @@
 
 This page is the line between what the repository does and what the v1 design specifies. When another page describes a link, a role mount, or a log, the behaviour is planned unless this page lists it under [Shipped](#shipped).
 
-Nothing in the L0–L11 chain runs. There is no `standards/rules.md`, no committed task decisions, and no envelope. `.agents/skills/keel-write-memory/` is the skill that appends a discovery or ADR candidate. The harness creates `.keel/logs/` and `.keel/runs/` at runtime, and it creates candidate and accepted-memory directories when a task needs them. Those notes are not committed in this repository. The bot is a real GitHub account used with the rules below. The pipeline’s “bot opens the pull request” step is still the push stub.
+Nothing in the L0–L11 chain runs. There is no committed task decision and no envelope. `setup/standards/rules.md` is the quality standard. The generator writes a read-only view for each role. `.agents/skills/keel-write-memory/` is the skill that appends a discovery or ADR candidate. The harness creates `.keel/logs/` and `.keel/runs/` at runtime, and it creates candidate and accepted-memory directories when a task needs them. Those notes are not committed in this repository. The bot is a real GitHub account used with the rules below. The pipeline’s “bot opens the pull request” step is still the push stub.
 
 ## Shipped
 
@@ -77,6 +77,14 @@ CI and `keel-gate` use a stub transport and do not call the live API. The stub i
 
 The candidate size cap starts at 32 KiB, and a note that relies on a rule instead of a path needs a body of at least 40 characters. Both numbers are our choice. They apply to candidates only, not to briefs or the append file.
 
+### Quality standard
+
+Implemented in `setup/standards/rules.md`, `setup/standards/gen.py`, `setup/standards/roles.py`, and `setup/standards/views/`.
+
+One source file assigns each rule to the roles that author it, the roles that may cite it, and any mechanical gate facet. The generator writes six views. The developer, architect, tester, auditor, and design reviewer each mount only their own view, read-only. The static gate view is not mounted into a model role. `SEC-08` is a do-not-flag policy and is not a rule id. Merged ids are not emitted. A hand-edited view fails the drift check in the harness.
+
+Suppression syntax is not accepted. The review step’s precondition is an owner-controlled approval path. Until that path exists, a suppression is not authorization. The standard does not record one.
+
 ### Runtime boundary
 
 Implemented in `setup/lib/runtime.sh`, `setup/keel-doctor.sh`, and `setup/chrome/`.
@@ -89,7 +97,7 @@ DISK-02 is the soft free-space check. Hard filesystem quotas are optional on the
 
 ## Specified and not built
 
-The v1 build is a sequence of steps. Each one is intended to land as its own pull request, opened by the bot, and merged by the owner. Process-file and skill changes land as separate pull requests labelled `process-files`, after the owner approves them. Step 1’s folder mounts, Step 2’s developer egress proxy, the runtime boundary, what a role sees at launch, and the discoveries filter are in the harness. The later steps in the table are not started. The Step 7 design (dispatcher and warm orchestrator) is in [Harness design](harness/README.md).
+The v1 build is a sequence of steps. Each one is intended to land as its own pull request, opened by the bot, and merged by the owner. Process-file and skill changes land as separate pull requests labelled `process-files`, after the owner approves them. Step 1’s folder mounts, Step 2’s developer egress proxy, the runtime boundary, what a role sees at launch, the discoveries filter, and the standards generator are in the harness. The later steps in the table are not started. The Step 7 design (dispatcher and warm orchestrator) is in [Harness design](harness/README.md).
 
 The order is the dependency order from the v1 plan. Steps later in the list need earlier ones. Parallel reading is fine. Parallel merging still has to respect the dependencies.
 
@@ -97,7 +105,6 @@ The order is the dependency order from the v1 plan. Steps later in the list need
 |---|---|---|
 | 1 | Folder allowlists, unified deny, tester pinned to the setup commit, launch JSONL. Content fencing stays on the backlog | The harness that exists |
 | 3 remainder | A separate OS account for secret files, and a Chromium process running under rootless | The runtime boundary above; the QA step for the browser |
-| 6 | `standards/rules.md` and the generator for per-role views | The rule text, which is an input, not code in this repo |
 | 7 | The host dispatcher and the warm Pi orchestrator (task state, transitions, `keel_request`). A process-files pull request. Grilling behaviour is Step 8 | Step 1, and Step 2 when the orchestrator container needs the model API |
 | 8 | L0 grilling, including size and estimated cost | Steps 4 and 7 |
 | 9 | Stack detection, the skill directory, and the suspicious-skill card | Steps 5, 6, and 8 |

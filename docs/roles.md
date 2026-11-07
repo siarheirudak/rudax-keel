@@ -85,7 +85,7 @@ A **skill** is a project file of instructions for a role, under `.agents/skills/
 
 The developer, the tester, QA, and the architect receive project skills. The orchestrator can be asked, in chat, to order a skill. `keel-write-memory` is not one of those shared project skills: the snapshot for the developer and the orchestrator includes it, and the snapshot for every other role omits it. Usage is written to the log. A comparison trial of two versions is reserved for a major stack skill. How that trial would be measured is still open.
 
-Harness checklists for the critic and the reviewers are not project skills. They are generated from `standards/rules.md` and mounted read-only. They do not go through the project skill-approval card. The standard itself is specified in [Quality standard](quality.md) and the file is not in the repository yet.
+Harness checklists for the critic and the reviewers are not project skills. They are generated from `setup/standards/rules.md` and mounted read-only, one view per role. They do not go through the project skill-approval card. The standard is in [Quality standard](quality.md).
 
 A suspicious skill is one that contains install commands, network use, secret access, or a way around a gate. The scan highlights those lines on a card, and the skill stays off until the owner says yes.
 
