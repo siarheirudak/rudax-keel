@@ -721,10 +721,24 @@ def _gitleaks_bin(home):
     return os.path.join(home, ".cache", "keel", "gitleaks-" + GITLEAKS_VERSION, "gitleaks")
 
 
-def _pi_host_script():
+def _pi_host_script(home):
+    path = os.path.join(
+        _pi_dir(home),
+        "node_modules",
+        "@mariozechner",
+        "pi-coding-agent",
+        "package.json",
+    )
     return (
-        "const p=require('@mariozechner/pi-coding-agent/package.json');"
-        "if(p.version!=='%s')process.exit(1)" % PI_VERSION
+        "try{"
+        "const p=JSON.parse(require('fs').readFileSync("
+        + json.dumps(path)
+        + ",'utf8'));"
+        "if(p===null||typeof p!=='object'||Array.isArray(p)||typeof p.version!=='string')process.exit(3);"
+        "if(p.version!=="
+        + json.dumps(PI_VERSION)
+        + ")process.exit(1);"
+        "}catch(e){process.exit(3)}"
     )
 
 
@@ -770,7 +784,7 @@ def provision_commands(baseline, needed, home, pi_present=False):
             cmds.append([
                 "npm", "install", "--prefix", _pi_dir(home), "--silent", PI_PACKAGE,
             ])
-        cmds.append(["node", "-e", _pi_host_script()])
+        cmds.append(["node", "-e", _pi_host_script(home)])
     return cmds
 
 

@@ -1586,6 +1586,131 @@ def _restore_runner(saved):
     ms._run_allowlisted = saved
 
 
+_OLD_BARE_PI_SCRIPT = (
+    "const p=require('@mariozechner/pi-coding-agent/package.json');"
+    "if(p.version!=='0.73.1')process.exit(1)"
+)
+
+
+def _pi_restricted_manifest(version):
+    return json.dumps({
+        "name": "@mariozechner/pi-coding-agent",
+        "version": version,
+        "type": "module",
+        "exports": {
+            ".": {"import": "./dist/index.js"},
+            "./hooks": {"import": "./dist/hooks.js"},
+        },
+    })
+
+
+def _write_text(path, body):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "w", encoding="utf-8").write(body)
+
+
+def _host_pi_category(base, home):
+    try:
+        ms.provision_selected(base, ["test-step4.sh"], {"test-step4.sh": ["M10"]}, home=home)
+    except ms.PrereqError as err:
+        return err.category
+    return ""
+
+
+def _real_host_pi(parent, real):
+    """Run the host pin against a real Node fixture. Missing Node is an error."""
+    if shutil.which("node") is None:
+        raise RuntimeError("node is required")
+    # Quote and percent characters have to survive as one JavaScript string.
+    home = os.path.join(parent, "home-%s-\"q'")
+    node_modules = os.path.join(home, ".cache", "keel", "pi-0.73.1", "node_modules")
+    package = os.path.join(node_modules, "@mariozechner", "pi-coding-agent", "package.json")
+    pi_bin = os.path.join(node_modules, ".bin", "pi")
+    _write_text(pi_bin, "#!/bin/sh\nexit 0\n")
+    os.chmod(pi_bin, 0o755)
+    _write_text(package, _pi_restricted_manifest("0.73.1"))
+    base = os.path.join(parent, "probe-base")
+    for name in ("keel-git", "keel-pi"):
+        _write_text(os.path.join(base, "setup", "docker", name + ".Dockerfile"), "FROM scratch\n")
+    bare_cwd = os.path.join(parent, "bare-cwd")
+    os.makedirs(bare_cwd)
+    decoy = os.path.join(parent, "cwd-decoy")
+    decoy_modules = os.path.join(decoy, "node_modules")
+    _write_text(
+        os.path.join(decoy_modules, "@mariozechner", "pi-coding-agent", "package.json"),
+        '{"name":"@mariozechner/pi-coding-agent","version":"0.73.2"}\n',
+    )
+    bare = subprocess.run(
+        ["node", "-e", _OLD_BARE_PI_SCRIPT],
+        cwd=bare_cwd,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": home,
+            "NODE_PATH": node_modules,
+            "LANG": os.environ.get("LANG", "C.UTF-8"),
+        },
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if bare.returncode == 0 or b"ERR_PACKAGE_PATH_NOT_EXPORTED" not in bare.stderr:
+        return _no("bare specifier accepted")
+
+    def spy(argv, env):
+        if argv[:1] in (["docker"], ["npm"]):
+            return 0, ""
+        if argv[:1] == ["bash"] and argv[-1].endswith("gitleaks-install.sh"):
+            return 0, ""
+        if len(argv) >= 2 and argv[1] == "version" and "gitleaks" in os.path.basename(argv[0]):
+            return 0, "8.30.1\n"
+        return real(argv, env)
+
+    cwd = os.getcwd()
+    ms._run_allowlisted = spy
+    os.chdir(decoy)
+    try:
+        old = _push_env({"NODE_PATH": decoy_modules, "KEEL_PI_BIN": "/untrusted/pi"})
+        try:
+            verified = ms.provision_selected(
+                base, ["test-step4.sh"], {"test-step4.sh": ["M10"]}, home=home,
+            )
+            if verified.get("KEEL_PI_BIN") != pi_bin:
+                return _no("real pi bin")
+            if not verified.get("NODE_PATH", "").startswith(node_modules):
+                return _no("real node path")
+            _write_text(package, _pi_restricted_manifest("0.73.2"))
+            if _host_pi_category(base, home) != "pi_version":
+                return _no("wrong pin category")
+            os.remove(package)
+            if _host_pi_category(base, home) != "pi_resolve":
+                return _no("missing package category")
+            _write_text(package, "{")
+            if _host_pi_category(base, home) != "pi_resolve":
+                return _no("malformed package category")
+            _write_text(package, "null")
+            if _host_pi_category(base, home) != "pi_resolve":
+                return _no("nonobject package category")
+            _write_text(package, "[]")
+            if _host_pi_category(base, home) != "pi_resolve":
+                return _no("array package category")
+            _write_text(package, '{"version":1}')
+            if _host_pi_category(base, home) != "pi_resolve":
+                return _no("nonstring version category")
+            _write_text(package, _pi_restricted_manifest("0.73.1"))
+            os.chmod(package, 0)
+            try:
+                if _host_pi_category(base, home) != "pi_resolve":
+                    return _no("unreadable package category")
+            finally:
+                os.chmod(package, 0o644)
+        finally:
+            _pop_env(old)
+        return True
+    finally:
+        os.chdir(cwd)
+        ms._run_allowlisted = real
+
+
 def case_s_p4():
     if set(ms.SUITE_NEEDS) != set(mf.SUITES):
         return _no("suite map")
@@ -1752,6 +1877,9 @@ def case_s_p4():
         err = open(os.path.join(out_dir, "shard-status.json"), encoding="utf-8").read()
         if "docker_missing" not in err:
             return _no("docker category")
+        probed = _real_host_pi(root, saved)
+        if probed is not True:
+            return probed
         return True
     finally:
         _restore_runner(saved)
