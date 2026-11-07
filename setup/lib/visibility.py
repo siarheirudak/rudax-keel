@@ -694,6 +694,8 @@ def build_mounts(role, work, harness, keel, task, repo, env):
             import pi_launch
             host = pi_launch.export_skills(repo, keel, task, work, role)
             mode = pi_launch.skills_mount_mode()
+            if role in pi_launch.standards_roles():
+                mode = pi_launch.standards_mount_mode()
             if not os.path.isdir(host) or os.path.islink(host):
                 raise PolicyError("skills_export", ".agents/skills", line, rel)
             mounts.append((host, "/work/.agents/skills", mode))
