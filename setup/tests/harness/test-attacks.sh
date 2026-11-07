@@ -8,6 +8,652 @@ unset GH_TOKEN GITHUB_TOKEN BOT_GH_TOKEN GITHUB_PAT AWS_SECRET_ACCESS_KEY AWS_AC
 # shellcheck source=setup/tests/harness/h3-verdict.sh
 . "$HERE/h3-verdict.sh"
 res(){ echo "RESULT $1: $2"; }
+
+# H2 reads the launched container's own pids cap before any workload.
+# A missing, unlimited, or non-128 cap is NOT BLOCKED only after that container is gone.
+# Unreadable evidence is H2-INFRA and is not an H2 verdict.
+# The 160-start ceiling is a probe bound, not the product pids guard.
+# EXIT, INT, and TERM remove this cid only. SIGKILL of the job, or loss of the runner,
+# cannot be trapped; the in-container wait and child lifetime are the bound that remains.
+h2_note(){ [ -n "${H2_TRACE:-}" ] && printf '%s\n' "$1" >> "$H2_TRACE"; }
+h2_uint(){ printf '%s' "$1" | grep -Eq '^[0-9]{1,7}$'; }
+h2_classify(){
+  local cfg=$1 eff=$2
+  if [ -z "$cfg" ] || [ -z "$eff" ] || [ "$cfg" = unreadable ] || [ "$eff" = unreadable ]; then echo infra; return; fi
+  if [ "$cfg" != 0 ] && ! h2_uint "$cfg"; then echo infra; return; fi
+  if [ "$eff" != max ] && ! h2_uint "$eff"; then echo infra; return; fi
+  if [ "$cfg" = 0 ]; then
+    if [ "$eff" = max ]; then echo not_blocked; else echo infra; fi
+    return
+  fi
+  if [ "$eff" = max ] || [ "$cfg" != "$eff" ]; then echo infra; return; fi
+  if [ "$cfg" = 128 ]; then echo probe; return; fi
+  echo not_blocked
+}
+h2_attribute(){
+  local started=$1 denied=$2 ev0=$3 ev1=$4 cur=$5 delta=0
+  h2_uint "$started" || { echo infra; return; }
+  h2_uint "$cur" || { echo infra; return; }
+  [ "$denied" = 0 ] || [ "$denied" = 1 ] || { echo infra; return; }
+  [ "$started" -le 160 ] || { echo infra; return; }
+  if [ "$cur" -gt 128 ] || [ "$started" -gt 128 ]; then echo not_enforced; return; fi
+  if h2_uint "$ev0" && h2_uint "$ev1"; then
+    [ "$ev1" -gt "$ev0" ] && delta=1
+  elif [ "$ev0" != missing ] || [ "$ev1" != missing ]; then
+    echo infra
+    return
+  fi
+  if [ "$delta" = 1 ]; then echo contained; return; fi
+  if [ "$denied" = 1 ] && [ "$cur" -ge 96 ] && [ "$cur" -le 128 ]; then echo contained; return; fi
+  if [ "$started" -eq 160 ] && [ "$denied" = 0 ]; then echo not_enforced; return; fi
+  echo infra
+}
+h2_docker(){
+  local deadline=${H2_DOCKER_DEADLINE:-12}
+  if [ -n "${H2_DOCKER:-}" ]; then
+    timeout --kill-after=1 "$deadline" "$H2_DOCKER" "$@"
+  else
+    # shellcheck disable=SC2086
+    timeout --kill-after=1 "$deadline" $D "$@"
+  fi
+}
+h2_write_inner(){
+  cat > "$1" << 'EOF'
+#!/bin/sh
+i=0
+while [ ! -f /work/h2-go ]; do
+  i=$((i + 1))
+  if [ "$i" -gt 250 ]; then
+    printf '%s\n' 'wait-expired' > /work/h2-result
+    exit 2
+  fi
+  sleep 0.1
+done
+go=$(cat /work/h2-go 2>/dev/null || true)
+if [ "$go" != probe ]; then
+  printf '%s\n' 'skipped' > /work/h2-result
+  exit 0
+fi
+ev_field(){ awk '$1=="max"{print $2; found=1} END{if (!found) print "missing"}' "$1" 2>/dev/null || echo missing; }
+ev0=$(ev_field /sys/fs/cgroup/pids.events)
+started=0
+denied=0
+i=0
+pids=""
+while [ "$i" -lt 160 ]; do
+  if sleep 2 >/dev/null 2>&1 & then
+    pids="$pids $!"
+    started=$((started + 1))
+  else
+    denied=1
+    break
+  fi
+  i=$((i + 1))
+done
+sleep 0.2
+ev1=$(ev_field /sys/fs/cgroup/pids.events)
+cur=$(cat /sys/fs/cgroup/pids.current 2>/dev/null || echo missing)
+for p in $pids; do kill "$p" 2>/dev/null || true; done
+wait 2>/dev/null || true
+printf 'started=%s denied=%s ev0=%s ev1=%s cur=%s\n' "$started" "$denied" "$ev0" "$ev1" "$cur" > /work/h2-result
+exit 0
+EOF
+  chmod 755 "$1"
+}
+h2_reset_run(){
+  h2_emitted=0
+  h2_in_trap=0
+  h2_cleaned=0
+  h2_client_pid=
+  h2_watch_pid=
+  h2_cid=
+  h2_dir=
+  h2_cidfile=
+}
+h2_reap_all(){
+  local pid
+  for pid in ${h2_watch_pid:-} ${h2_client_pid:-}; do
+    [ -n "$pid" ] || continue
+    kill -9 -- -"$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+  done
+  wait 2>/dev/null || true
+  h2_watch_pid=
+  h2_client_pid=
+}
+h2_cleanup(){
+  local cid="" state=""
+  [ "${h2_cleaned:-0}" = 1 ] && return 0
+  h2_cleaned=1
+  rm -f "${h2_dir:-}/armed"
+  if [ -n "${h2_cidfile:-}" ] && [ -f "$h2_cidfile" ]; then
+    cid=$(tr -d '[:space:]' < "$h2_cidfile")
+  fi
+  case $cid in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+      h2_docker stop -t 1 "$cid" >/dev/null 2>&1 || true
+      h2_docker rm -f "$cid" >/dev/null 2>&1 || true
+      state=$(h2_docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null || echo gone)
+      case $state in
+        true)
+          h2_reap_all
+          return 1
+          ;;
+      esac
+      ;;
+  esac
+  h2_reap_all
+  rm -f "$W/h2-go" "$W/h2-ready" "$W/h2-result" "$W/h2-inner.sh"
+  return 0
+}
+h2_say_infra(){
+  [ "${h2_emitted:-0}" = 1 ] && return 0
+  h2_emitted=1
+  h2_note verdict-infra
+  res H2-INFRA "ERROR"
+}
+h2_say_h2(){
+  [ "${h2_emitted:-0}" = 1 ] && return 0
+  h2_emitted=1
+  h2_note verdict
+  res H2 "$1"
+}
+h2_after_cleanup(){
+  local kind=$1 detail=$2
+  h2_note cleanup-begin
+  if ! h2_cleanup; then
+    h2_note cleanup-fail
+    h2_say_infra
+    return 1
+  fi
+  h2_note cleanup-ok
+  case $kind in
+    contained) h2_say_h2 "CONTAINED (pids limit 128, controller denied)"; return 0;;
+    not_blocked) h2_say_h2 "NOT BLOCKED ($detail)"; return 0;;
+    *) h2_say_infra; return 1;;
+  esac
+}
+h2_trap(){
+  local why=$1
+  [ "${h2_in_trap:-0}" = 1 ] && return 0
+  h2_in_trap=1
+  h2_cleanup || true
+  if [ "$why" != EXIT ]; then
+    h2_say_infra
+    exit 1
+  fi
+}
+h2_arm_watchdog(){
+  set -m
+  (
+    sleep "${H2_WATCHDOG_SECS:-40}"
+    if [ -f "${h2_dir:-}/armed" ] && [ -f "${h2_cidfile:-}" ]; then
+      cid=$(tr -d '[:space:]' < "$h2_cidfile")
+      case $cid in
+        [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*)
+          h2_docker rm -f "$cid" >/dev/null 2>&1 || true
+          ;;
+      esac
+    fi
+  ) &
+  h2_watch_pid=$!
+  set +m
+  echo 1 > "$h2_dir/armed"
+}
+h2_wait_cid(){
+  local i=0 limit got run
+  limit=$(( ${H2_CID_DEADLINE:-15} * 10 ))
+  while [ "$i" -lt "$limit" ]; do
+    if [ -f "$h2_cidfile" ]; then
+      h2_cid=$(tr -d '[:space:]' < "$h2_cidfile")
+      if printf '%s' "$h2_cid" | grep -Eq '^[0-9a-f]{12,64}$'; then
+        got=$(h2_docker inspect -f '{{.Id}}' "$h2_cid" 2>/dev/null || true)
+        got=$(printf '%s' "$got" | tr -d '[:space:]')
+        run=$(h2_docker inspect -f '{{.State.Running}}' "$h2_cid" 2>/dev/null || true)
+        if [ "$got" = "$h2_cid" ] && [ "$run" = true ]; then
+          h2_note cid-ok
+          return 0
+        fi
+      fi
+    fi
+    i=$((i + 1))
+    sleep 0.1
+  done
+  return 1
+}
+h2_read_cap(){
+  h2_cfg=$(h2_docker inspect -f '{{.HostConfig.PidsLimit}}' "$h2_cid" 2>/dev/null || echo unreadable)
+  h2_eff=$(h2_docker exec "$h2_cid" cat /sys/fs/cgroup/pids.max 2>/dev/null || echo unreadable)
+  h2_cfg=$(printf '%s' "$h2_cfg" | tr -d '[:space:]')
+  h2_eff=$(printf '%s' "$h2_eff" | tr -d '[:space:]')
+  [ -n "$h2_cfg" ] || h2_cfg=unreadable
+  [ -n "$h2_eff" ] || h2_eff=unreadable
+  h2_note inspect
+}
+h2_start_target(){
+  h2_dir=$(mktemp -d)
+  chmod 700 "$h2_dir"
+  h2_cidfile=$h2_dir/cid
+  rm -f "$W/h2-go" "$W/h2-ready" "$W/h2-result"
+  set -m
+  if [ "${H2_LAUNCH:-real}" = real ]; then
+    h2_write_inner "$W/h2-inner.sh"
+    KEEL_CIDFILE=$h2_cidfile $K proto h2 rw 'sh /work/h2-inner.sh' &
+  else
+    "$H2_DOCKER" run --cidfile "$h2_cidfile" sh -c 'wait' &
+  fi
+  h2_client_pid=$!
+  set +m
+  h2_arm_watchdog
+}
+h2_execute(){
+  local class line started denied ev0 ev1 cur attr i limit
+  h2_reset_run
+  trap 'h2_trap TERM' TERM
+  trap 'h2_trap INT' INT
+  trap 'h2_trap EXIT' EXIT
+  mkdir -p "$W"
+  h2_start_target
+  if ! h2_wait_cid; then
+    h2_after_cleanup infra ""
+    h2_rc=1
+  else
+    h2_read_cap
+    class=$(h2_classify "$h2_cfg" "$h2_eff")
+    case $class in
+      infra)
+        h2_after_cleanup infra ""
+        h2_rc=1
+        ;;
+      not_blocked)
+        h2_note no-release
+        if [ "$h2_cfg" = 0 ]; then
+          h2_after_cleanup not_blocked "no product pids limit" || h2_rc=1
+        else
+          h2_after_cleanup not_blocked "product pids limit wrong" || h2_rc=1
+        fi
+        [ "${h2_rc:-0}" = 1 ] || h2_rc=0
+        ;;
+      probe)
+        h2_note release
+        printf '%s\n' probe > "$W/h2-go"
+        i=0
+        limit=$(( ${H2_PROBE_DEADLINE:-20} * 10 ))
+        while [ "$i" -lt "$limit" ] && [ ! -s "$W/h2-result" ]; do
+          i=$((i + 1))
+          sleep 0.1
+        done
+        line=$(head -n 1 "$W/h2-result" 2>/dev/null || true)
+        if ! printf '%s' "$line" | grep -Eq '^started=[0-9]{1,4} denied=[01] ev0=([0-9]{1,7}|missing) ev1=([0-9]{1,7}|missing) cur=([0-9]{1,7}|missing)$'; then
+          h2_after_cleanup infra ""
+          h2_rc=1
+        else
+          set -- $line
+          started=${1#started=}
+          denied=${2#denied=}
+          ev0=${3#ev0=}
+          ev1=${4#ev1=}
+          cur=${5#cur=}
+          attr=$(h2_attribute "$started" "$denied" "$ev0" "$ev1" "$cur")
+          case $attr in
+            contained) h2_after_cleanup contained "" || h2_rc=1; [ "${h2_rc:-0}" = 1 ] || h2_rc=0;;
+            not_enforced) h2_after_cleanup not_blocked "pids limit 128 not enforced" || h2_rc=1; [ "${h2_rc:-0}" = 1 ] || h2_rc=0;;
+            *) h2_after_cleanup infra "" || true; h2_rc=1;;
+          esac
+        fi
+        ;;
+      *)
+        h2_after_cleanup infra ""
+        h2_rc=1
+        ;;
+    esac
+  fi
+  h2_reap_all
+  trap - EXIT INT TERM
+  return "${h2_rc:-1}"
+}
+run_h2(){
+  fresh
+  H2_DOCKER=
+  H2_LAUNCH=real
+  h2_execute
+}
+
+h2_write_fake(){
+  cat > "$1" << 'EOF'
+#!/bin/sh
+set -u
+log=${H2_FAKE_LOG:?}
+state=${H2_FAKE_STATE:?}
+work=${H2_WORK:?}
+mode=${H2_FAKE_MODE:?}
+printf '%s\n' "$*" >> "$log"
+cmd=$1
+shift
+mine=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+other=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+mkdir -p "$state"
+write_cid(){
+  if [ -f "$work/h2-go" ]; then echo go-before-cid >> "$log"; fi
+  printf '%s\n' "$mine" > "$1"
+  echo running > "$state/phase"
+}
+case "$cmd" in
+  run)
+    cidfile=
+    while [ $# -gt 0 ]; do
+      if [ "$1" = --cidfile ]; then cidfile=${2:-}; shift 2; continue; fi
+      shift
+    done
+    [ -n "${cidfile:-}" ] || exit 2
+    if [ "$mode" = nocid ] || [ "$mode" = hang-before-cid ]; then
+      i=0
+      while [ "$i" -lt 400 ]; do
+        [ -f "$state/stop" ] && exit 0
+        i=$((i + 1))
+        sleep 0.05
+      done
+      exit 0
+    fi
+    if [ "$mode" = delay-cid ]; then sleep 0.4; fi
+    if [ "$mode" = rm-hang ]; then
+      write_cid "$cidfile"
+      i=0
+      while [ "$i" -lt 400 ]; do
+        [ -f "$state/stop" ] && exit 0
+        i=$((i + 1))
+        sleep 0.05
+      done
+      exit 0
+    fi
+    write_cid "$cidfile"
+    if [ "$mode" = client-dead ]; then exit 0; fi
+    i=0
+    while [ "$i" -lt 400 ]; do
+      [ -f "$state/stop" ] && exit 0
+      if [ -f "$work/h2-go" ]; then
+        go=$(cat "$work/h2-go" 2>/dev/null || true)
+        if [ "$go" = probe ]; then
+          printf '%s\n' 'started=20 denied=1 ev0=0 ev1=1 cur=120' > "$work/h2-result"
+        fi
+        exit 0
+      fi
+      i=$((i + 1))
+      sleep 0.05
+    done
+    exit 0
+    ;;
+  inspect)
+    fmt=
+    cid=
+    while [ $# -gt 0 ]; do
+      if [ "$1" = -f ]; then fmt=${2:-}; shift 2; continue; fi
+      case $1 in
+        -*) shift;;
+        *) cid=$1; shift;;
+      esac
+    done
+    [ "${cid:-}" = "$mine" ] || exit 1
+    if [ -f "$state/stop" ]; then exit 1; fi
+    case ${fmt:-} in
+      '{{.State.Running}}') echo true;;
+      '{{.Id}}') printf '%s\n' "$mine";;
+      '{{.HostConfig.PidsLimit}}')
+        case $mode in
+          higher) echo 256;;
+          lower) echo 64;;
+          unlimited|client-dead|delay-cid) echo 0;;
+          unreadable) exit 1;;
+          *) echo 128;;
+        esac
+        ;;
+      *) exit 1;;
+    esac
+    ;;
+  exec)
+    cid=
+    while [ $# -gt 0 ]; do
+      case $1 in
+        -*) shift;;
+        *) cid=$1; shift; break;;
+      esac
+    done
+    [ "${cid:-}" = "$mine" ] || exit 1
+    text="$*"
+    case $text in
+      *pids.max*)
+        case $mode in
+          higher) echo 256;;
+          lower) echo 64;;
+          unlimited|client-dead|delay-cid) echo max;;
+          disagree) echo max;;
+          unreadable) exit 1;;
+          *) echo 128;;
+        esac
+        ;;
+      *pids.events*) printf '%s\n' 'max 0';;
+      *) exit 1;;
+    esac
+    ;;
+  stop) exit 0;;
+  rm)
+    cid=
+    while [ $# -gt 0 ]; do
+      case $1 in
+        -*) shift;;
+        *) cid=$1; shift;;
+      esac
+    done
+    if [ "${cid:-}" = "$other" ]; then echo rm-other >> "$log"; exit 0; fi
+    if [ "${cid:-}" != "$mine" ]; then echo rm-unexpected >> "$log"; exit 1; fi
+    if [ "$mode" = rm-fail ]; then exit 1; fi
+    if [ "$mode" = rm-hang ]; then sleep 30; exit 1; fi
+    if [ "$mode" = rm-lie ]; then exit 0; fi
+    echo 1 > "$state/stop"
+    exit 0
+    ;;
+  *) exit 0;;
+esac
+EOF
+  chmod 755 "$1"
+}
+h2_case_begin(){
+  local mode=$1
+  h2_case_root=$(mktemp -d)
+  W=$h2_case_root/work
+  mkdir -p "$W"
+  H2_FAKE_MODE=$mode
+  H2_FAKE_LOG=$h2_case_root/docker.log
+  H2_FAKE_STATE=$h2_case_root/state
+  H2_WORK=$W
+  H2_TRACE=$h2_case_root/trace
+  H2_DOCKER=$h2_case_root/docker
+  H2_LAUNCH=fake
+  H2_CID_DEADLINE=${H2_CID_DEADLINE_CASE:-3}
+  H2_PROBE_DEADLINE=${H2_PROBE_DEADLINE_CASE:-3}
+  H2_DOCKER_DEADLINE=${H2_DOCKER_DEADLINE_CASE:-3}
+  H2_WATCHDOG_SECS=30
+  : > "$H2_FAKE_LOG"
+  : > "$H2_TRACE"
+  mkdir -p "$H2_FAKE_STATE"
+  h2_write_fake "$H2_DOCKER"
+  export H2_FAKE_MODE H2_FAKE_LOG H2_FAKE_STATE H2_WORK H2_TRACE H2_DOCKER H2_LAUNCH
+}
+h2_case_end(){
+  if [ -n "${h2_watch_pid:-}" ]; then kill "$h2_watch_pid" 2>/dev/null || true; wait "$h2_watch_pid" 2>/dev/null || true; fi
+  if [ -n "${h2_client_pid:-}" ]; then kill "$h2_client_pid" 2>/dev/null || true; wait "$h2_client_pid" 2>/dev/null || true; fi
+  rm -rf "${h2_case_root:-}"
+  h2_case_root=
+}
+h2_fail(){ echo "h2-self: FAIL $1" >&2; h2_self_failed=1; }
+h2_self_test(){
+  local t0 out rc saved_w
+  t0=$(date +%s)
+  h2_self_failed=0
+  saved_w=$W
+  set +e
+  h2_expect(){ if [ "$2" != "$3" ]; then h2_fail "$1 got [$2] want [$3]"; fi; }
+  h2_expect class128 "$(h2_classify 128 128)" probe
+  h2_expect class-max "$(h2_classify 0 max)" not_blocked
+  h2_expect class-low "$(h2_classify 64 64)" not_blocked
+  h2_expect class-high "$(h2_classify 256 256)" not_blocked
+  h2_expect class-unread "$(h2_classify unreadable unreadable)" infra
+  h2_expect class-empty "$(h2_classify '' '')" infra
+  h2_expect class-disagree "$(h2_classify 128 max)" infra
+  h2_expect class-safety "$(h2_classify 0 max)" not_blocked
+  h2_expect attr-deny "$(h2_attribute 20 1 0 1 120)" contained
+  h2_expect attr-event "$(h2_attribute 20 0 0 2 100)" contained
+  h2_expect attr-parent "$(h2_attribute 4 0 0 0 4)" infra
+  h2_expect attr-ceiling "$(h2_attribute 160 0 0 0 160)" not_enforced
+  h2_expect attr-over "$(h2_attribute 20 1 0 1 200)" not_enforced
+  h2_run_case(){
+    h2_case_begin "$1"
+    out=$(h2_execute)
+    rc=$?
+    h2_case_out=$out
+    h2_case_rc=$rc
+    h2_case_trace=$(cat "$H2_TRACE" 2>/dev/null || true)
+    h2_case_log=$(cat "$H2_FAKE_LOG" 2>/dev/null || true)
+    h2_case_end
+  }
+  h2_run_case 128
+  h2_expect live128-rc "$h2_case_rc" 0
+  h2_expect live128-out "$h2_case_out" "RESULT H2: CONTAINED (pids limit 128, controller denied)"
+  printf '%s\n' "$h2_case_trace" | grep -q '^release$' || h2_fail "live128 no release"
+  printf '%s\n' "$h2_case_trace" | awk 'BEGIN{ok=0} /^cleanup-ok$/{ok=1} /^verdict$/{if(!ok) bad=1} END{exit bad+0}' || h2_fail "live128 verdict before cleanup"
+  printf '%s\n' "$h2_case_log" | grep -q 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' && h2_fail "live128 touched other cid"
+  h2_run_case unlimited
+  h2_expect live-max-rc "$h2_case_rc" 0
+  h2_expect live-max-out "$h2_case_out" "RESULT H2: NOT BLOCKED (no product pids limit)"
+  printf '%s\n' "$h2_case_trace" | grep -q '^no-release$' || h2_fail "unlimited released a load"
+  printf '%s\n' "$h2_case_log" | grep -q 'go-before-cid' && h2_fail "go before cid"
+  h2_run_case lower
+  h2_expect live-low "$h2_case_out" "RESULT H2: NOT BLOCKED (product pids limit wrong)"
+  h2_run_case higher
+  h2_expect live-high "$h2_case_out" "RESULT H2: NOT BLOCKED (product pids limit wrong)"
+  h2_run_case unreadable
+  h2_expect unread-rc "$h2_case_rc" 1
+  h2_expect unread-out "$h2_case_out" "RESULT H2-INFRA: ERROR"
+  printf '%s\n' "$h2_case_out" | grep -q '^RESULT H2:' && h2_fail "unreadable emitted H2"
+  H2_CID_DEADLINE_CASE=2
+  h2_run_case delay-cid
+  H2_CID_DEADLINE_CASE=3
+  h2_expect delay-out "$h2_case_out" "RESULT H2: NOT BLOCKED (no product pids limit)"
+  printf '%s\n' "$h2_case_log" | grep -q 'go-before-cid' && h2_fail "delay go before cid"
+  H2_CID_DEADLINE_CASE=1
+  h2_run_case nocid
+  H2_CID_DEADLINE_CASE=3
+  h2_expect nocid-rc "$h2_case_rc" 1
+  printf '%s\n' "$h2_case_out" | grep -q '^RESULT H2:' && h2_fail "nocid emitted H2"
+  printf '%s\n' "$h2_case_out" | grep -q '^RESULT H2-INFRA: ERROR$' || h2_fail "nocid missing infra"
+  h2_run_case rm-fail
+  h2_expect rmfail-rc "$h2_case_rc" 1
+  printf '%s\n' "$h2_case_out" | grep -q '^RESULT H2:' && h2_fail "rm-fail emitted H2"
+  h2_run_case rm-lie
+  h2_expect rmlie-rc "$h2_case_rc" 1
+  printf '%s\n' "$h2_case_out" | grep -q '^RESULT H2:' && h2_fail "rm-lie emitted H2"
+  h2_run_case client-dead
+  h2_expect dead-out "$h2_case_out" "RESULT H2: NOT BLOCKED (no product pids limit)"
+  printf '%s\n' "$h2_case_log" | grep -q 'rm -f 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' || h2_fail "client-dead did not remove cid"
+  H2_DOCKER_DEADLINE_CASE=1
+  hang_dir=$(mktemp -d)
+  (
+    h2_run_case rm-hang
+    printf '%s\n' "$h2_case_rc" > "$hang_dir/rc"
+    printf '%s\n' "$h2_case_out" > "$hang_dir/out"
+  ) &
+  hang_pid=$!
+  i=0
+  while [ "$i" -lt 80 ]; do
+    kill -0 "$hang_pid" 2>/dev/null || break
+    i=$((i + 1))
+    sleep 0.1
+  done
+  if kill -0 "$hang_pid" 2>/dev/null; then
+    kill -9 "$hang_pid" 2>/dev/null || true
+    wait "$hang_pid" 2>/dev/null || true
+    h2_fail "rm-hang hard deadline"
+    h2_case_rc=1
+    h2_case_out=
+  else
+    wait "$hang_pid" 2>/dev/null || true
+    h2_case_rc=$(cat "$hang_dir/rc" 2>/dev/null || echo 1)
+    h2_case_out=$(cat "$hang_dir/out" 2>/dev/null || true)
+  fi
+  rm -rf "$hang_dir"
+  H2_DOCKER_DEADLINE_CASE=3
+  h2_expect hang-rc "$h2_case_rc" 1
+  printf '%s\n' "$h2_case_out" | grep -q '^RESULT H2:' && h2_fail "rm-hang emitted H2"
+  h2_signal_case(){
+    local sig=$1
+    h2_case_begin hang-before-cid
+    H2_CID_DEADLINE=6
+    (
+      h2_execute
+    ) >"$h2_case_root/sig.out" 2>/dev/null &
+    sig_pid=$!
+    sleep 0.4
+    kill "-$sig" "$sig_pid" 2>/dev/null || true
+    wait "$sig_pid" 2>/dev/null || true
+    sig_out=$(cat "$h2_case_root/sig.out" 2>/dev/null || true)
+    printf '%s\n' "$sig_out" | grep -q '^RESULT H2:' && h2_fail "$sig emitted H2"
+    h2_case_end
+  }
+  h2_signal_case TERM
+  h2_signal_case INT
+  python3 - "$HERE" << 'PY' || h2_fail "judge"
+import sys
+sys.path.insert(0, sys.argv[1])
+import mutate
+import mutate_shards as ms
+def tag(text):
+    red, _detail = mutate.judge(["H2"], text)
+    return mutate.verdict_tag(["H2"], red), red
+kill, red = tag("RESULT A1: BLOCKED (x)\nRESULT H2: NOT BLOCKED (no product pids limit)\n")
+if kill != "yes" or "H2" not in red:
+    raise SystemExit("not-blocked was not a kill")
+no, red = tag("RESULT A1: BLOCKED (x)\nRESULT H2-INFRA: ERROR\n")
+if no != "NO" or "H2" in red:
+    raise SystemExit("infra earned an H2 kill")
+false_kill, red = tag("RESULT H2: ERROR\n")
+if false_kill != "yes" or "H2" not in red:
+    raise SystemExit("grader no longer treats H2 ERROR as red")
+base = ms.classify_baseline("1", "test-attacks.sh", [("M26", ["H2"])], "RESULT H2: CONTAINED (pids limit 128, controller denied)\n", 0)
+if base is not None:
+    raise SystemExit("baseline contained rejected")
+bad = ms.classify_baseline("1", "test-attacks.sh", [("M26", ["H2"])], "RESULT H2-INFRA: ERROR\n", 1)
+if not bad or bad.get("reason") != "status":
+    raise SystemExit("baseline accepted nonzero")
+PY
+  python3 - "$SETUP/keel.sh" << 'PY' || h2_fail "anchor"
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+old = '--pids-limit "${PIDS:-128}" '
+if text.count(old) != 1:
+    raise SystemExit("anchor count")
+PY
+  python3 - "$HERE/test-attacks.sh" << 'PY' || h2_fail "bomb"
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+needle = "b " + "| b"
+if needle in text:
+    raise SystemExit("bomb")
+PY
+  W=$saved_w
+  if [ "$h2_self_failed" -ne 0 ]; then
+    echo "h2-self: FAIL" >&2
+    return 1
+  fi
+  echo "h2-self: elapsed $(( $(date +%s) - t0 ))s"
+  echo "h2-self: ok"
+  return 0
+}
+if [ "${1:-}" = --h2-self-test ] || [ "${KEEL_NS:-base}" = base ]; then
+  h2_self_test || exit 1
+fi
+if [ "${1:-}" = --h2-self-test ]; then
+  exit 0
+fi
+
 echo "### MODE-A1 directly executed script mode"
 mode_fix=$(mktemp -d)
 git -C "$mode_fix" init -q
@@ -194,12 +840,8 @@ out=$($K proto h rw 'mkdir -p /tmp/x; mount -t tmpfs t /tmp/x 2>&1 && echo MOUNT
 if ! echo "$out" | grep -qE 'MOUNT-OK|CHOWN-OK|UNSHARE-OK' && echo "$out" | grep -q 'CapEff:.0000000000000000' && echo "$out" | grep -q 'CapBnd:.0000000000000000' && echo "$out" | grep -q 'NoNewPrivs:.1'; then res H1 "BLOCKED (mount/chown/unshare denied, CapEff=0, CapBnd=0, NoNewPrivs=1)"
 elif [ "$(uname -s)" = Darwin ] && ! echo "$out" | grep -qE 'MOUNT-OK|UNSHARE-OK' && echo "$out" | grep -q 'CapEff:.0000000000000000' && echo "$out" | grep -q 'CapBnd:.0000000000000000' && echo "$out" | grep -q 'NoNewPrivs:.1'; then res H1 "BLOCKED (mount/unshare denied, CapEff=0, CapBnd=0, NoNewPrivs=1; chown on a Docker Desktop bind mount is emulated by virtiofs and does not change host ownership)"
 else res H1 "NOT BLOCKED"; fi
-echo "### H2 fork bomb"; fresh; t0=$(date +%s)
-run_timeout 120 "$K" proto bomb rw 'b(){ b | b & }; (b) 2>/dev/null & sleep 8; echo "pids now: $(cat /sys/fs/cgroup/pids.current 2>/dev/null)/$(cat /sys/fs/cgroup/pids.max 2>/dev/null)"; kill -9 -1 2>/dev/null; echo survived'
-rc=$?; el=$(( $(date +%s)-t0 )); hf=$(sh -c 'echo yes'); echo "  rc=$rc elapsed=${el}s host load: $(uptime | sed 's/.*load averages*: *//'); host can fork: $hf"
-pm=$($K proto pchk ro 'cat /sys/fs/cgroup/pids.max 2>/dev/null || echo unknown'); pm=$(echo "$pm" | tail -1); echo "  pids.max=$pm"
-case $pm in ''|*[!0-9]*) res H2 "NOT BLOCKED (no pids limit: pids.max=$pm)";; *) case $rc in 0|2|137) okrc=1;; *) okrc=0;; esac   # 2/137: the in-container shell itself hit pids.max = limit working
-  if [ $okrc = 1 ] && [ "$hf" = yes ] && [ $el -lt 110 ]; then res H2 "CONTAINED (pids limit, container finished in ${el}s, host forks)"; else res H2 "NOT BLOCKED (rc=$rc elapsed=$el)"; fi;; esac
+echo "### H2 pids controller"
+run_h2 || exit $?
 echo "### H5 cpu limit"
 cm=$($K proto cchk ro 'cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo unknown'); cm=$(echo "$cm" | tail -1); echo "  cpu.max=$cm"
 case $cm in max*|unknown|'') res H5 "NOT BLOCKED (no cpu quota: $cm)";; *) res H5 "CONTAINED (cpu quota $cm)";; esac
