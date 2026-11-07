@@ -70,9 +70,11 @@ h2_call_seconds(){
   echo "$left"
 }
 h2_docker(){
-  local deadline
+  local deadline pid rc outf errf
   if [ "${h2_phase:-run}" = cleanup ]; then
     deadline=${H2_CLEANUP_CALL:-4}
+  elif [ "${h2_phase:-run}" = cap ]; then
+    deadline=${H2_CAP_CALL:-${H2_DOCKER_DEADLINE:-12}}
   elif [ -n "${h2_call_budget:-}" ]; then
     deadline=$h2_call_budget
   else
@@ -81,12 +83,55 @@ h2_docker(){
   if [ "$deadline" -le 0 ]; then
     return 124
   fi
+  # timeout puts itself in a new process group. Waiting for it in the
+  # foreground defers TERM/INT until that deadline, and its stdout must not
+  # hold a command-substitution pipe open. wait stays interruptible and still
+  # returns timeout's status, including 124. The pid file lets the trap reap it.
+  if [ -n "${h2_dir:-}" ]; then
+    outf=$(mktemp "$h2_dir/out.XXXXXX")
+    errf=$(mktemp "$h2_dir/err.XXXXXX")
+  else
+    outf=$(mktemp)
+    errf=$(mktemp)
+  fi
   if [ -n "${H2_DOCKER:-}" ]; then
-    timeout --kill-after=1 "$deadline" "$H2_DOCKER" "$@"
+    timeout --kill-after=1 "$deadline" "$H2_DOCKER" "$@" >"$outf" 2>"$errf" &
   else
     # shellcheck disable=SC2086
-    timeout --kill-after=1 "$deadline" $D "$@"
+    timeout --kill-after=1 "$deadline" $D "$@" >"$outf" 2>"$errf" &
   fi
+  pid=$!
+  if [ -n "${h2_dir:-}" ]; then printf '%s\n' "$pid" > "$h2_dir/docker.pid"; fi
+  if [ -n "${H2_FAKE_STATE:-}" ]; then printf '%s\n' "$pid" > "$H2_FAKE_STATE/docker.pid"; fi
+  wait "$pid"
+  rc=$?
+  rm -f "${h2_dir:-}/docker.pid" "${H2_FAKE_STATE:-}/docker.pid"
+  cat "$outf"
+  cat "$errf" >&2
+  rm -f "$outf" "$errf"
+  return "$rc"
+}
+h2_past_acquire(){
+  local now left
+  now=$(h2_ms)
+  left=$(( ${H2_CID_DEADLINE:-15} * 1000 - (now - h2_clock_ms) ))
+  [ "$left" -le 0 ]
+}
+h2_acquire_call(){
+  h2_call_budget=$(h2_call_seconds "${H2_CID_DEADLINE:-15}" "${H2_CLEANUP_RESERVE:-3}")
+  if [ "${h2_call_budget:-0}" -le 0 ]; then
+    h2_status=124
+    h2_out=
+    return 124
+  fi
+  h2_out=$(h2_docker "$@" 2>/dev/null)
+  h2_status=$?
+  if h2_past_acquire; then
+    if [ "$h2_status" -eq 0 ]; then
+      h2_status=124
+    fi
+  fi
+  return "$h2_status"
 }
 h2_cid_hex(){ printf '%s' "$1" | grep -Eq '^[0-9a-f]{12,64}$'; }
 h2_field(){
@@ -153,8 +198,30 @@ h2_reset_run(){
   h2_dir=
   h2_cidfile=
 }
+h2_kill_pidfile(){
+  local f=$1 pid
+  [ -n "$f" ] && [ -f "$f" ] || return 0
+  pid=$(tr -d '[:space:]' < "$f")
+  rm -f "$f"
+  [ -n "$pid" ] || return 0
+  kill -9 -- -"$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+}
+h2_signal_stop(){
+  local pid=$1 f recorded
+  h2_kill_pidfile "${H2_FAKE_STATE:-}/docker.pid"
+  for f in client.pid watch.pid; do
+    [ -f "${H2_FAKE_STATE:-}/$f" ] || continue
+    recorded=$(tr -d '[:space:]' < "$H2_FAKE_STATE/$f")
+    [ -n "$recorded" ] || continue
+    kill -9 -- -"$recorded" 2>/dev/null || kill -9 "$recorded" 2>/dev/null || true
+  done
+  kill -9 -- -"$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
 h2_reap_all(){
   local pid
+  h2_kill_pidfile "${h2_dir:-}/docker.pid"
+  h2_kill_pidfile "${H2_FAKE_STATE:-}/docker.pid"
   for pid in ${h2_watch_pid:-} ${h2_client_pid:-}; do
     [ -n "$pid" ] || continue
     kill -9 -- -"$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
@@ -259,6 +326,9 @@ h2_trap(){
   local why=$1
   [ "${h2_in_trap:-0}" = 1 ] && return 0
   h2_in_trap=1
+  h2_kill_pidfile "${h2_dir:-}/docker.pid"
+  h2_kill_pidfile "${H2_FAKE_STATE:-}/docker.pid"
+  h2_note "trap-$why"
   h2_cleanup || true
   if [ "$why" != EXIT ]; then
     h2_say_infra
@@ -281,44 +351,65 @@ h2_arm_watchdog(){
   echo 1 > "$h2_dir/armed"
 }
 h2_wait_cid(){
-  local got run call rc
+  local got run rc
+  h2_phase=acquire
   h2_clock_start
+  rc=1
   while true; do
-    call=$(h2_call_seconds "${H2_CID_DEADLINE:-15}" "${H2_CLEANUP_RESERVE:-3}")
-    if [ "$call" -le 0 ]; then
-      return 1
+    if [ "$(h2_call_seconds "${H2_CID_DEADLINE:-15}" "${H2_CLEANUP_RESERVE:-3}")" -le 0 ] || h2_past_acquire; then
+      break
     fi
-    h2_call_budget=$call
-    if [ -f "$h2_cidfile" ]; then
-      h2_cid=$(tr -d '[:space:]' < "$h2_cidfile")
-      if h2_cid_hex "$h2_cid"; then
-        got=$(h2_docker inspect -f '{{.Id}}' "$h2_cid" 2>/dev/null || true)
-        rc=$?
-        if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ] || [ "$rc" -eq 143 ]; then
-          return 1
-        fi
-        got=$(printf '%s' "$got" | tr -d '[:space:]')
-        run=$(h2_docker inspect -f '{{.State.Running}}' "$h2_cid" 2>/dev/null || true)
-        rc=$?
-        if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ] || [ "$rc" -eq 143 ]; then
-          return 1
-        fi
-        if [ "$got" = "$h2_cid" ] && [ "$run" = true ]; then
-          h2_note cid-ok
-          return 0
-        fi
-      fi
+    if [ ! -f "$h2_cidfile" ]; then
+      sleep 0.1
+      continue
+    fi
+    h2_cid=$(tr -d '[:space:]' < "$h2_cidfile")
+    if ! h2_cid_hex "$h2_cid"; then
+      sleep 0.1
+      continue
+    fi
+    h2_acquire_call inspect -f '{{.Id}}' "$h2_cid"
+    if [ "$h2_status" -eq 124 ] || [ "$h2_status" -eq 137 ] || [ "$h2_status" -eq 143 ]; then
+      break
+    fi
+    got=$(printf '%s' "$h2_out" | tr -d '[:space:]')
+    h2_acquire_call inspect -f '{{.State.Running}}' "$h2_cid"
+    if [ "$h2_status" -eq 124 ] || [ "$h2_status" -eq 137 ] || [ "$h2_status" -eq 143 ]; then
+      break
+    fi
+    run=$(printf '%s' "$h2_out" | tr -d '[:space:]')
+    if [ "$h2_status" -eq 0 ] && [ "$got" = "$h2_cid" ] && [ "$run" = true ] && ! h2_past_acquire; then
+      h2_note cid-ok
+      rc=0
+      break
+    fi
+    if h2_past_acquire; then
+      break
     fi
     sleep 0.1
   done
+  unset h2_call_budget
+  h2_phase=cap
+  return "$rc"
 }
 h2_read_cap(){
-  h2_cfg=$(h2_docker inspect -f '{{.HostConfig.PidsLimit}}' "$h2_cid" 2>/dev/null || echo unreadable)
-  h2_eff=$(h2_docker exec "$h2_cid" cat /sys/fs/cgroup/pids.max 2>/dev/null || echo unreadable)
-  h2_cfg=$(printf '%s' "$h2_cfg" | tr -d '[:space:]')
-  h2_eff=$(printf '%s' "$h2_eff" | tr -d '[:space:]')
-  [ -n "$h2_cfg" ] || h2_cfg=unreadable
-  [ -n "$h2_eff" ] || h2_eff=unreadable
+  local rc
+  h2_phase=cap
+  unset h2_call_budget
+  h2_out=$(h2_docker inspect -f '{{.HostConfig.PidsLimit}}' "$h2_cid" 2>/dev/null)
+  rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$h2_out" ]; then
+    h2_cfg=unreadable
+  else
+    h2_cfg=$(printf '%s' "$h2_out" | tr -d '[:space:]')
+  fi
+  h2_out=$(h2_docker exec "$h2_cid" cat /sys/fs/cgroup/pids.max 2>/dev/null)
+  rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$h2_out" ]; then
+    h2_eff=unreadable
+  else
+    h2_eff=$(printf '%s' "$h2_out" | tr -d '[:space:]')
+  fi
   h2_note inspect
 }
 h2_start_target(){
@@ -336,12 +427,18 @@ h2_start_target(){
   h2_client_pid=$!
   set +m
   h2_arm_watchdog
+  if [ -n "${H2_FAKE_STATE:-}" ]; then
+    printf '%s\n' "$h2_client_pid" > "$H2_FAKE_STATE/client.pid"
+    printf '%s\n' "$h2_watch_pid" > "$H2_FAKE_STATE/watch.pid"
+  fi
 }
 h2_execute(){
   local class line started denied ev0 ev1 cur attr
   h2_reset_run
-  trap 'h2_trap TERM' TERM
-  trap 'h2_trap INT' INT
+  if [ "${H2_TRAP_DISABLE:-0}" != 1 ]; then
+    trap 'h2_trap TERM' TERM
+    trap 'h2_trap INT' INT
+  fi
   trap 'h2_trap EXIT' EXIT
   mkdir -p "$W"
   h2_start_target
@@ -349,6 +446,7 @@ h2_execute(){
     h2_after_cleanup infra ""
     h2_rc=1
   else
+    h2_note trap-ready
     h2_read_cap
     class=$(h2_classify "$h2_cfg" "$h2_eff")
     case $class in
@@ -489,6 +587,27 @@ case "$cmd" in
     done
     [ "${cid:-}" = "$mine" ] || exit 1
     if [ "$mode" = cid-hang ]; then sleep 30; exit 1; fi
+    if [ ! -f "$state/stop" ]; then
+      n=0
+      if [ -f "$state/ninspect" ]; then n=$(cat "$state/ninspect"); fi
+      n=$((n + 1))
+      echo "$n" > "$state/ninspect"
+      case $mode in
+        slow-hang)
+          if [ "$n" -eq 1 ]; then sleep 1.2
+          elif [ "$n" -ge 2 ]; then sleep 30; exit 1
+          fi
+          ;;
+        first-timeout)
+          if [ "$n" -eq 1 ]; then sleep 30; exit 1; fi
+          ;;
+        late-success)
+          if [ "$n" -eq 1 ]; then sleep 1.8
+          elif [ "$n" -eq 2 ]; then sleep 1.5
+          fi
+          ;;
+      esac
+    fi
     if [ "$mode" = daemon-after ] && [ -f "$state/cap-served" ]; then
       echo "cannot connect" >&2
       exit 1
@@ -794,35 +913,119 @@ PY
   h2_expect retry-out "$h2_case_out" "RESULT H2: CONTAINED (pids limit 128, controller denied)"
   h2_retry_n=$(printf '%s\n' "$h2_case_log" | grep -c 'rm -f' || true)
   [ "$h2_retry_n" -ge 2 ] || h2_fail "retry did not remove twice"
+  # Acquisition budget 4s, cleanup reserve 1s, per-call cap 4s, kill-after 1s.
+  # A refreshed second call is about 1s. Reusing the first 3s budget overruns this allowance.
+  h2_budget_case(){
+    local mode=$1 allowance=$2
+    local started elapsed
+    H2_CID_DEADLINE_CASE=4
+    H2_DOCKER_DEADLINE_CASE=4
+    H2_CLEANUP_RESERVE_CASE=1
+    H2_CLEANUP_CALL_CASE=1
+    started=$(h2_ms)
+    h2_run_case "$mode"
+    elapsed=$(( $(h2_ms) - started ))
+    H2_CID_DEADLINE_CASE=3
+    H2_DOCKER_DEADLINE_CASE=3
+    H2_CLEANUP_RESERVE_CASE=1
+    H2_CLEANUP_CALL_CASE=4
+    [ "$elapsed" -le "$allowance" ] || h2_fail "$mode took ${elapsed}ms allowance ${allowance}ms"
+    [ "$h2_case_rc" -ne 0 ] || h2_fail "$mode rc 0"
+    printf '%s\n' "$h2_case_out" | grep -q '^RESULT H2:' && h2_fail "$mode emitted H2"
+    printf '%s\n' "$h2_case_out" | grep -q '^RESULT H2-INFRA: ERROR$' || h2_fail "$mode missing infra"
+    printf '%s\n' "$h2_case_log" | grep -q 'rm -f' || h2_fail "$mode skipped cleanup"
+    printf '%s\n' "$h2_case_trace" | grep -q '^cid-ok$' && h2_fail "$mode accepted a late cid"
+    h2_save_case
+    h2_grade_captured "$h2_case_file"
+    rm -f "$h2_case_file"
+  }
+  # 1.2s first inspect + 1s refreshed hang + 1s kill-after.
+  h2_budget_case slow-hang 4000
+  id_n=$(printf '%s\n' "$h2_case_log" | grep -c 'inspect -f {{.Id}}' || true)
+  [ "$id_n" -eq 1 ] || h2_fail "slow-hang repeated the first inspect ($id_n)"
+  # One hung Id inspect. A laundered timeout would start another full-budget inspect.
+  h2_budget_case first-timeout 5000
+  id_n=$(printf '%s\n' "$h2_case_log" | grep -c 'inspect -f {{.Id}}' || true)
+  [ "$id_n" -eq 1 ] || h2_fail "first-timeout did not stop on the timeout status ($id_n)"
+  # Second success is only valid if it returns before the acquisition deadline.
+  h2_budget_case late-success 5000
+  # hold-cid's cap inspect blocks until H2_DOCKER_DEADLINE (8s). The early
+  # bound is 3s, so a natural timeout cannot satisfy the trap marker.
   h2_signal_case(){
-    local sig=$1
+    local sig=$1 send=$2 disarm=$3
+    local sig_pid sig_rc mark elapsed client_pid watch_pid ok
     h2_case_begin hold-cid
-    H2_CID_DEADLINE=6
+    H2_CID_DEADLINE=8
     H2_DOCKER_DEADLINE=8
+    H2_TRAP_DISABLE=$disarm
+    export H2_TRAP_DISABLE
+    set -m
     (
       h2_execute
     ) >"$h2_case_root/sig.out" 2>/dev/null &
     sig_pid=$!
+    set +m
     i=0
-    while [ "$i" -lt 40 ]; do
-      if grep -q '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' "$H2_FAKE_LOG"; then
+    while [ "$i" -lt 30 ]; do
+      if grep -qx 'trap-ready' "$H2_TRACE" 2>/dev/null; then
         break
       fi
       i=$((i + 1))
       sleep 0.1
     done
-    kill "-$sig" "$sig_pid" 2>/dev/null || true
-    wait "$sig_pid" 2>/dev/null || true
+    if ! grep -qx 'trap-ready' "$H2_TRACE" 2>/dev/null; then
+      h2_signal_stop "$sig_pid"
+      unset H2_TRAP_DISABLE
+      h2_case_end
+      return 1
+    fi
+    mark=$(h2_ms)
+    if [ "$send" = 1 ]; then
+      kill -s "$sig" -- -"$sig_pid" 2>/dev/null || true
+    fi
+    i=0
+    while [ "$i" -lt 30 ]; do
+      if ! kill -0 "$sig_pid" 2>/dev/null; then
+        break
+      fi
+      i=$((i + 1))
+      sleep 0.1
+    done
+    elapsed=$(( $(h2_ms) - mark ))
+    if kill -0 "$sig_pid" 2>/dev/null; then
+      h2_signal_stop "$sig_pid"
+      unset H2_TRAP_DISABLE
+      h2_case_end
+      return 1
+    fi
+    wait "$sig_pid"
+    sig_rc=$?
     sig_out=$(cat "$h2_case_root/sig.out" 2>/dev/null || true)
     sig_log=$(cat "$H2_FAKE_LOG" 2>/dev/null || true)
-    printf '%s\n' "$sig_out" | grep -q '^RESULT H2:' && h2_fail "$sig emitted H2"
-    printf '%s\n' "$sig_out" | grep -q '^RESULT H2-INFRA: ERROR$' || h2_fail "$sig missing infra"
-    printf '%s\n' "$sig_log" | grep -q 'rm -f 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' || h2_fail "$sig did not remove cid"
-    kill -0 "$sig_pid" 2>/dev/null && h2_fail "$sig left the helper running"
+    client_pid=$(cat "$H2_FAKE_STATE/client.pid" 2>/dev/null || true)
+    watch_pid=$(cat "$H2_FAKE_STATE/watch.pid" 2>/dev/null || true)
+    ok=0
+    if [ "$sig_rc" -ne 0 ] \
+      && [ "$elapsed" -lt 3000 ] \
+      && grep -qx "trap-$sig" "$H2_TRACE" \
+      && ! printf '%s\n' "$sig_out" | grep -q '^RESULT H2:' \
+      && printf '%s\n' "$sig_out" | grep -q '^RESULT H2-INFRA: ERROR$' \
+      && printf '%s\n' "$sig_log" | grep -q 'rm -f 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' \
+      && [ -n "$client_pid" ] && ! kill -0 "$client_pid" 2>/dev/null \
+      && [ -n "$watch_pid" ] && ! kill -0 "$watch_pid" 2>/dev/null \
+      && ! kill -0 -- -"$client_pid" 2>/dev/null \
+      && ! kill -0 -- -"$watch_pid" 2>/dev/null
+    then
+      ok=1
+    fi
+    unset H2_TRAP_DISABLE
     h2_case_end
+    [ "$ok" -eq 1 ]
   }
-  h2_signal_case TERM
-  h2_signal_case INT
+  h2_signal_case TERM 1 0 || h2_fail "TERM cleanup"
+  h2_signal_case INT 1 0 || h2_fail "INT cleanup"
+  if h2_signal_case TERM 0 0; then h2_fail "missing signal still passed"; fi
+  if h2_signal_case TERM 1 1; then h2_fail "missing trap still passed"; fi
   python3 - "$HERE" << 'PY' || h2_fail "judge"
 import sys
 sys.path.insert(0, sys.argv[1])
