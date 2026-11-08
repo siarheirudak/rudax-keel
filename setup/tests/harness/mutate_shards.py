@@ -864,12 +864,17 @@ def _run_allowlisted(argv, env):
     _remember(cap, "provision", command_requirement(argv), "-")
     if cap.term == "oserror":
         return 127, ""
-    out = cap.version_text
     if cap.controller_deadline:
-        return 124, out
+        return 124, ""
+    # A lost pipe or a failed read is not a successful install, even if the
+    # leader exited 0 and the version needle was seen on the way out.
+    if cap.capture_incomplete:
+        return 1, ""
     if cap.child_code is None:
-        return 1, out
-    return cap.child_code, out
+        return 1, ""
+    # Over-limit provisioning logs stay nonfatal: the version scan already
+    # walked the stream, and this output is not a scored mutant file.
+    return cap.child_code, cap.version_text
 
 
 def _require_tested_file(path, suites, ids):
@@ -1218,8 +1223,34 @@ def _signal_group(pid, sig):
     _signal_group.calls += 1
     try:
         os.killpg(pid, sig)
-    except (ProcessLookupError, PermissionError, OSError):
+    except (ProcessLookupError, PermissionError, OSError) as err:
+        _signal_group.last = (pid, sig, str(err))
         return
+    _signal_group.last = (pid, sig, "ok")
+
+
+def _group_members(pgid):
+    found = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            if os.getpgid(int(name)) == pgid:
+                found.append(int(name))
+        except (ProcessLookupError, PermissionError, OSError):
+            continue
+    return found
+
+
+def _reap_group(pgid, seconds):
+    """Finish SIGKILL delivery for the owned group. Bounded; not a Docker scan."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if not _group_members(pgid):
+            return True
+        _signal_group(pgid, signal.SIGKILL)
+        time.sleep(0.05)
+    return not _group_members(pgid)
 
 
 _signal_group.calls = 0
@@ -1237,27 +1268,6 @@ def _poll_fd(fd, mask, deadline):
     except OSError:
         return False
     return bool(events)
-
-
-def _write_bounded(fd, data, deadline, stop):
-    view = memoryview(data)
-    off = 0
-    while off < len(view):
-        if stop.is_set() or time.monotonic() >= deadline:
-            return False
-        try:
-            wrote = os.write(fd, view[off:off + READ_CHUNK])
-        except OSError as err:
-            if err.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
-                if not _poll_fd(fd, select.POLLOUT, deadline):
-                    if stop.is_set() or time.monotonic() >= deadline:
-                        return False
-                continue
-            raise
-        if wrote <= 0:
-            return False
-        off += wrote
-    return True
 
 
 class _StderrAccum(object):
@@ -1390,7 +1400,7 @@ def _publish_region(items, stop_on_begin):
 _TOKEN_RES = (
     re.compile(r"ghp_[A-Za-z0-9]{20,}"),
     re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
-    re.compile(r"Bearer [A-Za-z0-9._\-]+"),
+    re.compile(r"Bearer \S+"),
     re.compile(r"AKIA[0-9A-Z]{16}"),
 )
 
@@ -1433,8 +1443,12 @@ def _version_scan(buf, needles, found, hold):
     hold[0] = data[-keep:] if keep else b""
 
 
-def capture_command(argv, env, cwd, timeout, spool_fd=None):
-    """Run argv with bounded nonblocking capture. timeout is seconds."""
+def capture_command(argv, env, cwd, timeout):
+    """Run argv with bounded nonblocking capture. timeout is seconds.
+
+    Stdout stays in a bytearray capped at 8 MiB. The reader threads do not
+    write a regular file, so a stalled disk cannot leave them blocked.
+    """
     cap = Capture()
     started = time.monotonic()
     deadline = started + timeout
@@ -1442,18 +1456,11 @@ def capture_command(argv, env, cwd, timeout, spool_fd=None):
     deadline_box = [deadline + DRAIN_LIMIT]
     errors = []
     accum = _StderrAccum()
+    stdout_buf = bytearray()
     stdout_len = [0]
     out_eof = [False]
     err_eof = [False]
     truncated = [False]
-    own_spool = spool_fd is None
-    spool_path = None
-    if own_spool:
-        spool_fd, spool_path = tempfile.mkstemp(prefix="keel-spool-")
-        os.set_blocking(spool_fd, False)
-    else:
-        spool_fd = os.dup(spool_fd)
-        os.set_blocking(spool_fd, False)
     needles = (GITLEAKS_VERSION, PI_VERSION)
     found = set()
     hold = [b""]
@@ -1465,20 +1472,16 @@ def capture_command(argv, env, cwd, timeout, spool_fd=None):
         if stop.is_set() or time.monotonic() >= deadline_box[0]:
             return
         _version_scan(chunk, needles, found, hold)
-        room = MAX_FILE_BYTES - stdout_len[0]
+        stdout_len[0] += len(chunk)
+        room = MAX_FILE_BYTES - len(stdout_buf)
         if room <= 0:
             truncated[0] = True
-            stdout_len[0] += len(chunk)
             return
         take = chunk if len(chunk) <= room else chunk[:room]
-        if len(chunk) > room:
+        if len(take) < len(chunk):
             truncated[0] = True
-            stdout_len[0] += len(chunk) - len(take)
-        if take and not _write_bounded(spool_fd, take, deadline_box[0], stop):
-            errors.append(OSError("spool"))
-            stop.set()
-            return
-        stdout_len[0] += len(take)
+        if take:
+            stdout_buf.extend(take)
 
     def on_err(chunk, eof=False):
         if eof:
@@ -1541,16 +1544,19 @@ def capture_command(argv, env, cwd, timeout, spool_fd=None):
         try:
             proc.wait(timeout=max(0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
+            # TERM, then KILL the owned group even if the leader already
+            # exited and both pipes are already closed.
             cap.controller_deadline = True
             _signal_group(proc.pid, signal.SIGTERM)
+            grace_end = time.monotonic() + 0.3
+            while time.monotonic() < grace_end and proc.poll() is None:
+                time.sleep(0.05)
+            _signal_group(proc.pid, signal.SIGKILL)
             try:
-                proc.wait(timeout=1)
+                proc.wait(timeout=0.3)
             except subprocess.TimeoutExpired:
-                _signal_group(proc.pid, signal.SIGKILL)
-                try:
-                    proc.wait(timeout=1)
-                except subprocess.TimeoutExpired:
-                    pass
+                pass
+            _reap_group(proc.pid, 0.5)
         drain_end = time.monotonic() + DRAIN_LIMIT
         if drain_end < deadline_box[0]:
             deadline_box[0] = drain_end
@@ -1587,13 +1593,12 @@ def capture_command(argv, env, cwd, timeout, spool_fd=None):
                 proc.stdout.close()
             if proc.stderr:
                 proc.stderr.close()
-            if proc.poll() is None:
+            if proc.poll() is None and not cap.controller_deadline:
                 _signal_group(proc.pid, signal.SIGKILL)
                 try:
                     proc.wait(timeout=0.2)
                 except subprocess.TimeoutExpired:
                     pass
-        os.close(spool_fd)
     accum.finish()
     cap.threads = threads
     cap.stdout_bytes = stdout_len[0]
@@ -1620,13 +1625,8 @@ def capture_command(argv, env, cwd, timeout, spool_fd=None):
         cap.term = "exit"
         cap.legacy_code = 0 if cap.child_code is None else cap.child_code
     cap.publish = not cap.capture_incomplete and not cap.truncated and cap.term != "oserror"
-    if cap.publish and spool_path and os.path.isfile(spool_path):
-        with open(spool_path, "rb") as handle:
-            cap.stdout = handle.read()
-    if spool_path and os.path.isfile(spool_path) and not cap.publish:
-        os.remove(spool_path)
-    elif spool_path and os.path.isfile(spool_path) and cap.publish:
-        os.remove(spool_path)
+    if cap.publish:
+        cap.stdout = bytes(stdout_buf)
     text = cap.stdout.decode("utf-8", "replace") if cap.stdout else ""
     for needle in found:
         if needle not in text:
@@ -1669,17 +1669,30 @@ def _called_capture(previous, stdout, code):
 
 
 def _store_score_file(path, stdout, cap):
+    """Publish exact scored bytes. An I/O error leaves no gradeable partial."""
     if cap is None or not cap.publish:
         if os.path.lexists(path) and not os.path.islink(path):
-            os.remove(path)
-        return
+            try:
+                os.remove(path)
+            except OSError:
+                return False
+        return True
     parent = os.path.dirname(path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
     tmp = path + ".part"
-    with open(tmp, "wb") as handle:
-        handle.write(stdout)
-    os.replace(tmp, path)
+    try:
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(tmp, "wb") as handle:
+            handle.write(stdout)
+        os.replace(tmp, path)
+    except OSError:
+        if os.path.isfile(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        return False
+    return True
 
 
 def _bound_observe_lines(text):
@@ -1740,10 +1753,24 @@ def _write_text_atomic(path, text):
 
 
 def _fit_text(text, cap):
+    """Keep the truncation marker inside the encoded cap, including a tiny cap."""
+    if cap < 0:
+        cap = 0
     encoded = text.encode("utf-8")
     if len(encoded) <= cap:
         return text
-    return encoded[:cap].decode("utf-8", "ignore") + "\n<truncated>\n"
+    marker = "\n<truncated>\n"
+    marker_b = marker.encode("utf-8")
+    room = cap - len(marker_b)
+    if room <= 0:
+        return marker_b[:cap].decode("utf-8", "ignore")
+    cut = encoded[:room].decode("utf-8", "ignore")
+    while cut and len((cut + marker).encode("utf-8")) > cap:
+        cut = cut[:-1]
+    out = cut + marker
+    if len(out.encode("utf-8")) > cap:
+        return marker_b[:cap].decode("utf-8", "ignore")
+    return out
 
 
 def publish_aux(out_dir, failed):
@@ -1904,7 +1931,8 @@ def cmd_run_shard(tar_path, expected_sha, out_dir, suites, group, expected=None,
         previous = getattr(run_suite, "last", None)
         stdout, code = run_suite(baseline, suite, "base", forward, timeout=limit)
         cap = _called_capture(previous, stdout, code)
-        _store_score_file(os.path.join(out_dir, "baseline-" + suite), stdout, cap)
+        if not _store_score_file(os.path.join(out_dir, "baseline-" + suite), stdout, cap):
+            return finish(1, {"ok": False, "phase": "failed"})
         if cap.controller_deadline:
             print("failure category=timeout", file=sys.stderr)
             return finish(1, {"ok": False, "phase": "failed", "category": "timeout"})
@@ -1938,7 +1966,8 @@ def cmd_run_shard(tar_path, expected_sha, out_dir, suites, group, expected=None,
         previous = getattr(run_suite, "last", None)
         stdout, code = run_suite(dest, suite, mid, forward, timeout=limit)
         cap = _called_capture(previous, stdout, code)
-        _store_score_file(os.path.join(out_dir, mid + ".txt"), stdout, cap)
+        if not _store_score_file(os.path.join(out_dir, mid + ".txt"), stdout, cap):
+            return finish(1, {"ok": False, "phase": "failed"})
         subprocess.run(["rm", "-rf", parent], check=False)
         if cap.controller_deadline:
             print("failure category=timeout", file=sys.stderr)

@@ -1273,12 +1273,18 @@ def case_s_p10():
             return False
         if not _cap_redaction():
             return False
+        if not _cap_provision(env, root):
+            return False
+        if not _cap_owned_group(env, root):
+            return False
         if not _cap_archive_and_grade(root):
             return False
         if not _cap_tail(root, calls):
             return False
-        if calls != [1]:
-            return _no("observe calls %s" % calls)
+        if not _cap_last_id(root):
+            return False
+        if not calls:
+            return _no("observe calls")
         return True
     finally:
         ms.observe_failure_names = saved_obs
@@ -1367,36 +1373,53 @@ def _cap_pipes(env, root):
 
 
 def _cap_spool(env):
-    read_fd, write_fd = os.pipe()
-    os.set_blocking(write_fd, False)
-    blob = b"x" * 65536
-    try:
-        while True:
-            try:
-                os.write(write_fd, blob)
-            except BlockingIOError:
-                break
-        started = time.monotonic()
-        cap = ms.capture_command(
-            ["/bin/sh", "-c", "printf '%s' 'blocked-spool-data'; sleep 0.2"],
-            env,
-            "/tmp",
-            2,
-            spool_fd=write_fd,
-        )
-        elapsed = time.monotonic() - started
-        alive = [thread.is_alive() for thread in cap.threads]
-        if alive != [False, False] or not cap.capture_incomplete or cap.publish:
-            return _no("spool state %s %s" % (alive, cap.term))
-        if elapsed > 12:
-            return _no("spool lingered %s" % elapsed)
-        return True
-    finally:
-        os.close(read_fd)
-        try:
-            os.close(write_fd)
-        except OSError:
-            pass
+    """A blocking os.write in a non-main thread must not keep the controller alive."""
+    script = (
+        "import os, threading, time, mutate_shards as ms\n"
+        "real = os.write\n"
+        "def hang(fd, data):\n"
+        "    if threading.current_thread() is not threading.main_thread():\n"
+        "        time.sleep(30)\n"
+        "        return len(data)\n"
+        "    return real(fd, data)\n"
+        "os.write = hang\n"
+        "cap = ms.capture_command(['/bin/sh','-c','python3 -c \"import sys; sys.stdout.buffer.write(b' + \"'x'\" + '*200000)\"'], os.environ.copy(), '/tmp', 1)\n"
+        "alive = any(thread.is_alive() for thread in cap.threads)\n"
+        "raise SystemExit(0 if not alive and cap.ms < 5000 else 1)\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=HERE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=10,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return _no("blocked reader survived %s" % proc.returncode)
+    started = time.monotonic()
+    cap = ms.capture_command(
+        ["/bin/sh", "-c", "python3 -c \"import sys; sys.stdout.buffer.write(b'x'*200000)\""],
+        env,
+        "/tmp",
+        2,
+    )
+    if any(thread.is_alive() for thread in cap.threads) or time.monotonic() - started > 5:
+        return _no("memory sink linger")
+    if cap.stdout != b"x" * 200000 or not cap.publish:
+        return _no("memory sink bytes")
+    blocked = os.path.join(env.get("TMPDIR", "/tmp"), "not-a-dir")
+    open(blocked, "w", encoding="utf-8").write("x")
+    score = CaptureStandin()
+    if ms._store_score_file(os.path.join(blocked, "out.txt"), b"abc", score):
+        return _no("write error published")
+    if os.path.isfile(os.path.join(blocked, "out.txt")):
+        return _no("partial score left")
+    return True
+
+
+class CaptureStandin(object):
+    publish = True
 
 
 def _cap_bytes_and_utf(env, root):
@@ -1471,17 +1494,34 @@ def _cap_redaction():
         accum.finish()
         return accum.render("", "")
 
-    token = "ghp_" + ("a" * 24)
     text = render(b"ghp_" + b"a" * 24 + b"\n")
     if "ghp_" in text or "<redacted>" not in text:
         return _no("token reassembly")
-    filler = "\n".join("m%d" % i for i in range(800))
-    secret = "-----BEGIN TEST KEY-----\n" + ("SECRETLINE\n" * 20) + "-----END TEST KEY-----\n"
-    shown = render("HEAD-OK\n" + filler + "\n" + secret + "AFTER-OK\n")
-    if "SECRETLINE" in shown or "BEGIN TEST" in shown or "END TEST" in shown or "AFTER-OK" not in shown:
-        return _no("pem middle")
-    if "<omitted bytes=" not in shown:
-        return _no("omission marker")
+    for sample in ("Bearer +a/b==", "Bearer ab/cd==", "Bearer ab~cd"):
+        shown = render("prefix " + sample + "\n")
+        if sample.split(" ", 1)[1] in shown or "<redacted>" not in shown:
+            return _no("bearer %s" % shown)
+    split = render(b"Bearer ab" + b"/cd==\n")
+    if "ab/cd" in split or "/cd==" in split or "<redacted>" not in split:
+        return _no("bearer chunk")
+    fitted = ms._fit_text("x" * 400, 32)
+    if len(fitted.encode("utf-8")) > 32 or "<truncated>" not in fitted:
+        return _no("fit cap %s" % len(fitted.encode("utf-8")))
+    tiny = ms._fit_text("yyyy", 4)
+    if len(tiny.encode("utf-8")) > 4:
+        return _no("tiny cap")
+    head = "h\n" * 2200
+    middle = "m\n" * 3000
+    secret = "-----BEGIN TEST KEY-----\n" + ("SECRETLINE\n" * 40)
+    tail = "-----END TEST KEY-----\nTAIL-OK\n"
+    shown = render(head + middle + secret + tail)
+    if "SECRETLINE" in shown or "BEGIN TEST" in shown or "END TEST" in shown:
+        return _no("pem body leaked")
+    if "TAIL-OK" not in shown or "<omitted bytes=0>" in shown and "omitted bytes=" not in shown.replace("<omitted bytes=0>", ""):
+        return _no("pem geometry")
+    marker = [line for line in shown.splitlines() if line.startswith("<omitted bytes=")]
+    if not marker or marker[0].endswith("=0>"):
+        return _no("discarded bytes %s" % marker)
     head = "\n".join("h%04d" % i for i in range(700))
     shown = render(head + "\n-----BEGIN TEST KEY-----\nSECRETLINE\n-----END TEST KEY-----\nTAIL-OK\n")
     if "SECRETLINE" in shown or "BEGIN TEST" in shown or "TAIL-OK" not in shown:
@@ -1561,6 +1601,20 @@ def _cap_archive_and_grade(root):
         names.append(os.path.getsize(os.path.join(folder, name)))
     if not ms.mandatory_within_archive(names) or ms.aux_room(sum(names)) != 0:
         return _no("built mandatory %s" % sum(names))
+    before = _snapshot_bytes(folder)
+    del ms._TRACE[:]
+    ms._TRACE.append({
+        "phase": "mutant", "suite": "test-mutate-shards.sh", "id": mid,
+        "ms": 1, "term": "exit", "deadline": 0, "child_code": 0,
+        "stdout_bytes": 1, "stderr_bytes": 1, "truncated": 0,
+        "text": "SHOULD-NOT-LAND",
+    })
+    if ms.publish_aux(folder, False) != "omit":
+        return _no("near-limit publisher")
+    if _snapshot_bytes(folder) != before:
+        return _no("publisher changed mandatory bytes")
+    if os.path.exists(os.path.join(folder, "diag-shard.txt")):
+        return _no("aux written into a full archive")
     blob_path = os.path.join(root, "arch.zip")
     with zipfile.ZipFile(blob_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name in os.listdir(folder):
@@ -1571,15 +1625,10 @@ def _cap_archive_and_grade(root):
     extracted = os.path.join(root, "extracted")
     ms.safe_extract(blob, extracted)
     first = _grade_tree(extracted, plan, "success")
-    # Room is zero, so aux is omitted. The second zip is the same mandatory bytes.
-    second_blob = os.path.join(root, "arch-again.zip")
-    with zipfile.ZipFile(second_blob, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for name in os.listdir(folder):
-            archive.write(os.path.join(folder, name), "raw-0/" + name)
     again = os.path.join(root, "again")
-    ms.safe_extract(open(second_blob, "rb").read(), again)
+    ms.safe_extract(blob, again)
     second = _grade_tree(again, plan, "success")
-    if first != 0 or second != 0 or first != second:
+    if first != 0 or second != 0 or _state_of(extracted) != _state_of(again):
         return _no("archive grade %s %s" % (first, second))
     low = ms.grade_stdout(["FIX-C"], "RESULT FIX-C: NOT BLOCKED\n")[0]
     if low != "yes":
@@ -1614,12 +1663,216 @@ def _cap_archive_and_grade(root):
         archive.writestr("raw-0/diag-shard.txt", "RESULT FIX-A: NOT BLOCKED\n")
         archive.writestr("raw-0/shard-timing.txt", "phase=mutant id=M201 term=exit\n")
     ms.safe_extract(open(blob_path, "rb").read(), with_dir)
+    del ms._TRACE[:]
+    ms._TRACE.append({
+        "phase": "mutant", "suite": "test-mutate-shards.sh", "id": "M201",
+        "ms": 1, "term": "exit", "deadline": 0, "child_code": 0,
+        "stdout_bytes": 4, "stderr_bytes": 4, "truncated": 0,
+        "text": "RESULT FIX-A: NOT BLOCKED",
+    })
+    bare_bytes = _snapshot_bytes(os.path.join(bare_dir, "raw-0"))
+    if ms.publish_aux(os.path.join(bare_dir, "raw-0"), False) != "kept":
+        return _no("small publisher")
+    if _snapshot_bytes(os.path.join(bare_dir, "raw-0"), skip=("diag-shard.txt", "shard-timing.txt")) != bare_bytes:
+        return _no("small publisher rewrote scores")
+    published = os.path.join(small, "published.zip")
+    with zipfile.ZipFile(published, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in os.listdir(os.path.join(bare_dir, "raw-0")):
+            archive.write(os.path.join(bare_dir, "raw-0", name), "raw-0/" + name)
+    published_dir = os.path.join(small, "published")
+    ms.safe_extract(open(published, "rb").read(), published_dir)
     plain = _grade_tree(bare_dir, plan, "success")
-    extra = _grade_tree(with_dir, plan, "success")
+    extra = _grade_tree(published_dir, plan, "success")
     if plain != extra:
         return _no("aux changed grade %s %s" % (plain, extra))
+    plain_state = _state_of(bare_dir)
+    extra_state = _state_of(published_dir)
+    if plain_state != extra_state:
+        return _no("state drift %s %s" % (plain_state, extra_state))
+    scored = open(os.path.join(published_dir, "raw-0", "M201.txt"), encoding="utf-8").read()
+    if ms.grade_stdout(["FIX-A"], scored)[0] != "NO":
+        return _no("published score")
+    yes_plan = dict(plan)
+    yes_plan["exp"] = {"M201": ["FIX-C"]}
+    yes_dir = os.path.join(small, "yes")
+    os.makedirs(os.path.join(yes_dir, "raw-0"))
+    open(os.path.join(yes_dir, "raw-0", "baseline-test-mutate-shards.sh"), "w", encoding="utf-8").write(
+        "RESULT FIX-C: BLOCKED\n"
+    )
+    open(os.path.join(yes_dir, "raw-0", "M201.txt"), "w", encoding="utf-8").write(
+        "RESULT FIX-C: NOT BLOCKED\n"
+    )
+    if _grade_tree(yes_dir, yes_plan, "success") != 0:
+        return _no("positive grade")
+    if _state_of(yes_dir).get("green_all") or _state_of(yes_dir).get("full_plan"):
+        return _no("positive state")
+    if ms.grade_stdout(["FIX-C"], open(os.path.join(yes_dir, "raw-0", "M201.txt"), encoding="utf-8").read())[0] != "yes":
+        return _no("positive tag")
     if ms.aux_room(100) <= 0:
         return _no("small room")
+    return True
+
+
+def _snapshot_bytes(folder, skip=()):
+    found = {}
+    for name in os.listdir(folder):
+        if name in skip:
+            continue
+        path = os.path.join(folder, name)
+        if os.path.isfile(path):
+            found[name] = os.path.getsize(path)
+    return found
+
+
+def _state_of(folder):
+    path = os.path.join(folder, "state.json")
+    if not os.path.isfile(path):
+        return {}
+    return json.load(open(path, encoding="utf-8"))
+
+
+def _cap_provision(env, root):
+    version = ms.GITLEAKS_VERSION
+    hold = os.path.join(root, "hold.py")
+    pidf = os.path.join(root, "hold.pid")
+    open(hold, "w", encoding="utf-8").write(
+        "import os,sys,time\n"
+        "sys.stdout.write(%r)\n" % (version + "\n") +
+        "sys.stdout.flush()\n"
+        "pid=os.fork()\n"
+        "if pid==0:\n"
+        "    open(sys.argv[1],'w').write(str(os.getpid()))\n"
+        "    time.sleep(60)\n"
+        "else:\n"
+        "    os._exit(0)\n"
+    )
+    code, out = ms._run_allowlisted([sys.executable, hold, pidf], env)
+    pid = int(open(pidf, encoding="utf-8").read()) if os.path.isfile(pidf) else 0
+    if pid and _alive(pid):
+        os.kill(pid, 9)
+    if code == 0 or version in out:
+        return _no("provision accepted a lost capture %s" % code)
+    good = os.path.join(root, "good.sh")
+    open(good, "w", encoding="utf-8").write("printf '%s\\n'\n" % version)
+    os.chmod(good, 0o755)
+    code, out = ms._run_allowlisted(["/bin/sh", good], env)
+    if code != 0 or version not in out:
+        return _no("provision positive %s" % code)
+    huge = os.path.join(root, "huge-prov.py")
+    open(huge, "w", encoding="utf-8").write(
+        "import sys\n"
+        "sys.stdout.write(%r)\n" % (version + "\n") +
+        "sys.stdout.buffer.write(b'z'*(9*1024*1024))\n"
+    )
+    code, out = ms._run_allowlisted([sys.executable, huge], env)
+    if code != 0 or version not in out:
+        return _no("provision overflow %s" % code)
+    script = os.path.join(root, "prov-cmd.py")
+    open(script, "w", encoding="utf-8").write(
+        "import os,sys,time\n"
+        "sys.stdout.write(%r)\n" % (version + "\n") +
+        "sys.stdout.flush()\n"
+        "pid=os.fork()\n"
+        "if pid==0:\n"
+        "    time.sleep(60)\n"
+        "else:\n"
+        "    os._exit(0)\n"
+    )
+    saved = ms.provision_commands
+    def only_ours(base, needed, home, pi_present=False):
+        return [[sys.executable, script]]
+    ms.provision_commands = only_ours
+    try:
+        try:
+            ms.provision_selected(root, ["test-runtime.sh"], {"test-runtime.sh": ["M10"]}, home=root)
+        except ms.PrereqError:
+            pass
+        else:
+            return _no("provision_selected ignored capture loss")
+    finally:
+        ms.provision_commands = saved
+    return True
+
+
+def _cap_owned_group(env, root):
+    script = os.path.join(root, "ign.py")
+    pidf = os.path.join(root, "ign.pid")
+    open(script, "w", encoding="utf-8").write(
+        "import os,signal,sys,time\n"
+        "path=sys.argv[1]\n"
+        "pid=os.fork()\n"
+        "if pid==0:\n"
+        "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "    os.close(1)\n"
+        "    os.close(2)\n"
+        "    open(path,'w').write(str(os.getpid()))\n"
+        "    time.sleep(60)\n"
+        "else:\n"
+        "    time.sleep(60)\n"
+    )
+    started = time.monotonic()
+    cap = ms.capture_command([sys.executable, script, pidf], env, root, 0.4)
+    elapsed = time.monotonic() - started
+    pid = int(open(pidf, encoding="utf-8").read()) if os.path.isfile(pidf) else 0
+    still = bool(pid) and _alive(pid)
+    if still:
+        os.kill(pid, 9)
+    if not cap.controller_deadline or still or any(thread.is_alive() for thread in cap.threads):
+        return _no("owned group %s %s" % (cap.term, still))
+    if elapsed > 8:
+        return _no("owned group slow %s" % elapsed)
+    return True
+
+
+def _cap_last_id(root):
+    script = (
+        "#!/bin/bash\n"
+        "if [ \"$KEEL_NS\" = M201 ]; then\n"
+        "  printf 'RESULT FIX-C: NOT BLOCKED\\n'\n"
+        "  sleep 30\n"
+        "else\n"
+        "  printf 'RESULT FIX-C: BLOCKED\\n'\n"
+        "fi\n"
+    ).encode("utf-8")
+    tar_path = os.path.join(root, "last.tar.gz")
+    _write_tar(tar_path, _shard_files(["M201"], _STUB_REL, script))
+    out_dir = os.path.join(root, "last-out")
+    os.makedirs(out_dir)
+    code = ms.cmd_run_shard(
+        tar_path,
+        ms.sha256_file(tar_path),
+        out_dir,
+        {"M201": "test-mutate-shards.sh"},
+        ["M201"],
+        {"M201": ["FIX-C"]},
+        timeout=0.4,
+    )
+    scored = os.path.join(out_dir, "M201.txt")
+    if code != 1 or not os.path.isfile(scored):
+        return _no("last id missing output")
+    body = open(scored, encoding="utf-8").read()
+    if ms.grade_stdout(["FIX-C"], body)[0] != "yes":
+        return _no("last id not low-level yes")
+    shard_result = "failure" if code != 0 else "success"
+    packed = os.path.join(root, "last.zip")
+    with zipfile.ZipFile(packed, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in ("M201.txt", "baseline-test-mutate-shards.sh", "shard-status.json"):
+            path = os.path.join(out_dir, name)
+            if os.path.isfile(path):
+                archive.write(path, "raw-0/" + name)
+    unpacked = os.path.join(root, "last-unpacked")
+    ms.safe_extract(open(packed, "rb").read(), unpacked)
+    plan = {
+        "ids": ["M201"],
+        "shards": {"0": ["M201"]},
+        "suite": {"M201": "test-mutate-shards.sh"},
+        "exp": {"M201": ["FIX-C"]},
+        "skip": False,
+        "full_plan": False,
+        "red_counts": "ci+offline",
+    }
+    if _grade_tree(unpacked, plan, shard_result) != 1:
+        return _no("last id aggregate accepted a timeout")
     return True
 
 
