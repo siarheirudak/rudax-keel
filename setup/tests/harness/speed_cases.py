@@ -1510,15 +1510,30 @@ def _cap_redaction():
     tiny = ms._fit_text("yyyy", 4)
     if len(tiny.encode("utf-8")) > 4:
         return _no("tiny cap")
-    head = "h\n" * 2200
-    middle = "m\n" * 3000
-    secret = "-----BEGIN TEST KEY-----\n" + ("SECRETLINE\n" * 40)
-    tail = "-----END TEST KEY-----\nTAIL-OK\n"
-    shown = render(head + middle + secret + tail)
+    # Head fills before BEGIN. The body is longer than the tail window, so
+    # BEGIN is evicted from both retained lists while SECRETLINE remains in
+    # the tail. A redactor that only sees retained lines would still publish it.
+    head_filler = "h\n" * 2500
+    body = "SECRETLINE\n" * 400
+    stream = head_filler + "-----BEGIN TEST KEY-----\n" + body + "-----END TEST KEY-----\nTAIL-OK\n"
+    accum = ms._StderrAccum()
+    raw_stream = stream.encode("utf-8")
+    for index in range(0, len(raw_stream), 16):
+        accum.feed(raw_stream[index:index + 16])
+    accum.finish()
+    head_lines = [line for _before, line in accum.head]
+    tail_lines = [line for _before, line in accum.tail]
+    if any("BEGIN" in line for line in head_lines + tail_lines):
+        return _no("BEGIN still inside a retained window")
+    if not tail_lines or tail_lines[0] != "SECRETLINE":
+        return _no("body is not at the tail start %s" % (tail_lines[:2],))
+    if "-----END TEST KEY-----" not in tail_lines or "TAIL-OK" not in tail_lines:
+        return _no("END or safe line missing from tail")
+    shown = accum.render("", "")
     if "SECRETLINE" in shown or "BEGIN TEST" in shown or "END TEST" in shown:
-        return _no("pem body leaked")
-    if "TAIL-OK" not in shown or "<omitted bytes=0>" in shown and "omitted bytes=" not in shown.replace("<omitted bytes=0>", ""):
-        return _no("pem geometry")
+        return _no("discarded-middle body published")
+    if "TAIL-OK" not in shown:
+        return _no("safe line after END dropped")
     marker = [line for line in shown.splitlines() if line.startswith("<omitted bytes=")]
     if not marker or marker[0].endswith("=0>"):
         return _no("discarded bytes %s" % marker)
@@ -1645,69 +1660,101 @@ def _cap_archive_and_grade(root):
     fail_plan["exp"] = {"M201": ["FIX-C"]}
     if _grade_tree(fail_raw, fail_plan, "failure") != 1:
         return _no("failed last id")
+    if not _cap_small_publisher(root):
+        return False
+    return True
+
+
+def _require_run_state(state):
+    required = ("mode", "full_plan", "green_all", "bootstrap_overdue", "head_sha")
+    if any(key not in state for key in required):
+        return False
+    return (
+        state["mode"] == "run"
+        and state["full_plan"] is False
+        and state["green_all"] is False
+        and state["bootstrap_overdue"] is False
+    )
+
+
+def _grade_recorded(folder, plan, shard_result):
+    seen = []
+    real = ms.grade_stdout
+    def wrap(exp, stdout):
+        tag, detail = real(exp, stdout)
+        text = stdout if isinstance(stdout, str) else stdout.decode("utf-8", "replace")
+        seen.append((tag, text))
+        return tag, detail
+    ms.grade_stdout = wrap
+    try:
+        code = _grade_tree(folder, plan, shard_result)
+    finally:
+        ms.grade_stdout = real
+    return code, seen, _state_of(folder)
+
+
+def _mandatory_digests(folder, names):
+    found = {}
+    for name in names:
+        path = os.path.join(folder, name)
+        if not os.path.isfile(path):
+            return None
+        found[name] = ms.sha256_file(path)
+    return found
+
+
+def _cap_small_publisher(root):
+    """Grade the untouched scores first. Aux text would flip that grade."""
+    if "M03" not in mf.CI_IDS:
+        return _no("M03 is not a CI id")
     small = os.path.join(root, "small")
-    bare_dir = os.path.join(small, "bare")
-    os.makedirs(os.path.join(bare_dir, "raw-0"))
-    open(os.path.join(bare_dir, "raw-0", "baseline-test-mutate-shards.sh"), "w", encoding="utf-8").write(
-        "RESULT FIX-A: BLOCKED\n"
-    )
-    open(os.path.join(bare_dir, "raw-0", "M201.txt"), "w", encoding="utf-8").write(
-        "RESULT FIX-A: BLOCKED\n"
-    )
-    with_dir = os.path.join(small, "with")
-    os.makedirs(with_dir)
-    blob_path = os.path.join(small, "with.zip")
-    with zipfile.ZipFile(blob_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.write(os.path.join(bare_dir, "raw-0", "baseline-test-mutate-shards.sh"), "raw-0/baseline-test-mutate-shards.sh")
-        archive.write(os.path.join(bare_dir, "raw-0", "M201.txt"), "raw-0/M201.txt")
-        archive.writestr("raw-0/diag-shard.txt", "RESULT FIX-A: NOT BLOCKED\n")
-        archive.writestr("raw-0/shard-timing.txt", "phase=mutant id=M201 term=exit\n")
-    ms.safe_extract(open(blob_path, "rb").read(), with_dir)
+    bare = os.path.join(small, "bare", "raw-0")
+    os.makedirs(bare)
+    names = ("baseline-test-mutate-shards.sh", "M03.txt")
+    open(os.path.join(bare, names[0]), "w", encoding="utf-8").write("RESULT FIX-A: BLOCKED\n")
+    open(os.path.join(bare, names[1]), "w", encoding="utf-8").write("RESULT FIX-A: BLOCKED\n")
+    control = os.path.join(small, "control")
+    shutil.copytree(os.path.join(small, "bare"), control)
+    plan = {
+        "ids": ["M03"],
+        "shards": {"0": ["M03"]},
+        "suite": {"M03": "test-mutate-shards.sh"},
+        "exp": {"M03": ["FIX-A"]},
+        "skip": False,
+        "full_plan": False,
+        "red_counts": "ci+offline",
+    }
+    before_digest = _mandatory_digests(os.path.join(control, "raw-0"), names)
+    pre_code, pre_seen, pre_state = _grade_recorded(control, plan, "success")
+    if pre_code != 1 or pre_seen != [("NO", "RESULT FIX-A: BLOCKED\n")]:
+        return _no("pre-publication grade %s %s" % (pre_code, pre_seen))
+    if not _require_run_state(pre_state):
+        return _no("pre-publication state %s" % pre_state)
     del ms._TRACE[:]
     ms._TRACE.append({
-        "phase": "mutant", "suite": "test-mutate-shards.sh", "id": "M201",
+        "phase": "mutant", "suite": "test-mutate-shards.sh", "id": "M03",
         "ms": 1, "term": "exit", "deadline": 0, "child_code": 0,
         "stdout_bytes": 4, "stderr_bytes": 4, "truncated": 0,
         "text": "RESULT FIX-A: NOT BLOCKED",
     })
-    bare_bytes = _snapshot_bytes(os.path.join(bare_dir, "raw-0"))
-    if ms.publish_aux(os.path.join(bare_dir, "raw-0"), False) != "kept":
+    if ms.publish_aux(os.path.join(control, "raw-0"), False) != "kept":
         return _no("small publisher")
-    if _snapshot_bytes(os.path.join(bare_dir, "raw-0"), skip=("diag-shard.txt", "shard-timing.txt")) != bare_bytes:
-        return _no("small publisher rewrote scores")
-    published = os.path.join(small, "published.zip")
-    with zipfile.ZipFile(published, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for name in os.listdir(os.path.join(bare_dir, "raw-0")):
-            archive.write(os.path.join(bare_dir, "raw-0", name), "raw-0/" + name)
-    published_dir = os.path.join(small, "published")
-    ms.safe_extract(open(published, "rb").read(), published_dir)
-    plain = _grade_tree(bare_dir, plan, "success")
-    extra = _grade_tree(published_dir, plan, "success")
-    if plain != extra:
-        return _no("aux changed grade %s %s" % (plain, extra))
-    plain_state = _state_of(bare_dir)
-    extra_state = _state_of(published_dir)
-    if plain_state != extra_state:
-        return _no("state drift %s %s" % (plain_state, extra_state))
-    scored = open(os.path.join(published_dir, "raw-0", "M201.txt"), encoding="utf-8").read()
-    if ms.grade_stdout(["FIX-A"], scored)[0] != "NO":
-        return _no("published score")
-    yes_plan = dict(plan)
-    yes_plan["exp"] = {"M201": ["FIX-C"]}
-    yes_dir = os.path.join(small, "yes")
-    os.makedirs(os.path.join(yes_dir, "raw-0"))
-    open(os.path.join(yes_dir, "raw-0", "baseline-test-mutate-shards.sh"), "w", encoding="utf-8").write(
-        "RESULT FIX-C: BLOCKED\n"
-    )
-    open(os.path.join(yes_dir, "raw-0", "M201.txt"), "w", encoding="utf-8").write(
-        "RESULT FIX-C: NOT BLOCKED\n"
-    )
-    if _grade_tree(yes_dir, yes_plan, "success") != 0:
-        return _no("positive grade")
-    if _state_of(yes_dir).get("green_all") or _state_of(yes_dir).get("full_plan"):
-        return _no("positive state")
-    if ms.grade_stdout(["FIX-C"], open(os.path.join(yes_dir, "raw-0", "M201.txt"), encoding="utf-8").read())[0] != "yes":
-        return _no("positive tag")
+    if _mandatory_digests(os.path.join(control, "raw-0"), names) != before_digest:
+        return _no("publisher rewrote mandatory bytes")
+    diag = open(os.path.join(control, "raw-0", "diag-shard.txt"), encoding="utf-8").read()
+    if ms.grade_stdout(["FIX-A"], diag)[0] != "yes":
+        return _no("aux text would not have changed the grade")
+    packed = os.path.join(small, "published.zip")
+    with zipfile.ZipFile(packed, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in os.listdir(os.path.join(control, "raw-0")):
+            archive.write(os.path.join(control, "raw-0", name), "raw-0/" + name)
+    published = os.path.join(small, "published")
+    ms.safe_extract(open(packed, "rb").read(), published)
+    if _mandatory_digests(os.path.join(published, "raw-0"), names) != before_digest:
+        return _no("zip changed mandatory bytes")
+    post_code, post_seen, post_state = _grade_recorded(published, plan, "success")
+    if post_code != pre_code or post_seen != pre_seen or post_state != pre_state:
+        return _no("aux changed aggregate %s %s %s" % (post_code, post_seen, post_state))
     if ms.aux_room(100) <= 0:
         return _no("small room")
     return True
