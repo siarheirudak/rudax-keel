@@ -13,6 +13,13 @@ unset GH_TOKEN GITHUB_TOKEN BOT_GH_TOKEN GITHUB_PAT AWS_SECRET_ACCESS_KEY AWS_AC
 P=$KEEL_ROOT
 bad=0
 res(){ echo "RESULT $1: $2"; if [ "$2" != "${2#NOT BLOCKED}" ] || [ "$2" != "${2#ERROR}" ] || [ "$2" != "${2#WRONG REASON}" ]; then bad=1; fi; }
+# clip TEXT: at most 400 bytes of printable ASCII on one line. Untrusted output (a mutant that opens egress fetches a
+# real web page) must not reach the suite stdout whole: the controller caps a line at 8192 bytes and a newline in it could
+# forge a RESULT line. show ID TEXT prints "ID: <clip>".
+# --- clip-helpers-begin (extracted by test-h2-verdict.sh; keep these two lines dash/sh compatible)
+clip(){ printf '%s' "$1" | head -c 400 | LC_ALL=C tr -c '[:print:]' ' '; }
+show(){ printf '%s: %s\n' "$1" "$(clip "$2")"; }
+# --- clip-helpers-end
 logf(){ echo "$P/.keel/logs/egress.jsonl"; }
 cleanup_ns() {
   local n
@@ -57,13 +64,13 @@ if ! printf '%s\n' "$tools" | grep -q '/wget' || ! printf '%s\n' "$tools" | grep
 fi
 
 out=$("$K" role developer 'wget -q -T 8 -O- http://keel-mock/health' 2>&1 || true)
-echo "E-H1: $out"
-if printf '%s\n' "$out" | grep -q MOCK-OK; then res E-H1 "BLOCKED (mock via proxy)"; else res E-H1 "NOT BLOCKED ($out)"; fi
+show E-H1 "$out"
+if printf '%s\n' "$out" | grep -q MOCK-OK; then res E-H1 "BLOCKED (mock via proxy)"; else res E-H1 "NOT BLOCKED ($(clip "$out"))"; fi
 
 dark(){
   local id=$1 role=$2 out
   out=$("$K" role "$role" 'echo LAUNCH-OK; wget -q -T 5 -O- http://keel-mock/health 2>/dev/null; wget -q -T 3 -O- http://1.1.1.1/ >/dev/null 2>&1 && echo NET-OK; nslookup example.com >/dev/null 2>&1 && echo DNS-OK; true' 2>&1 || true)
-  echo "$id: $out"
+  show "$id" "$out"
   if ! printf '%s\n' "$out" | grep -q LAUNCH-OK; then res "$id" "NOT BLOCKED (no launch)"; return; fi
   if printf '%s\n' "$out" | grep -qE 'MOCK-OK|NET-OK|DNS-OK'; then res "$id" "NOT BLOCKED"; else res "$id" "BLOCKED (no HTTP, no DNS)"; fi
 }
@@ -75,14 +82,14 @@ dark E-A4 qa
 dark E-A7 researcher
 
 out=$("$K" proto net ro 'echo LAUNCH-OK; wget -q -T 3 -O- http://1.1.1.1 >/dev/null 2>&1 && echo NET-OK; nslookup example.com >/dev/null 2>&1 && echo DNS-OK; true' 2>&1 || true)
-echo "E-H4: $out"
+show E-H4 "$out"
 if printf '%s\n' "$out" | grep -qE 'NET-OK|DNS-OK'; then res E-H4 "NOT BLOCKED"; else res E-H4 "BLOCKED (proto has no network)"; fi
 
 : > "$(logf)" 2>/dev/null || true
 mkdir -p "$P/.keel/logs"
 : > "$(logf)"
 out=$("$K" role developer 'wget -q -T 5 -O- http://example.com/secret?x=1 >/dev/null 2>&1; echo done' 2>&1 || true)
-echo "E-H3: $out"
+show E-H3 "$out"
 if python3 - "$(logf)" << 'PY'
 import json, sys
 path = sys.argv[1]
@@ -95,61 +102,61 @@ PY
 then res E-H3 "BLOCKED (denial host:port)"; else res E-H3 "NOT BLOCKED (log)"; fi
 
 out=$("$K" role developer 'wget -q -T 5 -O- http://example.com/secret?x=1 >/dev/null 2>&1; wget -q -T 5 -O- http://1.1.1.1/ >/dev/null 2>&1; echo done' 2>&1 || true)
-echo "E-A1: $out"
+show E-A1 "$out"
 if printf '%s\n' "$out" | grep -q MOCK-OK; then res E-A1 "NOT BLOCKED";
 elif ! denied_hosts example.com:80 1.1.1.1:80; then res E-A1 "NOT BLOCKED (log)";
 else res E-A1 "BLOCKED (unauthorized host)"; fi
 
-out=$("$K" role developer 'env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy wget -q -T 3 -O- http://1.1.1.1/ ; echo raw-done' 2>&1 || true)
-echo "E-A2: $out"
+out=$("$K" role developer 'env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy wget -q -T 3 -O /dev/null http://1.1.1.1/; echo "wget-rc:$?"; echo raw-done' 2>&1 || true)
+show E-A2 "$out"
 if printf '%s\n' "$out" | grep -q 'Network unreachable'; then res E-A2 "BLOCKED (no public route)"; else res E-A2 "NOT BLOCKED"; fi
 
 out=$("$K" role developer 'grep -q egress /proc/mounts && echo MOUNTED || echo ABSENT; ls /allow/developer.allow >/dev/null 2>&1 && echo POLICY || echo ABSENT' 2>&1 || true)
-echo "E-A5: $out"
+show E-A5 "$out"
 if printf '%s\n' "$out" | grep -q POLICY || printf '%s\n' "$out" | grep -q MOUNTED; then res E-A5 "NOT BLOCKED"; else res E-A5 "BLOCKED (policy not mounted)"; fi
 
 out=$("$K" role developer 'nc -w 2 keel-proxy 3129; echo nc-rc:$?' 2>&1 || true)
-echo "E-A8: $out"
+show E-A8 "$out"
 if printf '%s\n' "$out" | grep -q ADMIN-OK; then res E-A8 "NOT BLOCKED"; else res E-A8 "BLOCKED (admin port closed)"; fi
 
 out=$("$K" role developer 'nslookup example.com 127.0.0.11; echo ns-rc:$?' 2>&1 || true)
-echo "E-A9: $out"
+show E-A9 "$out"
 if printf '%s\n' "$out" | grep -q 'Name:'; then res E-A9 "NOT BLOCKED"; else res E-A9 "BLOCKED (embedded DNS)"; fi
 
 out=$("$K" role developer 'echo disabled=$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo missing)' 2>&1 || true)
-echo "E-A10: $out"
+show E-A10 "$out"
 if printf '%s\n' "$out" | grep -q 'disabled=1'; then res E-A10 "BLOCKED (ipv6 disabled)"; else res E-A10 "NOT BLOCKED"; fi
 
-out=$("$K" role developer 'env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy wget -q -T 3 -O- http://169.254.169.254/ ; echo meta-done' 2>&1 || true)
-echo "E-A11: $out"
+out=$("$K" role developer 'env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy wget -q -T 3 -O /dev/null http://169.254.169.254/; echo "wget-rc:$?"; echo meta-done' 2>&1 || true)
+show E-A11 "$out"
 if printf '%s\n' "$out" | grep -q 'Network unreachable'; then res E-A11 "BLOCKED (no metadata route)"; else res E-A11 "NOT BLOCKED"; fi
 
 before=$(wc -l < "$(logf)" | tr -d ' ')
 out=$("$K" role developer 'printf "CONNECT keel-mock:22 HTTP/1.1\r\nHost: keel-mock:22\r\n\r\n" | nc -w 3 keel-proxy 3128; echo nc-done' 2>&1 || true)
-echo "E-A12: $out"
+show E-A12 "$out"
 if printf '%s\n' "$out" | grep -q '200 Connection Established'; then res E-A12 "NOT BLOCKED";
 elif ! denied_hosts keel-mock:22; then res E-A12 "NOT BLOCKED (log)";
 else res E-A12 "BLOCKED (port not allowed)"; fi
 
 out=$("$K" role developer 'printf "CONNECT evil.example:443 HTTP/1.1\r\nHost: keel-mock:443\r\n\r\n" | nc -w 3 keel-proxy 3128; echo nc-done' 2>&1 || true)
-echo "E-A13: $out"
+show E-A13 "$out"
 if printf '%s\n' "$out" | grep -q '200 Connection Established'; then res E-A13 "NOT BLOCKED"; else res E-A13 "BLOCKED (CONNECT target)"; fi
 
 out=$("$K" role developer 'wget -q -T 5 -O- http://keel-mock/redir; echo redir-done' 2>&1 || true)
-echo "E-A14: $out"
+show E-A14 "$out"
 if printf '%s\n' "$out" | grep -q SECRET-BODY; then res E-A14 "NOT BLOCKED";
 elif ! grep -q 'keel-secret:80' "$(logf)"; then res E-A14 "NOT BLOCKED (log)";
 else res E-A14 "BLOCKED (redirect rechecked)"; fi
 
 before=$(wc -l < "$(logf)" | tr -d ' ')
 out=$("$K" role developer 'printf "CONNECT a%%0d%%0asecond-record.example:443 HTTP/1.1\r\nHost: a%%0d%%0asecond-record.example:443\r\n\r\n" | nc -w 3 keel-proxy 3128; echo nc-done' 2>&1 || true)
-echo "E-A15: $out"
+show E-A15 "$out"
 after=$(wc -l < "$(logf)" | tr -d ' ')
 if grep -q second-record "$(logf)" || [ "$((after - before))" -gt 1 ]; then res E-A15 "NOT BLOCKED";
 else res E-A15 "BLOCKED (sanitized log)"; fi
 
 out=$("$K" role developer 'wget -q -T 5 -O- http://evil.keel-mock/x >/dev/null 2>&1; wget -q -T 5 -O- http://Example.COM/x >/dev/null 2>&1; wget -q -T 5 -O- http://example.com./x >/dev/null 2>&1; wget -q -T 5 -O- http://xn--bcher-kva.de/x >/dev/null 2>&1; echo match-done' 2>&1 || true)
-echo "E-A17: $out"
+show E-A17 "$out"
 if printf '%s\n' "$out" | grep -q MOCK-OK; then res E-A17 "NOT BLOCKED";
 elif ! denied_hosts evil.keel-mock:80; then res E-A17 "NOT BLOCKED (log)";
 else res E-A17 "BLOCKED (exact match)"; fi
@@ -161,14 +168,14 @@ printf '%s\n' '*.example.com' > "$allow"
 out=$("$K" role developer 'echo LAUNCH-OK' 2>&1 || true)
 cp "$backup" "$allow"
 rm -f "$backup"
-echo "E-A6: $out"
+show E-A6 "$out"
 if printf '%s\n' "$out" | grep -q malformed_profile && ! printf '%s\n' "$out" | grep -q LAUNCH-OK; then res E-A6 "BLOCKED (malformed profile)"; else res E-A6 "NOT BLOCKED"; fi
 
 ns=$(printf '%s' "${KEEL_NS:-}" | tr '[:upper:]' '[:lower:]')
 if [ -n "$ns" ]; then proxy_name="keel-proxy-${ns}"; else proxy_name="keel-proxy"; fi
 $DOCKER stop "$proxy_name" >/dev/null 2>&1 || true
 out=$("$K" role developer 'echo LAUNCH-OK' 2>&1 || true)
-echo "E-A16: $out"
+show E-A16 "$out"
 $DOCKER rm -f "$proxy_name" >/dev/null 2>&1 || true
 "$K" egress-up >/dev/null 2>&1 || true
 if printf '%s\n' "$out" | grep -q LAUNCH-OK && ! printf '%s\n' "$out" | grep -q REFUSE; then res E-A16 "NOT BLOCKED"; else res E-A16 "BLOCKED (proxy down)"; fi

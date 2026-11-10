@@ -216,6 +216,7 @@ def self_test():
         ("Setup/TESTING.md", False),
         (".mcp.json", False),
         ("src/app.py", False),
+        ("standards/rules.md", False),
         ("", True),
         ("setup/../README.md", True),
         ("/etc/passwd", True),

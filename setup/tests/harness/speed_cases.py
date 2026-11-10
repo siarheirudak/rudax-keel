@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """Happy and attack cases for mutant selection, grading, and full-run state."""
+import base64
 import importlib.util
+import io
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
+import time
+import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
@@ -25,7 +32,11 @@ SELECT_CASES = (
 )
 SHARD_CASES = (
     "S-H5", "S-A5", "S-A6", "S-A14", "S-A19", "S-A24", "S-A25", "S-A26",
-    "S-A28", "S-A29", "S-A30", "S-A31", "S-A34", "S-A35",
+    "S-A28", "S-A29", "S-A30", "S-A31", "S-A34", "S-A35", "S-A36",
+    "H1", "H2", "H3", "H4",
+    "A1", "A2", "A3", "A4", "A5", "A6",
+    "S-P1", "S-P2", "S-P3", "S-P4", "S-P5", "S-P6", "S-P7", "S-P8", "S-P9",
+    "S-P10",
 )
 
 
@@ -550,6 +561,23 @@ def _other_job_fetches_tree(name, job):
     return False
 
 
+def _clean_entries(job):
+    """Lines inside the shard job's run-shard clean=(...) list."""
+    entries = []
+    capture = False
+    for line in job.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("clean=("):
+            capture = True
+            continue
+        if not capture:
+            continue
+        if stripped == ")":
+            break
+        entries.append(stripped)
+    return entries
+
+
 def case_s_a35():
     for rel in (".github/workflows/mutate-pr.yml", ".github/workflows/mutate-full.yml"):
         text = open(os.path.join(ROOT, rel), encoding="utf-8").read()
@@ -559,9 +587,2494 @@ def case_s_a35():
             return False
         if _permission_map(shard) != {"contents": "read"}:
             return False
+        if "run-shard" not in shard:
+            return False
+        clean = _clean_entries(shard)
+        if not any("PLAN_B64=" in item for item in clean):
+            return False
+        if '"K=$K"' not in clean:
+            return False
         for name, job in jobs.items():
             if _other_job_fetches_tree(name, job):
                 return False
+    return True
+
+
+def _redirected_request(old, new, headers):
+    import urllib.request
+    req = urllib.request.Request(old, headers=dict(headers), method="GET")
+    return ms.NoForeignAuthRedirect().redirect_request(req, None, 302, "Found", {}, new)
+
+
+def case_s_a36():
+    """Auth stays on api.github.com and is dropped on a storage redirect."""
+    import urllib.request
+    headers = {
+        "Authorization": "Bearer secret",
+        "Proxy-Authorization": "Basic x",
+        "Cookie": "session=1",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "rudax-keel-mutants",
+    }
+    origin = "https://api.github.com/repos/a/b/actions/artifacts/1/zip"
+    cross = _redirected_request(origin, "https://objects.githubusercontent.com/artifact.zip", headers)
+    same = _redirected_request(origin, "https://api.github.com/repos/a/b/actions/artifacts/1/zip?redirected=1", headers)
+    if cross is None or same is None:
+        return False
+    cross_names = {key.lower() for key in cross.headers}
+    if "authorization" in cross_names or "proxy-authorization" in cross_names or "cookie" in cross_names:
+        return False
+    if "accept" not in cross_names:
+        return False
+    if same.get_header("Authorization") != "Bearer secret":
+        return False
+    if same.get_header("Proxy-authorization") != "Basic x":
+        return False
+    if same.get_header("Cookie") != "session=1":
+        return False
+    recorded = {}
+    real_open = urllib.request.OpenerDirector.open
+
+    def fake_open(self, fullurl, data=None, timeout=None):
+        recorded["handlers"] = [type(item) for item in self.handlers]
+        recorded["auth"] = fullurl.get_header("Authorization") if hasattr(fullurl, "get_header") else None
+        raise RuntimeError("no-network")
+
+    urllib.request.OpenerDirector.open = fake_open
+    try:
+        try:
+            ms.github_bytes("https://api.github.com/repos/a/b/actions/artifacts/9/zip", "sekrit")
+        except RuntimeError as err:
+            if str(err) != "no-network":
+                return False
+        else:
+            return False
+    finally:
+        urllib.request.OpenerDirector.open = real_open
+    if recorded.get("auth") != "Bearer sekrit":
+        return False
+    if ms.NoForeignAuthRedirect not in recorded.get("handlers", []):
+        return False
+    state = state_mod()
+    seen = {}
+    old_api = state._api_json
+    old_bytes = ms.github_bytes
+
+    def fake_api(_url, _token):
+        return {
+            "artifacts": [{
+                "name": "state",
+                "expired": False,
+                "archive_download_url": "https://api.github.com/repos/o/r/actions/artifacts/9/zip",
+            }],
+        }
+
+    def fake_bytes(url, token, timeout=60):
+        seen["url"] = url
+        seen["token"] = token
+        raise RuntimeError("no-network")
+
+    state._api_json = fake_api
+    ms.github_bytes = fake_bytes
+    try:
+        try:
+            state.fetch_one_state("o/r", "sekrit", 9)
+        except RuntimeError as err:
+            if str(err) != "no-network":
+                return False
+        else:
+            return False
+    finally:
+        state._api_json = old_api
+        ms.github_bytes = old_bytes
+    return (
+        seen.get("url") == "https://api.github.com/repos/o/r/actions/artifacts/9/zip"
+        and seen.get("token") == "sekrit"
+    )
+
+
+def _push_env(updates):
+    old = {}
+    for key, value in updates.items():
+        old[key] = os.environ.get(key)
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+    return old
+
+
+def _pop_env(old):
+    for key, value in old.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
+def _plan_b64(plan):
+    return base64.b64encode(json.dumps(plan).encode("utf-8")).decode("ascii")
+
+
+def _write_tar(path, files):
+    """files: archive name -> bytes. Names stay inside the archive."""
+    with tarfile.open(path, "w:gz") as tar:
+        for name, blob in files.items():
+            info = tarfile.TarInfo(name=name)
+            info.size = len(blob)
+            info.mode = 0o644
+            tar.addfile(info, io.BytesIO(blob))
+
+
+def _stub_suite(line):
+    return ("#!/bin/bash\nprintf '%s\\n'\n" % line).encode("utf-8")
+
+
+def _shard_files(ids, script_rel, script, extra=None):
+    files = {script_rel: script}
+    for mid in ids:
+        files["ids/%s/setup/keel.sh" % mid] = b"changed\n"
+    if extra:
+        files.update(extra)
+    return files
+
+
+_STUB_REL = "baseline/setup/tests/harness/test-mutate-shards.sh"
+_STUB_LINE = "RESULT A1: NOT BLOCKED"
+
+
+def _with_raw(plan, write_raw):
+    """Run aggregate against a temp raw dir. Restores the process environment."""
+    raw = tempfile.mkdtemp(prefix="raw-")
+    cwd = os.getcwd()
+    try:
+        write_raw(raw)
+        os.chdir(ROOT)
+        old = _push_env({
+            "PLAN_B64": _plan_b64(plan),
+            "SHARD_RESULT": "success",
+            "SELECTOR": ms.selector_hash(ROOT),
+            "RAW_DIR": raw,
+            "STATE_PATH": os.path.join(raw, "state.json"),
+            "GH_TOKEN": None,
+            "REPO": None,
+            "RUN_ID": None,
+            "GITHUB_OUTPUT": None,
+            "HEAD_SHA": None,
+        })
+        try:
+            return ms.cmd_aggregate()
+        finally:
+            _pop_env(old)
+            os.chdir(cwd)
+    finally:
+        shutil.rmtree(raw, ignore_errors=True)
+
+
+def _raw_id(folder, mid, stdout, suite, baseline):
+    os.makedirs(folder, exist_ok=True)
+    open(os.path.join(folder, mid + ".txt"), "w", encoding="utf-8").write(stdout)
+    open(os.path.join(folder, "baseline-" + suite), "w", encoding="utf-8").write(baseline)
+
+
+def _run_main_shard(plan, tar_path, out_dir):
+    old = _push_env({
+        "PLAN_B64": _plan_b64(plan),
+        "K": "0",
+        "TAR": tar_path,
+        "SHA256": ms.sha256_file(tar_path),
+        "RAW_DIR": out_dir,
+        "GITHUB_OUTPUT": None,
+    })
+    try:
+        return ms.main(["mutate_shards.py", "run-shard"])
+    finally:
+        _pop_env(old)
+
+
+def _resolve_fixture():
+    """Main defs plus a pull-request id whose suite is on the main list."""
+    repo = tempfile.mkdtemp(prefix="resolve-")
+    plan_dir = tempfile.mkdtemp(prefix="plan-")
+    main_src = (
+        "K = 'keel.sh'\n"
+        "M = {'M01': ('keel.sh', 'old-M01', 'new-M01', 'what', ['A1'])}\n"
+        "SUITE_OF = {'M01': 'test-attacks.sh'}\n"
+        "EXTRA_EDITS = {}\n"
+        "COPY_LIST = ['keel.sh']\n"
+        "CI_IDS = ['M01']\n"
+        "OFFLINE_IDS = []\n"
+        "FULL_ONLY = []\n"
+    )
+    pr_src = (
+        "K = 'keel.sh'\n"
+        "M = {\n"
+        " 'M01': ('keel.sh', 'old-M01', 'new-M01-b', 'what', ['A1']),\n"
+        " 'M201': ('keel.sh', 'old-M201', 'new-M201', 'what', ['A9']),\n"
+        "}\n"
+        "SUITE_OF = {'M01': 'test-attacks.sh', 'M201': 'test-step6.sh'}\n"
+        "EXTRA_EDITS = {}\n"
+        "COPY_LIST = ['keel.sh']\n"
+        "CI_IDS = ['M01', 'M201']\n"
+        "OFFLINE_IDS = []\n"
+        "FULL_ONLY = []\n"
+    )
+    try:
+        subprocess.check_call(["git", "init", "-q", "-b", "main"], cwd=repo)
+        subprocess.check_call(["git", "-C", repo, "config", "user.email", "t@x"])
+        subprocess.check_call(["git", "-C", repo, "config", "user.name", "t"])
+        subprocess.check_call(["git", "-C", repo, "config", "commit.gpgsign", "false"])
+        harness = os.path.join(repo, "setup", "tests", "harness")
+        os.makedirs(harness)
+        open(os.path.join(repo, "setup", "keel.sh"), "w", encoding="utf-8").write("old-M01\nold-M201\n")
+        for name in (
+            "mutant_files.py",
+            "mutant_defs.py",
+            "mutate_shards.py",
+            "mutate-full-state.py",
+        ):
+            open(os.path.join(harness, name), "w", encoding="utf-8").write("\n")
+        open(os.path.join(harness, "mutate.py"), "w", encoding="utf-8").write(main_src)
+        subprocess.check_call(["git", "-C", repo, "add", "."])
+        subprocess.check_call(["git", "-C", repo, "commit", "-qm", "base"])
+        subprocess.check_call(["git", "-C", repo, "checkout", "-q", "-b", "pr"])
+        open(os.path.join(harness, "mutate.py"), "w", encoding="utf-8").write(pr_src)
+        subprocess.check_call(["git", "-C", repo, "add", "setup/tests/harness/mutate.py"])
+        subprocess.check_call(["git", "-C", repo, "commit", "-qm", "pr"])
+        pr_sha = subprocess.check_output(["git", "-C", repo, "rev-parse", "HEAD"], text=True).strip()
+        subprocess.check_call(["git", "-C", repo, "checkout", "-q", "main"])
+        output = os.path.join(plan_dir, "github_output")
+        open(output, "w", encoding="utf-8").close()
+        old = _push_env({
+            "PLAN_DIR": plan_dir,
+            "PLAN_ALL": None,
+            "GH_TOKEN": None,
+            "REPO": None,
+            "GITHUB_OUTPUT": output,
+        })
+        try:
+            rc = ms.cmd_resolve(repo, pr_sha, "main")
+        finally:
+            _pop_env(old)
+        payload = json.loads(open(os.path.join(plan_dir, "plan.json"), encoding="utf-8").read())
+        return rc, payload
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        shutil.rmtree(plan_dir, ignore_errors=True)
+
+
+def case_h1():
+    rc, payload = _resolve_fixture()
+    if rc != 0:
+        return False
+    if "M201" in mutate.M or "M201" in mutate.SUITE_OF:
+        return False
+    return (
+        payload["suite"].get("M201") == "test-step6.sh"
+        and payload["exp"].get("M201") == ["A9"]
+        and "M201" in payload["ids"]
+    )
+
+
+def case_h2():
+    if "M201" in mutate.SUITE_OF or "M201" in mutate.M:
+        return False
+    mid = "M201"
+    suite = "test-mutate-shards.sh"
+    root = tempfile.mkdtemp(prefix="h2-")
+    try:
+        tar_path = os.path.join(root, "tree.tar.gz")
+        out_dir = os.path.join(root, "out")
+        line = "RESULT A1: BLOCKED"
+        _write_tar(tar_path, _shard_files([mid], _STUB_REL, _stub_suite(line)))
+        plan = {
+            "ids": [mid],
+            "shards": {"0": [mid]},
+            "suite": {mid: suite},
+            "exp": {mid: ["A1"]},
+            "skip": False,
+        }
+        if _run_main_shard(plan, tar_path, out_dir) != 0:
+            return False
+        got = open(os.path.join(out_dir, mid + ".txt"), encoding="utf-8").read()
+        base = open(os.path.join(out_dir, "baseline-" + suite), encoding="utf-8").read()
+        return line in got and line in base
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_h3():
+    mid = "M201"
+    suite = "test-mutate-shards.sh"
+    if mid in mutate.M or mid in mutate.SUITE_OF:
+        return False
+    plan = {
+        "ids": [mid],
+        "shards": {"0": [mid]},
+        "suite": {mid: suite},
+        "exp": {mid: ["A1"]},
+        "skip": False,
+        "full_plan": False,
+        "red_counts": "ci+offline",
+    }
+    seen = {}
+    real = ms.grade_stdout
+
+    def spy(exp, stdout):
+        seen["exp"] = list(exp)
+        return real(exp, stdout)
+
+    ms.grade_stdout = spy
+    try:
+        def write(raw):
+            _raw_id(
+                os.path.join(raw, "raw-0"),
+                mid,
+                "RESULT A1: NOT BLOCKED\n",
+                suite,
+                "RESULT A1: BLOCKED\n",
+            )
+
+        rc = _with_raw(plan, write)
+    finally:
+        ms.grade_stdout = real
+    graded, _detail = real(["A1"], "RESULT A1: NOT BLOCKED\n")
+    return rc == 0 and seen.get("exp") == ["A1"] and graded == "yes" and ms.plan_suite(plan, mid) == suite
+
+
+def case_h4():
+    _rc, payload = _resolve_fixture()
+    if payload["suite"].get("M01") != "test-attacks.sh":
+        return False
+    if payload["exp"].get("M01") != ["A1"]:
+        return False
+    mid = "M152"
+    suite = mutate.SUITE_OF[mid]
+    exp = list(mutate.M[mid][4])
+    plan = {
+        "ids": [mid],
+        "shards": {"0": [mid]},
+        "suite": {mid: suite},
+        "exp": {mid: exp},
+        "skip": False,
+        "full_plan": False,
+        "red_counts": "ci+offline",
+    }
+    if ms.plan_suite(plan, mid) != suite or ms.plan_exp(plan, mid) != exp:
+        return False
+    killed = "RESULT %s: NOT BLOCKED\n" % exp[0]
+    quiet = "RESULT %s: BLOCKED\n" % exp[0]
+    baseline = "RESULT %s: BLOCKED\n" % exp[0]
+
+    def write_killed(raw):
+        _raw_id(os.path.join(raw, "raw-0"), mid, killed, suite, baseline)
+
+    def write_quiet(raw):
+        _raw_id(os.path.join(raw, "raw-0"), mid, quiet, suite, baseline)
+
+    new_killed = _with_raw(plan, write_killed)
+    new_quiet = _with_raw(plan, write_quiet)
+    tag_killed, _detail = ms.grade_stdout(exp, killed)
+    tag_quiet, _detail = ms.grade_stdout(exp, quiet)
+    old_killed = 0 if not ms.tag_fails(tag_killed) else 1
+    old_quiet = 0 if not ms.tag_fails(tag_quiet) else 1
+    return new_killed == old_killed == 0 and new_quiet == old_quiet == 1
+
+
+def case_a1():
+    main = mini(["M01"])
+    pr = mini(["M01", "M201"])
+    pr.suite_of["M201"] = "not-a-suite.sh"
+    try:
+        ms.resolve_plan([], main, pr, False, mf.SUITES, lambda _names: ("skip", []))
+    except md.DefsError as err:
+        text = str(err)
+        return text.startswith("coverage") and "M201" in text
+    return False
+
+
+def case_a2():
+    mid = "M201"
+    suite = "evil.sh"
+    plan = {
+        "ids": [mid],
+        "shards": {"0": [mid]},
+        "suite": {mid: suite},
+        "exp": {mid: ["A1"]},
+        "skip": False,
+        "full_plan": False,
+        "red_counts": "ci+offline",
+    }
+    try:
+        ms.plan_suite(plan, mid)
+        return False
+    except ms.ShardError as err:
+        if str(err) != "suite":
+            return False
+    root = tempfile.mkdtemp(prefix="a2-")
+    try:
+        tar_path = os.path.join(root, "tree.tar.gz")
+        out_dir = os.path.join(root, "out")
+        script = "baseline/setup/tests/harness/" + suite
+        _write_tar(tar_path, _shard_files([mid], script, _stub_suite(_STUB_LINE)))
+        try:
+            _run_main_shard(plan, tar_path, out_dir)
+            return False
+        except ms.ShardError as err:
+            if str(err) != "suite":
+                return False
+
+        def write(raw):
+            _raw_id(
+                os.path.join(raw, "raw-0"),
+                mid,
+                "RESULT A1: NOT BLOCKED\n",
+                suite,
+                "RESULT A1: BLOCKED\n",
+            )
+
+        try:
+            _with_raw(plan, write)
+            return False
+        except ms.ShardError as err:
+            return str(err) == "suite"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_a3():
+    mid = "M03"
+    suite = mutate.SUITE_OF[mid]
+    exp = list(mutate.M[mid][4])
+    missing_suite = {
+        "ids": [mid],
+        "shards": {"0": [mid]},
+        "suite": {},
+        "exp": {mid: exp},
+        "skip": False,
+        "full_plan": False,
+        "red_counts": "ci+offline",
+    }
+    missing_exp = {
+        "ids": [mid],
+        "shards": {"0": [mid]},
+        "suite": {mid: suite},
+        "exp": {},
+        "skip": False,
+        "full_plan": False,
+        "red_counts": "ci+offline",
+    }
+    try:
+        ms.plan_suite(missing_suite, mid)
+        return False
+    except ms.ShardError as err:
+        if str(err) != "plan":
+            return False
+    try:
+        ms.plan_exp(missing_exp, mid)
+        return False
+    except ms.ShardError as err:
+        if str(err) != "plan":
+            return False
+    root = tempfile.mkdtemp(prefix="a3-")
+    try:
+        tar_path = os.path.join(root, "tree.tar.gz")
+        out_dir = os.path.join(root, "out")
+        script = "baseline/setup/tests/harness/" + suite
+        line = "RESULT %s: NOT BLOCKED" % exp[0]
+        _write_tar(tar_path, _shard_files([mid], script, _stub_suite(line)))
+        try:
+            _run_main_shard(missing_suite, tar_path, out_dir)
+            return False
+        except ms.ShardError as err:
+            if str(err) != "plan":
+                return False
+        if os.path.isfile(os.path.join(out_dir, mid + ".txt")):
+            return False
+
+        def write(raw):
+            _raw_id(
+                os.path.join(raw, "raw-0"),
+                mid,
+                line + "\n",
+                suite,
+                "RESULT %s: BLOCKED\n" % exp[0],
+            )
+
+        try:
+            rc = _with_raw(missing_exp, write)
+        except ms.ShardError as err:
+            return str(err) == "plan"
+        return rc != 0
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_a4():
+    keep = "M201"
+    extra = "M202"
+    suite = "test-mutate-shards.sh"
+    root = tempfile.mkdtemp(prefix="a4-")
+    try:
+        tar_path = os.path.join(root, "tree.tar.gz")
+        out_dir = os.path.join(root, "out")
+        _write_tar(
+            tar_path,
+            _shard_files([keep, extra], _STUB_REL, _stub_suite(_STUB_LINE)),
+        )
+        try:
+            ms.cmd_run_shard(
+                tar_path,
+                ms.sha256_file(tar_path),
+                out_dir,
+                {keep: suite, extra: suite},
+                [keep],
+            )
+            return False
+        except ms.ShardError as err:
+            if str(err) != "shard":
+                return False
+        plan = {
+            "ids": [keep],
+            "shards": {"0": [keep]},
+            "suite": {keep: suite},
+            "exp": {keep: ["A1"]},
+            "skip": False,
+        }
+        try:
+            _run_main_shard(plan, tar_path, out_dir)
+            return False
+        except ms.ShardError:
+            return True
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_a5():
+    root = tempfile.mkdtemp(prefix="a5-")
+    try:
+        tar_path = os.path.join(root, "tree.tar.gz")
+        out_dir = os.path.join(root, "out")
+        _write_tar(tar_path, _shard_files(["M201"], _STUB_REL, _stub_suite(_STUB_LINE)))
+        try:
+            ms.cmd_run_shard(
+                tar_path,
+                "0" * 64,
+                out_dir,
+                {"M201": "test-mutate-shards.sh"},
+                ["M201"],
+            )
+        except SystemExit as err:
+            direct = err.code == "sha256"
+        else:
+            return False
+        plan = {
+            "ids": ["M201"],
+            "shards": {"0": ["M201"]},
+            "suite": {"M201": "test-mutate-shards.sh"},
+            "exp": {"M201": ["A1"]},
+            "skip": False,
+        }
+        old = _push_env({
+            "PLAN_B64": _plan_b64(plan),
+            "K": "0",
+            "TAR": tar_path,
+            "SHA256": "0" * 64,
+            "RAW_DIR": out_dir,
+            "GITHUB_OUTPUT": None,
+        })
+        try:
+            ms.main(["mutate_shards.py", "run-shard"])
+        except SystemExit as err:
+            return direct and err.code == "sha256"
+        else:
+            return False
+        finally:
+            _pop_env(old)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_a6():
+    mid = "M201"
+    suite = "../../x.sh"
+    plan = {
+        "ids": [mid],
+        "shards": {"0": [mid]},
+        "suite": {mid: suite},
+        "exp": {mid: ["A1"]},
+        "skip": False,
+        "full_plan": False,
+        "red_counts": "ci+offline",
+    }
+    try:
+        ms.plan_suite(plan, mid)
+        return False
+    except ms.ShardError as err:
+        if str(err) != "suite":
+            return False
+    root = tempfile.mkdtemp(prefix="a6-")
+    try:
+        tar_path = os.path.join(root, "tree.tar.gz")
+        out_dir = os.path.join(root, "out")
+        sentinel = b"#!/bin/bash\necho RAN > setup/ran-marker\necho 'RESULT A1: NOT BLOCKED'\n"
+        files = _shard_files([mid], "baseline/setup/tests/harness/ignored.sh", b"#!/bin/bash\n")
+        files["baseline/setup/x.sh"] = sentinel
+        _write_tar(tar_path, files)
+        try:
+            ms.cmd_run_shard(
+                tar_path,
+                ms.sha256_file(tar_path),
+                out_dir,
+                {mid: suite},
+                [mid],
+            )
+            return False
+        except ms.ShardError as err:
+            if str(err) != "suite":
+                return False
+        marker = os.path.join(out_dir, "work", "baseline", "setup", "ran-marker")
+        if os.path.exists(marker):
+            return False
+
+        def write(raw):
+            folder = os.path.join(raw, "raw-0")
+            os.makedirs(folder, exist_ok=True)
+            open(os.path.join(folder, mid + ".txt"), "w", encoding="utf-8").write(
+                "RESULT A1: NOT BLOCKED\n"
+            )
+
+        try:
+            _with_raw(plan, write)
+            return False
+        except ms.ShardError as err:
+            return str(err) == "suite"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_s_p10():
+    """Bounded capture, archive rule, and aggregate guards. No attack suite and no Docker."""
+    if ms.SUITE_TIMEOUT != 900:
+        return _no("suite timeout constant")
+    env = os.environ.copy()
+    root = tempfile.mkdtemp(prefix="cap-")
+    calls = []
+    saved_obs = ms.observe_failure_names
+    ms.observe_failure_names = lambda: calls.append(1) or ([], 0)
+    try:
+        if not _cap_exit_and_deadline(env):
+            return False
+        if not _cap_pipes(env, root):
+            return False
+        if not _cap_spool(env):
+            return False
+        if not _cap_bytes_and_utf(env, root):
+            return False
+        if not _cap_redaction():
+            return False
+        if not _cap_provision(env, root):
+            return False
+        if not _cap_owned_group(env, root):
+            return False
+        if not _cap_archive_and_grade(root):
+            return False
+        if not _cap_tail(root, calls):
+            return False
+        if not _cap_last_id(root):
+            return False
+        if not calls:
+            return _no("observe calls")
+        return True
+    finally:
+        ms.observe_failure_names = saved_obs
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _cap_exit_and_deadline(env):
+    before = ms._signal_group.calls
+    cap = ms.capture_command(["/bin/sh", "-c", "exit 124"], env, "/tmp", 2)
+    if cap.term != "exit" or cap.controller_deadline or cap.child_code != 124 or cap.legacy_code != 124:
+        return _no("child 124 %s %s" % (cap.term, cap.child_code))
+    if ms._signal_group.calls != before:
+        return _no("signal on exit 124")
+    if any(thread.is_alive() for thread in cap.threads):
+        return _no("thread after exit 124")
+    started = time.monotonic()
+    cap = ms.capture_command(["/bin/sh", "-c", "sleep 30"], env, "/tmp", 0.4)
+    elapsed = time.monotonic() - started
+    if not cap.controller_deadline or cap.term != "timeout" or cap.legacy_code != 124:
+        return _no("deadline flag")
+    if cap.child_code == 124:
+        return _no("deadline used child 124")
+    if any(thread.is_alive() for thread in cap.threads) or elapsed > 8:
+        return _no("deadline linger %s" % elapsed)
+    cap = ms.capture_command(["/bin/sh", "-c", "printf 'RESULT A1: BLOCKED\\n'; exit 3"], env, "/tmp", 2)
+    if cap.term != "exit" or cap.child_code != 3 or cap.stdout != b"RESULT A1: BLOCKED\n":
+        return _no("exit 3 bytes")
+    if ms._signal_group.calls == before:
+        return _no("deadline did not signal")
+    return True
+
+
+def _cap_pipes(env, root):
+    same = os.path.join(root, "same.py")
+    pidf = os.path.join(root, "same.pid")
+    open(same, "w", encoding="utf-8").write(
+        "import os,sys,time\n"
+        "p=sys.argv[1]\n"
+        "pid=os.fork()\n"
+        "if pid==0:\n"
+        "    open(p,'w').write(str(os.getpid()))\n"
+        "    time.sleep(60)\n"
+        "else:\n"
+        "    os._exit(0)\n"
+    )
+    started = time.monotonic()
+    cap = ms.capture_command(["python3", same, pidf], env, root, 2)
+    elapsed = time.monotonic() - started
+    pid = int(open(pidf, encoding="utf-8").read()) if os.path.isfile(pidf) else 0
+    if any(thread.is_alive() for thread in cap.threads) or elapsed > 12 or not cap.capture_incomplete:
+        return _no("same-group capture %s" % elapsed)
+    if pid and _alive(pid):
+        os.kill(pid, 9)
+        return _no("same-group still alive")
+    esc = os.path.join(root, "esc.py")
+    pidf = os.path.join(root, "esc.pid")
+    open(esc, "w", encoding="utf-8").write(
+        "import os,sys,time\n"
+        "p=sys.argv[1]\n"
+        "pid=os.fork()\n"
+        "if pid==0:\n"
+        "    os.setsid()\n"
+        "    open(p,'w').write(str(os.getpid()))\n"
+        "    time.sleep(60)\n"
+        "else:\n"
+        "    os._exit(0)\n"
+    )
+    started = time.monotonic()
+    cap = ms.capture_command(["python3", esc, pidf], env, root, 2)
+    elapsed = time.monotonic() - started
+    pid = int(open(pidf, encoding="utf-8").read())
+    still = _alive(pid)
+    if still:
+        os.kill(pid, 9)
+    if not still or any(thread.is_alive() for thread in cap.threads) or elapsed > 12:
+        return _no("escaped session")
+    return True
+
+
+def _cap_spool(env):
+    """A blocking os.write in a non-main thread must not keep the controller alive."""
+    script = (
+        "import os, threading, time, mutate_shards as ms\n"
+        "real = os.write\n"
+        "def hang(fd, data):\n"
+        "    if threading.current_thread() is not threading.main_thread():\n"
+        "        time.sleep(30)\n"
+        "        return len(data)\n"
+        "    return real(fd, data)\n"
+        "os.write = hang\n"
+        "cap = ms.capture_command(['/bin/sh','-c','python3 -c \"import sys; sys.stdout.buffer.write(b' + \"'x'\" + '*200000)\"'], os.environ.copy(), '/tmp', 1)\n"
+        "alive = any(thread.is_alive() for thread in cap.threads)\n"
+        "raise SystemExit(0 if not alive and cap.ms < 5000 else 1)\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=HERE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=10,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return _no("blocked reader survived %s" % proc.returncode)
+    started = time.monotonic()
+    cap = ms.capture_command(
+        ["/bin/sh", "-c", "python3 -c \"import sys; sys.stdout.buffer.write(b'x'*200000)\""],
+        env,
+        "/tmp",
+        2,
+    )
+    if any(thread.is_alive() for thread in cap.threads) or time.monotonic() - started > 5:
+        return _no("memory sink linger")
+    if cap.stdout != b"x" * 200000 or not cap.publish:
+        return _no("memory sink bytes")
+    blocked = os.path.join(env.get("TMPDIR", "/tmp"), "not-a-dir")
+    open(blocked, "w", encoding="utf-8").write("x")
+    score = CaptureStandin()
+    if ms._store_score_file(os.path.join(blocked, "out.txt"), b"abc", score):
+        return _no("write error published")
+    if os.path.isfile(os.path.join(blocked, "out.txt")):
+        return _no("partial score left")
+    return True
+
+
+class CaptureStandin(object):
+    publish = True
+
+
+def _cap_bytes_and_utf(env, root):
+    cap = ms.capture_command(["/bin/sh", "-c", "printf 'RESULT A1: BLOCKED\\nexact'"], env, "/tmp", 2)
+    if cap.stdout != b"RESULT A1: BLOCKED\nexact" or not cap.publish or cap.term != "exit":
+        return _no("exact stdout")
+    if ms.grade_stdout(["FIX-A"], "RESULT FIX-A: BLOCKED\n")[0] != "NO":
+        return _no("blocked polarity")
+    if ms.grade_stdout(["FIX-C"], "RESULT FIX-C: NOT BLOCKED\n")[0] != "yes":
+        return _no("not-blocked polarity")
+    huge = os.path.join(root, "huge.py")
+    open(huge, "w", encoding="utf-8").write(
+        "import sys\nsys.stdout.buffer.write(b'y'*(9*1024*1024))\n"
+    )
+    started = time.monotonic()
+    cap = ms.capture_command(["python3", huge], env, root, 5)
+    if time.monotonic() - started > 20 or not cap.truncated or cap.publish or cap.legacy_code == 0:
+        return _no("truncate %s" % cap.term)
+    if any(thread.is_alive() for thread in cap.threads):
+        return _no("truncate thread")
+    raw = tempfile.mkdtemp(prefix="utf-")
+    try:
+        folder = os.path.join(raw, "raw-0")
+        os.makedirs(folder)
+        open(os.path.join(folder, "baseline-test-mutate-shards.sh"), "w", encoding="utf-8").write(
+            "RESULT FIX-A: BLOCKED\n"
+        )
+        open(os.path.join(folder, "M201.txt"), "wb").write(b"\xff")
+        plan = {
+            "ids": ["M201"],
+            "shards": {"0": ["M201"]},
+            "suite": {"M201": "test-mutate-shards.sh"},
+            "exp": {"M201": ["FIX-A"]},
+            "skip": False,
+            "full_plan": False,
+            "red_counts": "ci+offline",
+        }
+        cwd = os.getcwd()
+        old = _push_env({
+            "PLAN_B64": _plan_b64(plan),
+            "SHARD_RESULT": "success",
+            "SELECTOR": ms.selector_hash(ROOT),
+            "RAW_DIR": raw,
+            "STATE_PATH": os.path.join(raw, "state.json"),
+            "GH_TOKEN": None,
+            "REPO": None,
+            "RUN_ID": None,
+        })
+        try:
+            os.chdir(ROOT)
+            try:
+                ms.cmd_aggregate()
+            except UnicodeDecodeError:
+                pass
+            else:
+                return _no("strict utf-8 did not raise")
+        finally:
+            _pop_env(old)
+            os.chdir(cwd)
+    finally:
+        shutil.rmtree(raw, ignore_errors=True)
+    return True
+
+
+def _cap_redaction():
+    def render(raw):
+        accum = ms._StderrAccum()
+        if isinstance(raw, str):
+            raw = raw.encode("utf-8")
+        for index in range(0, len(raw), 16):
+            accum.feed(raw[index:index + 16])
+        accum.finish()
+        return accum.render("", "")
+
+    text = render(b"ghp_" + b"a" * 24 + b"\n")
+    if "ghp_" in text or "<redacted>" not in text:
+        return _no("token reassembly")
+    for sample in ("Bearer +a/b==", "Bearer ab/cd==", "Bearer ab~cd"):
+        shown = render("prefix " + sample + "\n")
+        if sample.split(" ", 1)[1] in shown or "<redacted>" not in shown:
+            return _no("bearer %s" % shown)
+    split = render(b"Bearer ab" + b"/cd==\n")
+    if "ab/cd" in split or "/cd==" in split or "<redacted>" not in split:
+        return _no("bearer chunk")
+    fitted = ms._fit_text("x" * 400, 32)
+    if len(fitted.encode("utf-8")) > 32 or "<truncated>" not in fitted:
+        return _no("fit cap %s" % len(fitted.encode("utf-8")))
+    tiny = ms._fit_text("yyyy", 4)
+    if len(tiny.encode("utf-8")) > 4:
+        return _no("tiny cap")
+    # Head fills before BEGIN. The body is longer than the tail window, so
+    # BEGIN is evicted from both retained lists while SECRETLINE remains in
+    # the tail. A redactor that only sees retained lines would still publish it.
+    head_filler = "h\n" * 2500
+    body = "SECRETLINE\n" * 400
+    stream = head_filler + "-----BEGIN TEST KEY-----\n" + body + "-----END TEST KEY-----\nTAIL-OK\n"
+    accum = ms._StderrAccum()
+    raw_stream = stream.encode("utf-8")
+    for index in range(0, len(raw_stream), 16):
+        accum.feed(raw_stream[index:index + 16])
+    accum.finish()
+    head_lines = [line for _before, line in accum.head]
+    tail_lines = [line for _before, line in accum.tail]
+    if any("BEGIN" in line for line in head_lines + tail_lines):
+        return _no("BEGIN still inside a retained window")
+    if not tail_lines or tail_lines[0] != "SECRETLINE":
+        return _no("body is not at the tail start %s" % (tail_lines[:2],))
+    if "-----END TEST KEY-----" not in tail_lines or "TAIL-OK" not in tail_lines:
+        return _no("END or safe line missing from tail")
+    shown = accum.render("", "")
+    if "SECRETLINE" in shown or "BEGIN TEST" in shown or "END TEST" in shown:
+        return _no("discarded-middle body published")
+    if "TAIL-OK" not in shown:
+        return _no("safe line after END dropped")
+    marker = [line for line in shown.splitlines() if line.startswith("<omitted bytes=")]
+    if not marker or marker[0].endswith("=0>"):
+        return _no("discarded bytes %s" % marker)
+    head = "\n".join("h%04d" % i for i in range(700))
+    shown = render(head + "\n-----BEGIN TEST KEY-----\nSECRETLINE\n-----END TEST KEY-----\nTAIL-OK\n")
+    if "SECRETLINE" in shown or "BEGIN TEST" in shown or "TAIL-OK" not in shown:
+        return _no("pem head edge")
+    huge = b"-----BEGIN TEST KEY-----\n" + (b"BODY\n" * 200000) + b"-----END TEST KEY-----\nOK\n"
+    accum = ms._StderrAccum()
+    accum.feed(huge)
+    accum.finish()
+    if accum.tail_bytes > ms.STDERR_TAIL + 100 or "BODY" in accum.render("", ""):
+        return _no("pem memory")
+    return True
+
+
+def _grade_tree(folder, plan, shard_result):
+    cwd = os.getcwd()
+    old = _push_env({
+        "PLAN_B64": _plan_b64(plan),
+        "SHARD_RESULT": shard_result,
+        "SELECTOR": ms.selector_hash(ROOT),
+        "RAW_DIR": folder,
+        "STATE_PATH": os.path.join(folder, "state.json"),
+        "GH_TOKEN": None,
+        "REPO": None,
+        "RUN_ID": None,
+    })
+    try:
+        os.chdir(ROOT)
+        return ms.cmd_aggregate()
+    finally:
+        _pop_env(old)
+        os.chdir(cwd)
+
+
+def _cap_archive_and_grade(root):
+    chunk = 8 * 1024 * 1024
+    sizes = [chunk] * 7 + [int(7.5 * 1024 * 1024)]
+    if not ms.mandatory_within_archive(sizes) or ms.aux_room(sum(sizes)) != 0:
+        return _no("63.5 MiB rule")
+    exact = [chunk] * 8
+    if not ms.mandatory_within_archive(exact) or ms.aux_room(sum(exact)) != 0:
+        return _no("64 MiB rule")
+    mid = "M201"
+    plan = {
+        "ids": [mid],
+        "shards": {"0": [mid]},
+        "suite": {mid: "test-mutate-shards.sh"},
+        "exp": {mid: ["FIX-A"]},
+        "skip": False,
+        "full_plan": False,
+        "red_counts": "ci+offline",
+    }
+    raw = os.path.join(root, "arch")
+    os.makedirs(os.path.join(raw, "raw-0"))
+    line = b"x" * 8000 + b"\n"
+
+    def fill(path, total):
+        with open(path, "wb") as handle:
+            left = total
+            while left > 0:
+                piece = line if left >= len(line) else (b"x" * max(0, left - 1) + b"\n")
+                if len(piece) > left:
+                    piece = piece[:left]
+                handle.write(piece)
+                left -= len(piece)
+
+    base = os.path.join(raw, "raw-0", "baseline-test-mutate-shards.sh")
+    open(base, "wb").write(b"RESULT FIX-A: BLOCKED\n")
+    for index, total in enumerate(sizes):
+        fill(os.path.join(raw, "raw-0", "baseline-pad-%d" % index), total)
+    open(os.path.join(raw, "raw-0", mid + ".txt"), "w", encoding="utf-8").write(
+        "RESULT FIX-A: BLOCKED\n"
+    )
+    open(os.path.join(raw, "raw-0", "shard-status.json"), "w", encoding="utf-8").write("{}\n")
+    names = []
+    folder = os.path.join(raw, "raw-0")
+    for name in os.listdir(folder):
+        names.append(os.path.getsize(os.path.join(folder, name)))
+    if not ms.mandatory_within_archive(names) or ms.aux_room(sum(names)) != 0:
+        return _no("built mandatory %s" % sum(names))
+    before = _snapshot_bytes(folder)
+    del ms._TRACE[:]
+    ms._TRACE.append({
+        "phase": "mutant", "suite": "test-mutate-shards.sh", "id": mid,
+        "ms": 1, "term": "exit", "deadline": 0, "child_code": 0,
+        "stdout_bytes": 1, "stderr_bytes": 1, "truncated": 0,
+        "text": "SHOULD-NOT-LAND",
+    })
+    if ms.publish_aux(folder, False) != "omit":
+        return _no("near-limit publisher")
+    if _snapshot_bytes(folder) != before:
+        return _no("publisher changed mandatory bytes")
+    if os.path.exists(os.path.join(folder, "diag-shard.txt")):
+        return _no("aux written into a full archive")
+    blob_path = os.path.join(root, "arch.zip")
+    with zipfile.ZipFile(blob_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in os.listdir(folder):
+            archive.write(os.path.join(folder, name), "raw-0/" + name)
+    blob = open(blob_path, "rb").read()
+    if len(blob) > ms.MAX_ARCHIVE_BYTES:
+        return _no("zip blob")
+    extracted = os.path.join(root, "extracted")
+    ms.safe_extract(blob, extracted)
+    first = _grade_tree(extracted, plan, "success")
+    again = os.path.join(root, "again")
+    ms.safe_extract(blob, again)
+    second = _grade_tree(again, plan, "success")
+    if first != 0 or second != 0 or _state_of(extracted) != _state_of(again):
+        return _no("archive grade %s %s" % (first, second))
+    low = ms.grade_stdout(["FIX-C"], "RESULT FIX-C: NOT BLOCKED\n")[0]
+    if low != "yes":
+        return _no("low yes")
+    fail_raw = os.path.join(root, "failraw")
+    os.makedirs(os.path.join(fail_raw, "raw-0"))
+    open(os.path.join(fail_raw, "raw-0", "baseline-test-mutate-shards.sh"), "w", encoding="utf-8").write(
+        "RESULT FIX-C: BLOCKED\n"
+    )
+    open(os.path.join(fail_raw, "raw-0", "M201.txt"), "w", encoding="utf-8").write(
+        "RESULT FIX-C: NOT BLOCKED\n"
+    )
+    fail_plan = dict(plan)
+    fail_plan["exp"] = {"M201": ["FIX-C"]}
+    if _grade_tree(fail_raw, fail_plan, "failure") != 1:
+        return _no("failed last id")
+    if not _cap_small_publisher(root):
+        return False
+    return True
+
+
+def _require_run_state(state):
+    required = ("mode", "full_plan", "green_all", "bootstrap_overdue", "head_sha")
+    if any(key not in state for key in required):
+        return False
+    return (
+        state["mode"] == "run"
+        and state["full_plan"] is False
+        and state["green_all"] is False
+        and state["bootstrap_overdue"] is False
+    )
+
+
+def _grade_recorded(folder, plan, shard_result):
+    seen = []
+    real = ms.grade_stdout
+    def wrap(exp, stdout):
+        tag, detail = real(exp, stdout)
+        text = stdout if isinstance(stdout, str) else stdout.decode("utf-8", "replace")
+        seen.append((tag, text))
+        return tag, detail
+    ms.grade_stdout = wrap
+    try:
+        code = _grade_tree(folder, plan, shard_result)
+    finally:
+        ms.grade_stdout = real
+    return code, seen, _state_of(folder)
+
+
+def _mandatory_digests(folder, names):
+    found = {}
+    for name in names:
+        path = os.path.join(folder, name)
+        if not os.path.isfile(path):
+            return None
+        found[name] = ms.sha256_file(path)
+    return found
+
+
+def _cap_small_publisher(root):
+    """Grade the untouched scores first. Aux text would flip that grade."""
+    if "M03" not in mf.CI_IDS:
+        return _no("M03 is not a CI id")
+    small = os.path.join(root, "small")
+    bare = os.path.join(small, "bare", "raw-0")
+    os.makedirs(bare)
+    names = ("baseline-test-mutate-shards.sh", "M03.txt")
+    open(os.path.join(bare, names[0]), "w", encoding="utf-8").write("RESULT FIX-A: BLOCKED\n")
+    open(os.path.join(bare, names[1]), "w", encoding="utf-8").write("RESULT FIX-A: BLOCKED\n")
+    control = os.path.join(small, "control")
+    shutil.copytree(os.path.join(small, "bare"), control)
+    plan = {
+        "ids": ["M03"],
+        "shards": {"0": ["M03"]},
+        "suite": {"M03": "test-mutate-shards.sh"},
+        "exp": {"M03": ["FIX-A"]},
+        "skip": False,
+        "full_plan": False,
+        "red_counts": "ci+offline",
+    }
+    before_digest = _mandatory_digests(os.path.join(control, "raw-0"), names)
+    pre_code, pre_seen, pre_state = _grade_recorded(control, plan, "success")
+    if pre_code != 1 or pre_seen != [("NO", "RESULT FIX-A: BLOCKED\n")]:
+        return _no("pre-publication grade %s %s" % (pre_code, pre_seen))
+    if not _require_run_state(pre_state):
+        return _no("pre-publication state %s" % pre_state)
+    del ms._TRACE[:]
+    ms._TRACE.append({
+        "phase": "mutant", "suite": "test-mutate-shards.sh", "id": "M03",
+        "ms": 1, "term": "exit", "deadline": 0, "child_code": 0,
+        "stdout_bytes": 4, "stderr_bytes": 4, "truncated": 0,
+        "text": "RESULT FIX-A: NOT BLOCKED",
+    })
+    if ms.publish_aux(os.path.join(control, "raw-0"), False) != "kept":
+        return _no("small publisher")
+    if _mandatory_digests(os.path.join(control, "raw-0"), names) != before_digest:
+        return _no("publisher rewrote mandatory bytes")
+    diag = open(os.path.join(control, "raw-0", "diag-shard.txt"), encoding="utf-8").read()
+    if ms.grade_stdout(["FIX-A"], diag)[0] != "yes":
+        return _no("aux text would not have changed the grade")
+    packed = os.path.join(small, "published.zip")
+    with zipfile.ZipFile(packed, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in os.listdir(os.path.join(control, "raw-0")):
+            archive.write(os.path.join(control, "raw-0", name), "raw-0/" + name)
+    published = os.path.join(small, "published")
+    ms.safe_extract(open(packed, "rb").read(), published)
+    if _mandatory_digests(os.path.join(published, "raw-0"), names) != before_digest:
+        return _no("zip changed mandatory bytes")
+    post_code, post_seen, post_state = _grade_recorded(published, plan, "success")
+    if post_code != pre_code or post_seen != pre_seen or post_state != pre_state:
+        return _no("aux changed aggregate %s %s %s" % (post_code, post_seen, post_state))
+    if ms.aux_room(100) <= 0:
+        return _no("small room")
+    return True
+
+
+def _snapshot_bytes(folder, skip=()):
+    found = {}
+    for name in os.listdir(folder):
+        if name in skip:
+            continue
+        path = os.path.join(folder, name)
+        if os.path.isfile(path):
+            found[name] = os.path.getsize(path)
+    return found
+
+
+def _state_of(folder):
+    path = os.path.join(folder, "state.json")
+    if not os.path.isfile(path):
+        return {}
+    return json.load(open(path, encoding="utf-8"))
+
+
+def _cap_provision(env, root):
+    version = ms.GITLEAKS_VERSION
+    hold = os.path.join(root, "hold.py")
+    pidf = os.path.join(root, "hold.pid")
+    open(hold, "w", encoding="utf-8").write(
+        "import os,sys,time\n"
+        "sys.stdout.write(%r)\n" % (version + "\n") +
+        "sys.stdout.flush()\n"
+        "pid=os.fork()\n"
+        "if pid==0:\n"
+        "    open(sys.argv[1],'w').write(str(os.getpid()))\n"
+        "    time.sleep(60)\n"
+        "else:\n"
+        "    os._exit(0)\n"
+    )
+    code, out = ms._run_allowlisted([sys.executable, hold, pidf], env)
+    pid = int(open(pidf, encoding="utf-8").read()) if os.path.isfile(pidf) else 0
+    if pid and _alive(pid):
+        os.kill(pid, 9)
+    if code == 0 or version in out:
+        return _no("provision accepted a lost capture %s" % code)
+    good = os.path.join(root, "good.sh")
+    open(good, "w", encoding="utf-8").write("printf '%s\\n'\n" % version)
+    os.chmod(good, 0o755)
+    code, out = ms._run_allowlisted(["/bin/sh", good], env)
+    if code != 0 or version not in out:
+        return _no("provision positive %s" % code)
+    huge = os.path.join(root, "huge-prov.py")
+    open(huge, "w", encoding="utf-8").write(
+        "import sys\n"
+        "sys.stdout.write(%r)\n" % (version + "\n") +
+        "sys.stdout.buffer.write(b'z'*(9*1024*1024))\n"
+    )
+    code, out = ms._run_allowlisted([sys.executable, huge], env)
+    if code != 0 or version not in out:
+        return _no("provision overflow %s" % code)
+    script = os.path.join(root, "prov-cmd.py")
+    open(script, "w", encoding="utf-8").write(
+        "import os,sys,time\n"
+        "sys.stdout.write(%r)\n" % (version + "\n") +
+        "sys.stdout.flush()\n"
+        "pid=os.fork()\n"
+        "if pid==0:\n"
+        "    time.sleep(60)\n"
+        "else:\n"
+        "    os._exit(0)\n"
+    )
+    saved = ms.provision_commands
+    def only_ours(base, needed, home, pi_present=False):
+        return [[sys.executable, script]]
+    ms.provision_commands = only_ours
+    try:
+        try:
+            ms.provision_selected(root, ["test-runtime.sh"], {"test-runtime.sh": ["M10"]}, home=root)
+        except ms.PrereqError:
+            pass
+        else:
+            return _no("provision_selected ignored capture loss")
+    finally:
+        ms.provision_commands = saved
+    return True
+
+
+def _cap_owned_group(env, root):
+    script = os.path.join(root, "ign.py")
+    pidf = os.path.join(root, "ign.pid")
+    open(script, "w", encoding="utf-8").write(
+        "import os,signal,sys,time\n"
+        "path=sys.argv[1]\n"
+        "pid=os.fork()\n"
+        "if pid==0:\n"
+        "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "    os.close(1)\n"
+        "    os.close(2)\n"
+        "    open(path,'w').write(str(os.getpid()))\n"
+        "    time.sleep(60)\n"
+        "else:\n"
+        "    time.sleep(60)\n"
+    )
+    started = time.monotonic()
+    cap = ms.capture_command([sys.executable, script, pidf], env, root, 0.4)
+    elapsed = time.monotonic() - started
+    pid = int(open(pidf, encoding="utf-8").read()) if os.path.isfile(pidf) else 0
+    still = bool(pid) and _alive(pid)
+    if still:
+        os.kill(pid, 9)
+    if not cap.controller_deadline or still or any(thread.is_alive() for thread in cap.threads):
+        return _no("owned group %s %s" % (cap.term, still))
+    if elapsed > 8:
+        return _no("owned group slow %s" % elapsed)
+    return True
+
+
+def _cap_last_id(root):
+    script = (
+        "#!/bin/bash\n"
+        "if [ \"$KEEL_NS\" = M201 ]; then\n"
+        "  printf 'RESULT FIX-C: NOT BLOCKED\\n'\n"
+        "  sleep 30\n"
+        "else\n"
+        "  printf 'RESULT FIX-C: BLOCKED\\n'\n"
+        "fi\n"
+    ).encode("utf-8")
+    tar_path = os.path.join(root, "last.tar.gz")
+    _write_tar(tar_path, _shard_files(["M201"], _STUB_REL, script))
+    out_dir = os.path.join(root, "last-out")
+    os.makedirs(out_dir)
+    code = ms.cmd_run_shard(
+        tar_path,
+        ms.sha256_file(tar_path),
+        out_dir,
+        {"M201": "test-mutate-shards.sh"},
+        ["M201"],
+        {"M201": ["FIX-C"]},
+        timeout=0.4,
+    )
+    scored = os.path.join(out_dir, "M201.txt")
+    if code != 1 or not os.path.isfile(scored):
+        return _no("last id missing output")
+    body = open(scored, encoding="utf-8").read()
+    if ms.grade_stdout(["FIX-C"], body)[0] != "yes":
+        return _no("last id not low-level yes")
+    shard_result = "failure" if code != 0 else "success"
+    packed = os.path.join(root, "last.zip")
+    with zipfile.ZipFile(packed, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in ("M201.txt", "baseline-test-mutate-shards.sh", "shard-status.json"):
+            path = os.path.join(out_dir, name)
+            if os.path.isfile(path):
+                archive.write(path, "raw-0/" + name)
+    unpacked = os.path.join(root, "last-unpacked")
+    ms.safe_extract(open(packed, "rb").read(), unpacked)
+    plan = {
+        "ids": ["M201"],
+        "shards": {"0": ["M201"]},
+        "suite": {"M201": "test-mutate-shards.sh"},
+        "exp": {"M201": ["FIX-C"]},
+        "skip": False,
+        "full_plan": False,
+        "red_counts": "ci+offline",
+    }
+    if _grade_tree(unpacked, plan, shard_result) != 1:
+        return _no("last id aggregate accepted a timeout")
+    return True
+
+
+def _cap_tail(root, calls):
+    script = (
+        "#!/bin/bash\n"
+        "if [ \"$KEEL_NS\" = M201 ]; then\n"
+        "  sleep 30\n"
+        "fi\n"
+        "printf 'RESULT A1: BLOCKED\\n'\n"
+    ).encode("utf-8")
+    tar_path = os.path.join(root, "tail.tar.gz")
+    _write_tar(tar_path, _shard_files(["M201", "M202"], _STUB_REL, script))
+    digest = ms.sha256_file(tar_path)
+    out_dir = os.path.join(root, "tail-out")
+    os.makedirs(out_dir)
+    started = time.monotonic()
+    code = ms.cmd_run_shard(
+        tar_path,
+        digest,
+        out_dir,
+        {"M201": "test-mutate-shards.sh", "M202": "test-mutate-shards.sh"},
+        ["M201", "M202"],
+        {"M201": ["A1"], "M202": ["A1"]},
+        timeout=0.4,
+    )
+    elapsed = time.monotonic() - started
+    status = open(os.path.join(out_dir, "shard-status.json"), encoding="utf-8").read()
+    if code != 1 or os.path.exists(os.path.join(out_dir, "M202.txt")):
+        return _no("tail ran")
+    if "timeout" not in status or elapsed > 8:
+        return _no("tail status %s %s" % (status, elapsed))
+    if not calls:
+        return _no("failure observe missing")
+    return True
+
+
+def _no(detail):
+    print(detail, file=sys.stderr)
+    return False
+
+
+def _shard_script(rel):
+    text = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+    job = _workflow_jobs(text).get("shard") or ""
+    lines = job.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() != "run: |":
+            continue
+        base = len(line) - len(line.lstrip(" "))
+        body = []
+        for nxt in lines[index + 1:]:
+            if nxt.strip() and (len(nxt) - len(nxt.lstrip(" "))) <= base:
+                break
+            body.append(nxt)
+        if "run-shard" not in "\n".join(body):
+            continue
+        indent = min(len(item) - len(item.lstrip(" ")) for item in body if item.strip())
+        return "\n".join(item[indent:] if len(item) >= indent else item for item in body)
+    return ""
+
+
+def _resolve_job(rel):
+    text = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+    return _workflow_jobs(text).get("resolve-plan") or ""
+
+
+def case_s_p1():
+    """Both workflows keep one read-only run-shard lifecycle and upload k=0..7."""
+    scripts = []
+    for rel in (".github/workflows/mutate-pr.yml", ".github/workflows/mutate-full.yml"):
+        text = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+        jobs = _workflow_jobs(text)
+        shard = jobs.get("shard") or ""
+        if _permission_map(shard) != {"contents": "read"}:
+            return _no("permission " + rel)
+        if "actions/cache" in text or "actions/cache" in shard:
+            return _no("cache " + rel)
+        if "GH_TOKEN" in shard or "GITHUB_TOKEN" in shard or "NPM_TOKEN" in shard:
+            return _no("token " + rel)
+        script = _shard_script(rel)
+        if "env -i" not in script or "run-shard" not in script:
+            return _no("entrypoint " + rel)
+        if '"PATH=$PATH"' not in script:
+            return _no("path " + rel)
+        if "/usr/bin:/bin" in script:
+            return _no("replaced path " + rel)
+        if 'NODE_PATH=$NODE_PATH' not in script or 'KEEL_PI_BIN=$KEEL_PI_BIN' not in script:
+            return _no("forward " + rel)
+        if '"KEEL_CI=1"' not in script:
+            return _no("keel ci " + rel)
+        if "docker build" in script or "gitleaks-install" in script or "npm install" in script:
+            return _no("yaml provision " + rel)
+        if "if: always()" not in shard:
+            return _no("always " + rel)
+        if "raw-out/shard-status.json" not in shard or "raw-out/baseline-*" not in shard:
+            return _no("raw paths " + rel)
+        if "raw-out/work" in shard:
+            return _no("work upload " + rel)
+        for line in shard.splitlines():
+            if line.strip() == "path: raw-out":
+                return _no("broad raw " + rel)
+        if "fromJSON(needs.resolve-plan.outputs.matrix)" not in shard:
+            return _no("matrix " + rel)
+        if 'JOBS: "3"' not in shard:
+            return _no("jobs " + rel)
+        plan_job = _resolve_job(rel)
+        cursor = 0
+        for key in range(8):
+            marker = "name: tree-%d" % key
+            gate = "hashFiles('plan-out/tree-%d.tar.gz')" % key
+            found = plan_job.find(marker, cursor)
+            if found < 0 or gate not in plan_job:
+                return _no("tree %d %s" % (key, rel))
+            cursor = found + len(marker)
+        if "ea165f8d65b6e75b540449e92b4886f43607fa02" not in plan_job:
+            return _no("pin " + rel)
+        scripts.append(script)
+    if scripts[0] != scripts[1]:
+        return _no("lifecycle drift")
+    return True
+
+
+def _source_pins():
+    run = open(os.path.join(ROOT, "setup/tests/harness/run-tests.sh"), encoding="utf-8").read()
+    installer = open(os.path.join(ROOT, "setup/gitleaks-install.sh"), encoding="utf-8").read()
+    image = open(os.path.join(ROOT, "setup/docker/keel-pi.Dockerfile"), encoding="utf-8").read()
+    pi = open(os.path.join(ROOT, "setup/lib/pi_launch.py"), encoding="utf-8").read()
+    gitleaks_ver = "8.30.1"
+    pi_ver = "0.73.1"
+    if gitleaks_ver not in installer or "sha256sum -c" not in installer:
+        return None
+    if "gitleaks-install.sh" not in run:
+        return None
+    if pi_ver not in run or pi_ver not in image or ('PI_PIN = "%s"' % pi_ver) not in pi:
+        return None
+    package = "@mariozechner/pi-coding-agent@%s" % pi_ver
+    if package not in run:
+        return None
+    keys = (
+        "$DOCKER info",
+        "gitleaks-install.sh",
+        "keel-git.Dockerfile",
+        "keel-proxy.Dockerfile",
+        "keel-pi.Dockerfile",
+        package,
+    )
+    try:
+        positions = [run.index(key) for key in keys]
+    except ValueError:
+        return None
+    if positions != sorted(positions):
+        return None
+    return gitleaks_ver, pi_ver, package
+
+
+def _flat_commands(cmds):
+    return "\n".join(" ".join(argv) for argv in cmds)
+
+
+def _contract_ok(cmds, baseline, gitleaks_ver, pi_ver, package):
+    flat = _flat_commands(cmds)
+    keys = (
+        "gitleaks-install.sh",
+        "keel-git.Dockerfile",
+        "keel-proxy.Dockerfile",
+        "keel-pi.Dockerfile",
+        package,
+    )
+    try:
+        positions = [flat.index(key) for key in keys]
+    except ValueError:
+        return False
+    if positions != sorted(positions):
+        return False
+    if gitleaks_ver not in flat or pi_ver not in flat:
+        return False
+    if flat.index("docker info") > flat.index("gitleaks-install.sh"):
+        return False
+    bash_cmds = [argv for argv in cmds if argv[:1] == ["bash"]]
+    installer = os.path.join(baseline, "setup", "gitleaks-install.sh")
+    if bash_cmds != [["bash", installer]]:
+        return False
+    for argv in cmds:
+        if argv[:3] != ["docker", "build", "-q"]:
+            continue
+        dockerfile = argv[argv.index("-f") + 1]
+        context = argv[-1]
+        if not dockerfile.startswith(baseline + os.sep) or not context.startswith(baseline + os.sep):
+            return False
+        if os.path.dirname(dockerfile) != context:
+            return False
+    return True
+
+
+def case_s_p2():
+    pins = _source_pins()
+    if pins is None:
+        return _no("source pins")
+    gitleaks_ver, pi_ver, package = pins
+    baseline = "/validated/baseline"
+    home = "/runner/home"
+    needed = set()
+    for suite in mf.SUITES:
+        needed |= ms.SUITE_NEEDS[suite]
+    cmds = ms.provision_commands(baseline, needed, home, pi_present=False)
+    if not _contract_ok(cmds, baseline, gitleaks_ver, pi_ver, package):
+        return _no("contract")
+    pin = json.loads(json.dumps(cmds))
+    pin[2][0] = pin[2][0].replace(gitleaks_ver, "8.30.2")
+    if _contract_ok(pin, baseline, gitleaks_ver, pi_ver, package):
+        return _no("bad pin accepted")
+    swapped = json.loads(json.dumps(cmds))
+    git_at = next(i for i, argv in enumerate(swapped) if "keel-git.Dockerfile" in " ".join(argv))
+    proxy_at = next(i for i, argv in enumerate(swapped) if "keel-proxy.Dockerfile" in " ".join(argv))
+    swapped[git_at], swapped[proxy_at] = swapped[proxy_at], swapped[git_at]
+    if _contract_ok(swapped, baseline, gitleaks_ver, pi_ver, package):
+        return _no("bad order accepted")
+    wrong_path = json.loads(json.dumps(cmds))
+    wrong_path[git_at][wrong_path[git_at].index("-f") + 1] = "/checkout-main-sentinel/keel-git.Dockerfile"
+    if _contract_ok(wrong_path, baseline, gitleaks_ver, pi_ver, package):
+        return _no("bad path accepted")
+    wrong_setup = json.loads(json.dumps(cmds))
+    wrong_setup[1][1] = os.path.join(baseline, "setup", "other-install.sh")
+    if _contract_ok(wrong_setup, baseline, gitleaks_ver, pi_ver, package):
+        return _no("bad setup accepted")
+    return True
+
+
+def _env_stub():
+    return b"""#!/bin/bash
+if ! command -v node >/dev/null || ! command -v npm >/dev/null; then
+  printf 'RESULT A1: ERROR\\n'
+  exit 1
+fi
+node -e 'require("probe-pkg/package.json")' || exit 1
+test -x "$KEEL_PI_BIN" || exit 1
+printf 'NS=%s\\n' "$KEEL_NS"
+printf 'NODE_PATH=%s\\n' "$NODE_PATH"
+printf 'KEEL_PI_BIN=%s\\n' "$KEEL_PI_BIN"
+printf 'PATH=%s\\n' "$PATH"
+if [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}${NPM_TOKEN:-}${KEEL_SECRET:-}${GITHUB_ENV:-}${DOCKER_AUTH_CONFIG:-}" ]; then
+  printf 'LEAK=1\\n'
+fi
+printf 'RESULT A1: BLOCKED\\n'
+"""
+
+
+def case_s_p3():
+    """NODE_PATH and KEEL_PI_BIN cross env -i and run_suite. Token-like names do not."""
+    root = tempfile.mkdtemp(prefix="env-")
+    try:
+        bin_dir = os.path.join(root, "bin")
+        node_path = os.path.join(root, "modules")
+        os.makedirs(os.path.join(node_path, "probe-pkg"))
+        os.makedirs(bin_dir)
+        open(os.path.join(node_path, "probe-pkg", "package.json"), "w", encoding="utf-8").write("{}\n")
+        node = os.path.join(bin_dir, "node")
+        open(node, "w", encoding="utf-8").write(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "code = sys.argv[sys.argv.index('-e') + 1] if '-e' in sys.argv else ''\n"
+            "root = os.environ.get('NODE_PATH', '').split(':')[0]\n"
+            "raise SystemExit(0 if os.path.isfile(os.path.join(root, 'probe-pkg', 'package.json')) and 'probe-pkg' in code else 1)\n"
+        )
+        os.chmod(node, 0o755)
+        npm = os.path.join(bin_dir, "npm")
+        open(npm, "w", encoding="utf-8").write("#!/bin/sh\nexit 0\n")
+        os.chmod(npm, 0o755)
+        pi_bin = os.path.join(root, "pi")
+        open(pi_bin, "w", encoding="utf-8").write("#!/bin/sh\nexit 0\n")
+        os.chmod(pi_bin, 0o755)
+        poisoned = {
+            "GH_TOKEN": "CANARY_GH_TOKEN",
+            "GITHUB_TOKEN": "CANARY_GITHUB_TOKEN",
+            "NPM_TOKEN": "CANARY_NPM_TOKEN",
+            "KEEL_SECRET": "CANARY_KEEL_SECRET",
+            "DOCKER_AUTH_CONFIG": "CANARY_DOCKER_AUTH",
+        }
+        work = os.path.join(root, "direct")
+        os.makedirs(os.path.join(work, "setup", "tests", "harness"))
+        script = os.path.join(work, "setup", "tests", "harness", "test-mutate-shards.sh")
+        open(script, "wb").write(_env_stub())
+        old = _push_env(dict(poisoned, PATH=bin_dir + ":" + os.environ.get("PATH", "")))
+        try:
+            stdout, code = ms.run_suite(
+                work,
+                "test-mutate-shards.sh",
+                "base",
+                {"NODE_PATH": node_path, "KEEL_PI_BIN": pi_bin},
+            )
+            text = stdout.decode("utf-8")
+            if code != 0 or "NODE_PATH=%s" % node_path not in text or "KEEL_PI_BIN=%s" % pi_bin not in text:
+                return _no("direct child %s %s" % (code, text))
+            if "LEAK=1" in text or "CANARY_" in text:
+                return _no("direct leak")
+            stdout, code = ms.run_suite(
+                work,
+                "test-mutate-shards.sh",
+                "M201",
+                {"NODE_PATH": node_path, "KEEL_PI_BIN": pi_bin},
+            )
+            mutant = stdout.decode("utf-8")
+            if code != 0 or "NS=M201" not in mutant or "CANARY_" in mutant:
+                return _no("mutant child")
+            env = ms.allowlisted_env({"NODE_PATH": node_path, "KEEL_PI_BIN": pi_bin})
+            if any(key.startswith("GH") or "TOKEN" in key or key.startswith("KEEL_SECRET") for key in env):
+                return _no("allowlist keys")
+        finally:
+            _pop_env(old)
+
+        tar_path = os.path.join(root, "tree.tar.gz")
+        _write_tar(tar_path, _shard_files(["M201"], _STUB_REL, _env_stub()))
+        digest = ms.sha256_file(tar_path)
+        plan = {
+            "ids": ["M201"],
+            "shards": {"0": ["M201"]},
+            "suite": {"M201": "test-mutate-shards.sh"},
+            "exp": {"M201": ["A1"]},
+            "skip": False,
+            "sha256": {"0": digest},
+            "full_plan": False,
+            "red_counts": "ci+offline",
+        }
+        workdir = os.path.join(root, "flow")
+        os.makedirs(os.path.join(workdir, "shard-in"))
+        os.symlink(os.path.join(ROOT, "setup"), os.path.join(workdir, "setup"))
+        shutil.copy(tar_path, os.path.join(workdir, "shard-in", "tree-0.tar.gz"))
+        script_path = os.path.join(root, "run.sh")
+        open(script_path, "w", encoding="utf-8").write(_shard_script(".github/workflows/mutate-pr.yml") + "\n")
+        flow_env = dict(os.environ)
+        flow_env.update(poisoned)
+        flow_env.update({
+            "PATH": bin_dir + ":" + os.environ.get("PATH", ""),
+            "PLAN_B64": _plan_b64(plan),
+            "K": "0",
+            "JOBS": "3",
+            "NODE_PATH": node_path,
+            "KEEL_PI_BIN": pi_bin,
+            "HOME": os.environ.get("HOME", root),
+            "TMPDIR": root,
+        })
+        proc = subprocess.run(
+            ["bash", script_path],
+            cwd=workdir,
+            env=flow_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return _no("workflow env %s %s" % (proc.returncode, proc.stderr[-500:]))
+        base = open(os.path.join(workdir, "raw-out", "baseline-test-mutate-shards.sh"), encoding="utf-8").read()
+        got = open(os.path.join(workdir, "raw-out", "M201.txt"), encoding="utf-8").read()
+        for label, body in (("base", base), ("mutant", got)):
+            if "NODE_PATH=%s" % node_path not in body or "KEEL_PI_BIN=%s" % pi_bin not in body:
+                return _no("workflow missing forward " + label)
+            if bin_dir not in body.split("PATH=", 1)[-1]:
+                return _no("workflow path " + label)
+            if "LEAK=1" in body or "CANARY_" in body:
+                return _no("workflow leak " + label)
+        if "NS=base" not in base or "NS=M201" not in got:
+            return _no("workflow namespaces")
+        return True
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _restore_runner(saved):
+    ms._run_allowlisted = saved
+
+
+_OLD_BARE_PI_SCRIPT = (
+    "const p=require('@mariozechner/pi-coding-agent/package.json');"
+    "if(p.version!=='0.73.1')process.exit(1)"
+)
+
+
+def _pi_restricted_manifest(version):
+    return json.dumps({
+        "name": "@mariozechner/pi-coding-agent",
+        "version": version,
+        "type": "module",
+        "exports": {
+            ".": {"import": "./dist/index.js"},
+            "./hooks": {"import": "./dist/hooks.js"},
+        },
+    })
+
+
+def _write_text(path, body):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "w", encoding="utf-8").write(body)
+
+
+def _host_pi_category(base, home):
+    try:
+        ms.provision_selected(base, ["test-step4.sh"], {"test-step4.sh": ["M10"]}, home=home)
+    except ms.PrereqError as err:
+        return err.category
+    return ""
+
+
+def _real_host_pi(parent, real):
+    """Run the host pin against a real Node fixture. Missing Node is an error."""
+    if shutil.which("node") is None:
+        raise RuntimeError("node is required")
+    # Quote and percent characters have to survive as one JavaScript string.
+    home = os.path.join(parent, "home-%s-\"q'")
+    node_modules = os.path.join(home, ".cache", "keel", "pi-0.73.1", "node_modules")
+    package = os.path.join(node_modules, "@mariozechner", "pi-coding-agent", "package.json")
+    pi_bin = os.path.join(node_modules, ".bin", "pi")
+    _write_text(pi_bin, "#!/bin/sh\nexit 0\n")
+    os.chmod(pi_bin, 0o755)
+    _write_text(package, _pi_restricted_manifest("0.73.1"))
+    base = os.path.join(parent, "probe-base")
+    for name in ("keel-git", "keel-pi"):
+        _write_text(os.path.join(base, "setup", "docker", name + ".Dockerfile"), "FROM scratch\n")
+    bare_cwd = os.path.join(parent, "bare-cwd")
+    os.makedirs(bare_cwd)
+    decoy = os.path.join(parent, "cwd-decoy")
+    decoy_modules = os.path.join(decoy, "node_modules")
+    _write_text(
+        os.path.join(decoy_modules, "@mariozechner", "pi-coding-agent", "package.json"),
+        '{"name":"@mariozechner/pi-coding-agent","version":"0.73.2"}\n',
+    )
+    bare = subprocess.run(
+        ["node", "-e", _OLD_BARE_PI_SCRIPT],
+        cwd=bare_cwd,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": home,
+            "NODE_PATH": node_modules,
+            "LANG": os.environ.get("LANG", "C.UTF-8"),
+        },
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if bare.returncode == 0 or b"ERR_PACKAGE_PATH_NOT_EXPORTED" not in bare.stderr:
+        return _no("bare specifier accepted")
+
+    def spy(argv, env):
+        if argv[:1] in (["docker"], ["npm"]):
+            return 0, ""
+        if argv[:1] == ["bash"] and argv[-1].endswith("gitleaks-install.sh"):
+            return 0, ""
+        if len(argv) >= 2 and argv[1] == "version" and "gitleaks" in os.path.basename(argv[0]):
+            return 0, "8.30.1\n"
+        return real(argv, env)
+
+    cwd = os.getcwd()
+    ms._run_allowlisted = spy
+    os.chdir(decoy)
+    try:
+        old = _push_env({"NODE_PATH": decoy_modules, "KEEL_PI_BIN": "/untrusted/pi"})
+        try:
+            verified = ms.provision_selected(
+                base, ["test-step4.sh"], {"test-step4.sh": ["M10"]}, home=home,
+            )
+            if verified.get("KEEL_PI_BIN") != pi_bin:
+                return _no("real pi bin")
+            if not verified.get("NODE_PATH", "").startswith(node_modules):
+                return _no("real node path")
+            _write_text(package, _pi_restricted_manifest("0.73.2"))
+            if _host_pi_category(base, home) != "pi_version":
+                return _no("wrong pin category")
+            os.remove(package)
+            if _host_pi_category(base, home) != "pi_resolve":
+                return _no("missing package category")
+            _write_text(package, "{")
+            if _host_pi_category(base, home) != "pi_resolve":
+                return _no("malformed package category")
+            _write_text(package, "null")
+            if _host_pi_category(base, home) != "pi_resolve":
+                return _no("nonobject package category")
+            _write_text(package, "[]")
+            if _host_pi_category(base, home) != "pi_resolve":
+                return _no("array package category")
+            _write_text(package, '{"version":1}')
+            if _host_pi_category(base, home) != "pi_resolve":
+                return _no("nonstring version category")
+            _write_text(package, _pi_restricted_manifest("0.73.1"))
+            os.chmod(package, 0)
+            try:
+                if _host_pi_category(base, home) != "pi_resolve":
+                    return _no("unreadable package category")
+            finally:
+                os.chmod(package, 0o644)
+        finally:
+            _pop_env(old)
+        return True
+    finally:
+        os.chdir(cwd)
+        ms._run_allowlisted = real
+
+
+def case_s_p4():
+    if set(ms.SUITE_NEEDS) != set(mf.SUITES):
+        return _no("suite map")
+    expects = {
+        "test-attacks.sh": {"docker", "gitleaks", "image_git", "image_proxy"},
+        "test-attack-results.sh": set(),
+        "test-mutant-result.sh": set(),
+        "test-runtime.sh": {"docker"},
+        "test-step4.sh": {"docker", "image_git", "image_pi", "host_pi"},
+        "test-step5.sh": set(),
+        "test-step6.sh": {"docker", "image_git"},
+        "test-egress.sh": {"docker", "image_git", "image_proxy"},
+        "visibility-suite.sh": {"docker", "image_git", "image_proxy"},
+        "test-mutant-select.py": set(),
+        "test-mutate-shards.sh": set(),
+    }
+    for suite, need in expects.items():
+        if set(ms.SUITE_NEEDS[suite]) != need:
+            return _no("row " + suite)
+    if "image_proxy" not in ms.union_needs(["test-attacks.sh", "visibility-suite.sh"]):
+        return _no("transitive proxy")
+    if ms.union_needs(["test-step5.sh"]) or ms.union_needs(["test-mutate-shards.sh"]):
+        return _no("empty union")
+    partial = dict(ms.SUITE_NEEDS)
+    partial.pop("test-step5.sh")
+    try:
+        ms.union_needs(["test-attacks.sh"], partial)
+        return _no("partial map accepted")
+    except ms.ShardError as err:
+        if str(err) != "prereq":
+            return _no("partial map error")
+    try:
+        ms.union_needs(["missing.sh"])
+        return _no("unknown suite accepted")
+    except ms.ShardError:
+        pass
+    runtime = ms.provision_commands("/baseline", ms.union_needs(["test-runtime.sh"]), "/home")
+    if runtime != [["docker", "info"]]:
+        return _no("runtime commands %s" % runtime)
+
+    calls = []
+    saved = ms._run_allowlisted
+
+    def spy(argv, env):
+        calls.append(list(argv))
+        if "GH_TOKEN" in env or "NPM_TOKEN" in env:
+            return 9, ""
+        if argv[:2] == ["node", "-e"]:
+            return 0, ""
+        if argv[-1:] == ["version"]:
+            return 0, "8.30.1\n"
+        return 0, ""
+
+    root = tempfile.mkdtemp(prefix="need-")
+    ms._run_allowlisted = spy
+    try:
+        step5 = os.path.join(root, "step5")
+        os.makedirs(step5)
+        tar_path = os.path.join(step5, "tree.tar.gz")
+        out_dir = os.path.join(step5, "out")
+        script = "baseline/setup/tests/harness/test-step5.sh"
+        _write_tar(tar_path, _shard_files(["M201"], script, _stub_suite("RESULT A1: BLOCKED")))
+        old = _push_env({"K": "0", "GH_TOKEN": "CANARY_GH_TOKEN", "NPM_TOKEN": "CANARY_NPM_TOKEN"})
+        try:
+            rc = ms.cmd_run_shard(
+                tar_path,
+                ms.sha256_file(tar_path),
+                out_dir,
+                {"M201": "test-step5.sh"},
+                ["M201"],
+                {"M201": ["A1"]},
+            )
+        finally:
+            _pop_env(old)
+        if rc != 0 or calls:
+            return _no("step5 called provision %s %s" % (rc, calls))
+        if not os.path.isfile(os.path.join(out_dir, "M201.txt")):
+            return _no("step5 mutant missing")
+
+        calls[:] = []
+        home = os.path.join(root, "home")
+        pi_dir = os.path.join(home, ".cache", "keel", "pi-0.73.1", "node_modules")
+        os.makedirs(os.path.join(pi_dir, ".bin"))
+        os.makedirs(os.path.join(pi_dir, "@mariozechner", "pi-coding-agent"))
+        pi_bin = os.path.join(pi_dir, ".bin", "pi")
+        open(pi_bin, "w", encoding="utf-8").write("#!/bin/sh\n")
+        os.chmod(pi_bin, 0o755)
+        open(os.path.join(pi_dir, "@mariozechner", "pi-coding-agent", "package.json"), "w", encoding="utf-8").write(
+            '{"version":"0.73.1"}\n'
+        )
+        base = os.path.join(root, "base")
+        docker = os.path.join(base, "setup", "docker")
+        os.makedirs(docker)
+        for name in ("keel-git", "keel-pi"):
+            open(os.path.join(docker, name + ".Dockerfile"), "w", encoding="utf-8").write("FROM scratch\n")
+        old = _push_env({
+            "KEEL_PI_BIN": "/untrusted/pi",
+            "NODE_PATH": "/untrusted/modules",
+            "KEEL_PI_DIR": "/untrusted/pi-dir",
+            "GH_TOKEN": "CANARY_GH_TOKEN",
+        })
+        try:
+            verified = ms.provision_selected(base, ["test-step4.sh"], {"test-step4.sh": ["M10"]}, home=home)
+        finally:
+            _pop_env(old)
+        if verified.get("KEEL_PI_BIN") != pi_bin:
+            return _no("pi bin not superseded")
+        if not verified.get("NODE_PATH", "").startswith(pi_dir):
+            return _no("node path")
+        if "/untrusted/modules" not in verified.get("NODE_PATH", ""):
+            return _no("inherited node path dropped")
+        joined = " ".join(" ".join(argv) for argv in calls)
+        if "/untrusted/pi-dir" in joined or "/untrusted/pi " in joined:
+            return _no("external pi path used")
+        if base not in joined or "keel-git.Dockerfile" not in joined:
+            return _no("baseline image path missing")
+        node_calls = [argv for argv in calls if argv[:2] == ["node", "-e"]]
+        if not node_calls or "0.73.1" not in node_calls[-1][-1]:
+            return _no("pi probe")
+
+        calls[:] = []
+
+        def missing_docker(argv, env):
+            calls.append(list(argv))
+            if argv[:2] == ["docker", "info"]:
+                return 127, ""
+            return 0, ""
+
+        ms._run_allowlisted = missing_docker
+        bad = os.path.join(root, "bad")
+        os.makedirs(bad)
+        tar_path = os.path.join(bad, "tree.tar.gz")
+        out_dir = os.path.join(bad, "out")
+        files = _shard_files(
+            ["M11"],
+            "baseline/setup/tests/harness/test-step6.sh",
+            _stub_suite("RESULT A1: BLOCKED"),
+        )
+        files["baseline/setup/docker/keel-git.Dockerfile"] = b"FROM scratch\n"
+        _write_tar(tar_path, files)
+        suite_calls = []
+        real_suite = ms.run_suite
+
+        def suite_spy(*args, **kwargs):
+            suite_calls.append(args)
+            return real_suite(*args, **kwargs)
+
+        ms.run_suite = suite_spy
+        old = _push_env({"K": "2"})
+        try:
+            rc = ms.cmd_run_shard(
+                tar_path,
+                ms.sha256_file(tar_path),
+                out_dir,
+                {"M11": "test-step6.sh"},
+                ["M11"],
+                {"M11": ["A1"]},
+            )
+        finally:
+            _pop_env(old)
+            ms.run_suite = real_suite
+        if rc == 0 or suite_calls:
+            return _no("missing docker still ran")
+        err = open(os.path.join(out_dir, "shard-status.json"), encoding="utf-8").read()
+        if "docker_missing" not in err:
+            return _no("docker category")
+        probed = _real_host_pi(root, saved)
+        if probed is not True:
+            return probed
+        return True
+    finally:
+        _restore_runner(saved)
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _tar_with(path, members):
+    with tarfile.open(path, "w:gz") as tar:
+        for spec in members:
+            info = tarfile.TarInfo(name=spec["name"])
+            kind = spec.get("kind", "file")
+            if kind == "file":
+                blob = spec.get("blob", b"")
+                info.size = len(blob)
+                info.mode = 0o644
+                info.type = tarfile.REGTYPE
+                tar.addfile(info, io.BytesIO(blob))
+            elif kind == "symlink":
+                info.type = tarfile.SYMTYPE
+                info.linkname = spec.get("link", "x")
+                tar.addfile(info)
+            elif kind == "fifo":
+                info.type = tarfile.FIFOTYPE
+                tar.addfile(info)
+
+
+def case_s_p5():
+    """Invalid archives never provision, and builds use the extracted tree."""
+    root = tempfile.mkdtemp(prefix="order-")
+    calls = []
+    saved = ms._run_allowlisted
+    real_suite = ms.run_suite
+
+    def spy(argv, env):
+        calls.append(("prov", list(argv)))
+        return 0, "8.30.1\n"
+
+    def suite_spy(*args, **kwargs):
+        calls.append(("suite", args[1] if len(args) > 1 else ""))
+        return b"RESULT A1: BLOCKED\n", 0
+
+    ms._run_allowlisted = spy
+    ms.run_suite = suite_spy
+    try:
+        out_dir = os.path.join(root, "out")
+        os.makedirs(out_dir)
+        tar_path = os.path.join(root, "bad-path.tar.gz")
+        _tar_with(tar_path, [{"name": "../escape", "blob": b"x"}])
+        try:
+            ms.cmd_run_shard(
+                tar_path, ms.sha256_file(tar_path), out_dir,
+                {"M201": "test-step6.sh"}, ["M201"], {"M201": ["A1"]},
+            )
+            return _no("path accepted")
+        except ms.ShardError as err:
+            if str(err) != "path" or calls:
+                return _no("path provision %s" % err)
+        tar_path = os.path.join(root, "link.tar.gz")
+        _tar_with(tar_path, [{"name": "baseline/link", "kind": "symlink"}])
+        try:
+            ms.cmd_run_shard(
+                tar_path, ms.sha256_file(tar_path), out_dir,
+                {"M201": "test-mutate-shards.sh"}, ["M201"], {"M201": []},
+            )
+            return _no("link accepted")
+        except ms.ShardError as err:
+            if str(err) != "symlink" or calls:
+                return _no("link provision")
+        tar_path = os.path.join(root, "fifo.tar.gz")
+        _tar_with(tar_path, [{"name": "baseline/fifo", "kind": "fifo"}])
+        try:
+            ms.cmd_run_shard(
+                tar_path, ms.sha256_file(tar_path), out_dir,
+                {"M201": "test-mutate-shards.sh"}, ["M201"], {"M201": []},
+            )
+            return _no("fifo accepted")
+        except ms.ShardError as err:
+            if str(err) != "type" or calls:
+                return _no("fifo provision")
+        tar_path = os.path.join(root, "ids.tar.gz")
+        _tar_with(tar_path, [
+            {"name": "baseline/setup/tests/harness/test-mutate-shards.sh", "blob": b"#!/bin/bash\n"},
+            {"name": "ids/M202/setup/keel.sh", "blob": b"x\n"},
+        ])
+        try:
+            ms.cmd_run_shard(
+                tar_path, ms.sha256_file(tar_path), out_dir,
+                {"M201": "test-mutate-shards.sh", "M202": "test-mutate-shards.sh"},
+                ["M201"], {"M201": []},
+            )
+            return _no("id bind accepted")
+        except ms.ShardError as err:
+            if str(err) != "shard" or calls:
+                return _no("bind provision")
+        try:
+            ms.cmd_run_shard(tar_path, "0" * 64, out_dir, {"M201": "test-mutate-shards.sh"}, ["M201"])
+            return _no("digest accepted")
+        except SystemExit as err:
+            if err.code != "sha256" or calls:
+                return _no("digest provision")
+        try:
+            ms.cmd_run_shard(
+                tar_path, ms.sha256_file(tar_path), out_dir,
+                {"M202": "../../x.sh"}, ["M202"], {"M202": ["A1"]},
+            )
+            return _no("suite accepted")
+        except ms.ShardError as err:
+            if str(err) != "suite" or calls:
+                return _no("suite provision")
+
+        checkout = os.path.join(root, "checkout-main-sentinel")
+        os.makedirs(os.path.join(checkout, "setup", "docker"))
+        open(os.path.join(checkout, "setup", "docker", "keel-git.Dockerfile"), "w", encoding="utf-8").write(
+            "FROM scratch\n# SENTINEL_MAIN\n"
+        )
+        tar_path = os.path.join(root, "good.tar.gz")
+        good_out = os.path.join(root, "out-good")
+        _tar_with(tar_path, [
+            {"name": "baseline/setup/docker/keel-git.Dockerfile", "blob": b"FROM scratch\n# BASELINE_TREE\n"},
+            {"name": "baseline/setup/tests/harness/test-step6.sh", "blob": _stub_suite("RESULT A1: BLOCKED")},
+            {"name": "ids/M11/setup/keel.sh", "blob": b"changed\n"},
+        ])
+        cwd = os.getcwd()
+        os.chdir(checkout)
+        try:
+            rc = ms.cmd_run_shard(
+                tar_path, ms.sha256_file(tar_path), good_out,
+                {"M11": "test-step6.sh"}, ["M11"], {"M11": ["A1"]},
+            )
+        finally:
+            os.chdir(cwd)
+        if rc != 0:
+            return _no("good shard %s" % rc)
+        blob = " ".join(" ".join(item[1]) for item in calls if item[0] == "prov")
+        if "checkout-main-sentinel" in blob or "SENTINEL_MAIN" in blob:
+            return _no("checkout dockerfile used")
+        if "keel-git.Dockerfile" not in blob or "/baseline/" not in blob and "baseline/setup/docker" not in blob:
+            return _no("baseline dockerfile missing %s" % blob)
+        if not any(item[0] == "suite" for item in calls):
+            return _no("suite did not run")
+        if calls[0][0] != "prov":
+            return _no("provision after suite")
+        return True
+    finally:
+        ms._run_allowlisted = saved
+        ms.run_suite = real_suite
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _pairs(mid, names):
+    return [(mid, list(names))]
+
+
+def case_s_p6():
+    suite = "test-step6.sh"
+    missing = ms.classify_baseline("2", suite, _pairs("M224", ["S6-H8"]), None, 0)
+    if missing["kind"] != "missing" or missing["red_expected"] or missing["reason"] != "absent":
+        return _no("missing")
+    if missing["ids"] != ["M224"]:
+        return _no("missing ids")
+    decode = ms.classify_baseline("2", suite, _pairs("M224", ["S6-H8"]), b"\xff", 0)
+    if decode["kind"] != "unparseable" or decode["reason"] != "decode" or decode["red_expected"]:
+        return _no("decode")
+    long_line = "RESULT S6-H8: BLOCKED\n" + ("x" * (ms.MAX_LINE + 1))
+    lined = ms.classify_baseline("2", suite, _pairs("M224", ["S6-H8"]), long_line, 0)
+    if lined["kind"] != "unparseable" or lined["reason"] != "line":
+        return _no("line")
+    empty = ms.classify_baseline("2", suite, _pairs("M224", []), "", 0)
+    if empty["kind"] != "unparseable" or empty["reason"] != "empty":
+        return _no("empty")
+    incomplete = ms.classify_baseline(
+        "2", suite, _pairs("M224", ["S6-H8", "S6-H9"]), "RESULT S6-H8: BLOCKED\n", 0
+    )
+    if incomplete["kind"] != "unparseable" or incomplete["missing_expected"] != ["S6-H9"]:
+        return _no("incomplete")
+    duplicate = ms.classify_baseline(
+        "2", suite, _pairs("M224", ["S6-H8"]),
+        "RESULT S6-H8: BLOCKED\nRESULT S6-H8: BLOCKED\n", 0,
+    )
+    conflict = ms.classify_baseline(
+        "2", suite, _pairs("M224", ["S6-H8"]),
+        "RESULT S6-H8: BLOCKED\nRESULT S6-H8: NOT BLOCKED\n", 0,
+    )
+    if duplicate["reason"] != "duplicate" or conflict["reason"] != "conflict":
+        return _no("records")
+    if duplicate["red_expected"] or conflict["red_expected"]:
+        return _no("unsafe red")
+    bad = ms.classify_baseline(
+        "2", suite,
+        [("M224", ["S6-H8"]), ("M225", ["S6-H8"]), ("M226", ["OTHER"])],
+        "RESULT S6-H8: NOT BLOCKED\nRESULT OTHER: BLOCKED\nRESULT CANARY_NAME: NOT BLOCKED\n",
+        0,
+    )
+    if bad["kind"] != "BAD" or bad["ids"] != ["M224", "M225"] or bad["red_expected"] != ["S6-H8"]:
+        return _no("bad ids %s" % bad)
+    if bad["tags"] != ["NOT_BLOCKED"] or bad["extra_red_count"] != 1:
+        return _no("bad tags")
+    rendered = ms.format_finding(bad)
+    if "CANARY_NAME" in rendered or "shard=2" not in rendered or "test-step6.sh" not in rendered:
+        return _no("render %s" % rendered)
+    masked = ms.classify_baseline("0", "test-step5.sh", _pairs("M14", []), None, 0)
+    if masked["kind"] != "missing":
+        return _no("masked waived")
+    usable = ms.classify_baseline(
+        "0", "test-step5.sh", _pairs("M14", []), "RESULT EXTRA: NOT BLOCKED\n", 0
+    )
+    if usable is not None:
+        return _no("extra red changed policy")
+
+    plan = {
+        "ids": ["M224", "M225"],
+        "shards": {"0": ["M224"], "1": ["M225"]},
+        "suite": {"M224": suite, "M225": suite},
+        "exp": {"M224": ["S6-H8"], "M225": ["S6-H8"]},
+        "skip": False,
+        "full_plan": True,
+        "red_counts": "ci+offline",
+    }
+
+    def write(raw):
+        _raw_id(os.path.join(raw, "raw-0"), "M224", "RESULT S6-H8: NOT BLOCKED\n", suite, "RESULT S6-H8: NOT BLOCKED\n")
+        _raw_id(os.path.join(raw, "raw-1"), "M225", "RESULT S6-H8: NOT BLOCKED\n", suite, "RESULT S6-H8: BLOCKED\n")
+
+    rc, text = _grade(plan, write)
+    if rc == 0 or "kind=BAD" not in text or "shard=0" not in text:
+        return _no("mask %s %s" % (rc, text))
+    if "shard=1" in text and "kind=BAD" in text.split("shard=1")[0]:
+        pass
+    saved = ms.check_baseline
+    ms.check_baseline = False
+    try:
+        quiet = ms.baseline_bad_ids(["M01"], {"M01": "s"}, {"M01": ["A1"]}, {})
+        rc_off, text_off = _grade(plan, write)
+    finally:
+        ms.check_baseline = saved
+    if quiet != ([], False) or rc_off != 0 or "kind=BAD" in text_off:
+        return _no("flag off %s %s %s" % (quiet, rc_off, text_off))
+    return True
+
+
+def case_s_p7():
+    canary = "CANARY_SECRET_VALUE"
+    suite = "test-step6.sh"
+    body = (
+        canary + "\n"
+        "\x1b[31mred\x1b[0m\n"
+        "::error file=secret::" + canary + "\n"
+        "::add-mask::" + canary + "\n"
+        "RESULT S6-H8: NOT BLOCKED\n"
+        + ("Y" * (ms.MAX_LINE + 50))
+    )
+    script = (
+        "#!/bin/bash\npython3 - << 'PY'\n"
+        "print(%r)\nprint('\\x1b[31m')\nprint(%r)\nprint('RESULT S6-H8: NOT BLOCKED')\n"
+        "print('Y' * %d)\nPY\n"
+    ) % (canary, "::error file=secret::" + canary, ms.MAX_LINE + 50)
+    finding = ms.classify_baseline("2", suite, _pairs("M224", ["S6-H8"]), body, 0)
+    rendered = ms.render_findings([finding])
+    if canary in rendered or "\x1b" in rendered or "::" in rendered or "Y" * 80 in rendered:
+        return _no("render leaked")
+    if finding["reason"] != "line":
+        return _no("long line kind")
+    injected = ms.classify_baseline(
+        "0\n::warning::" + canary,
+        suite,
+        _pairs("M224", ["S6-H8"]),
+        "RESULT S6-H8: NOT BLOCKED " + canary + "\n::warning::" + canary + "\n",
+        0,
+    )
+    line = ms.format_finding(injected)
+    if canary in line or "\n" in line or "::" in line or "tags=[OTHER]" not in line:
+        return _no("injection %s" % line)
+    ids = ["M%d" % n for n in range(1, 26)] + ["bad id"]
+    wide = ms._finding("BAD", "1", suite, ids, red_expected=["A1"] * 25, tags=["NOT_BLOCKED"])
+    wide_line = ms.format_finding(wide)
+    if "ids_total=26" not in wide_line or "bad id" in wide_line or "M21" in wide_line:
+        return _no("id bound %s" % wide_line)
+    many = [
+        ms._finding("missing", "0", "test-step5.sh", ["M1"], reason="absent")
+        for _ in range(150)
+    ]
+    bounded = ms.render_findings(many)
+    if "records_total=150" not in bounded or "records_omitted=" not in bounded or "truncated" not in bounded:
+        return _no("record bound")
+    if bounded.count("kind=missing") > ms.DIAG_RECORD_CAP:
+        return _no("too many lines")
+    huge = ms.bound_diagnostic_text([canary + ("x" * 5000)], 1)
+    if canary in huge or "truncated=record" not in huge:
+        return _no("byte bound")
+    root = tempfile.mkdtemp(prefix="san-")
+    try:
+        tar_path = os.path.join(root, "tree.tar.gz")
+        out_dir = os.path.join(root, "out")
+        files = _shard_files(["M224"], "baseline/setup/tests/harness/test-step6.sh", script.encode("utf-8"))
+        files["baseline/setup/docker/keel-git.Dockerfile"] = b"FROM scratch\n"
+        _write_tar(tar_path, files)
+        saved = ms._run_allowlisted
+        ms._run_allowlisted = lambda argv, env: (0, "8.30.1\n")
+        old = _push_env({"K": "2"})
+        buf = io.StringIO()
+        err = sys.stderr
+        sys.stderr = buf
+        try:
+            rc = ms.cmd_run_shard(
+                tar_path, ms.sha256_file(tar_path), out_dir,
+                {"M224": suite}, ["M224"], {"M224": ["S6-H8"]},
+            )
+        finally:
+            sys.stderr = err
+            _pop_env(old)
+            ms._run_allowlisted = saved
+        console = buf.getvalue()
+        status = open(os.path.join(out_dir, "shard-status.json"), encoding="utf-8").read()
+        if rc == 0 or canary in console or canary in status or "\x1b" in console or "::" in console:
+            return _no("status leaked")
+        if os.path.isfile(os.path.join(out_dir, "M224.txt")):
+            return _no("mutant ran on bad baseline")
+        return True
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _grade(plan, write_raw, updates=None):
+    raw = tempfile.mkdtemp(prefix="grade-")
+    cwd = os.getcwd()
+    buf = io.StringIO()
+    old_err = sys.stderr
+    try:
+        write_raw(raw)
+        os.chdir(ROOT)
+        env = {
+            "PLAN_B64": _plan_b64(plan),
+            "SHARD_RESULT": "success",
+            "SELECTOR": ms.selector_hash(ROOT),
+            "RAW_DIR": raw,
+            "STATE_PATH": os.path.join(raw, "state.json"),
+            "GH_TOKEN": None,
+            "REPO": None,
+            "RUN_ID": None,
+            "GITHUB_OUTPUT": None,
+            "HEAD_SHA": None,
+        }
+        if updates:
+            env.update(updates)
+        old = _push_env(env)
+        sys.stderr = buf
+        try:
+            return ms.cmd_aggregate(), buf.getvalue()
+        finally:
+            sys.stderr = old_err
+            _pop_env(old)
+            os.chdir(cwd)
+    finally:
+        if sys.stderr is buf:
+            sys.stderr = old_err
+        shutil.rmtree(raw, ignore_errors=True)
+
+
+def case_s_p8():
+    root = tempfile.mkdtemp(prefix="pre-")
+    try:
+        marker = os.path.join(root, "mutant-ran")
+        script = (
+            "#!/bin/bash\n"
+            "if [ \"$KEEL_NS\" != base ]; then printf ran > '%s'; fi\n"
+            "printf 'RESULT A1: NOT BLOCKED\\n'\n" % marker
+        ).encode("utf-8")
+        tar_path = os.path.join(root, "tree.tar.gz")
+        out_dir = os.path.join(root, "out")
+        _write_tar(tar_path, _shard_files(["M201"], _STUB_REL, script))
+        buf = io.StringIO()
+        err = sys.stderr
+        sys.stderr = buf
+        old = _push_env({"K": "0", "TMPDIR": root})
+        try:
+            rc = ms.cmd_run_shard(
+                tar_path, ms.sha256_file(tar_path), out_dir,
+                {"M201": "test-mutate-shards.sh"}, ["M201"], {"M201": ["A1"]},
+            )
+        finally:
+            sys.stderr = err
+            _pop_env(old)
+        console = buf.getvalue()
+        if rc == 0 or os.path.exists(marker) or "kind=BAD" not in console:
+            return _no("preflight %s %s" % (rc, console))
+        if not os.path.isfile(os.path.join(out_dir, "baseline-test-mutate-shards.sh")):
+            return _no("baseline artifact")
+        if os.path.isfile(os.path.join(out_dir, "M201.txt")):
+            return _no("mutant artifact")
+
+        suite = "test-mutate-shards.sh"
+        plan = {
+            "ids": ["M201"],
+            "shards": {"0": ["M201"]},
+            "suite": {"M201": suite},
+            "exp": {"M201": ["A1"]},
+            "skip": False,
+            "full_plan": True,
+            "red_counts": "ci+offline",
+        }
+
+        def green(raw):
+            _raw_id(os.path.join(raw, "raw-0"), "M201", "RESULT A1: NOT BLOCKED\n", suite, "RESULT A1: BLOCKED\n")
+
+        rc, text = _grade(plan, green, {"SHARD_RESULT": "failure"})
+        if rc == 0 or "shard result failure" not in text:
+            return _no("latched shard %s %s" % (rc, text))
+
+        def missing_both(raw):
+            os.makedirs(os.path.join(raw, "raw-0"))
+
+        rc, text = _grade(plan, missing_both)
+        if rc == 0 or text.find("kind=missing") < 0 or text.find("kind=missing") > text.find("binding"):
+            return _no("order %s" % text)
+
+        def status_lie(raw):
+            folder = os.path.join(raw, "raw-0")
+            _raw_id(folder, "M201", "RESULT A1: NOT BLOCKED\n", suite, "RESULT A1: NOT BLOCKED\n")
+            open(os.path.join(folder, "shard-status.json"), "w", encoding="utf-8").write('{"ok": true}\n')
+
+        rc, text = _grade(plan, status_lie)
+        if rc == 0 or "kind=BAD" not in text:
+            return _no("status trust")
+
+        saved_json = ms._github_json
+
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("CANARY_SECRET_URL")
+
+        ms._github_json = boom
+        try:
+            rc, text = _grade(plan, green, {"GH_TOKEN": "t", "REPO": "o/r", "RUN_ID": "1"})
+        finally:
+            ms._github_json = saved_json
+        if rc == 0 or "category=transport" not in text or "CANARY_SECRET_URL" in text:
+            return _no("transport %s %s" % (rc, text))
+
+        both = {
+            "ids": ["M201", "M202"],
+            "shards": {"0": ["M201", "M202"]},
+            "suite": {"M201": suite, "M202": suite},
+            "exp": {"M201": ["A1"], "M202": ["A1"]},
+            "skip": False,
+            "full_plan": False,
+            "red_counts": "ci+offline",
+        }
+
+        def write_both(raw):
+            folder = os.path.join(raw, "raw-0")
+            _raw_id(folder, "M201", "RESULT A1: NOT BLOCKED\n", suite, "RESULT A1: BLOCKED\n")
+            open(os.path.join(folder, "M202.txt"), "w", encoding="utf-8").write("RESULT A1: NOT BLOCKED\n")
+
+        rc, _text = _grade(both, write_both)
+        if rc != 0:
+            return _no("complete grade %s" % rc)
+        return True
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_s_p9():
+    ids = ["M%d" % n for n in range(1, 159)]
+    shards = ms.assign_shards(ids)
+    if [len(group) for group in shards] != [20, 20, 20, 20, 20, 20, 19, 19]:
+        return _no("cap8 sizes")
+    flat = [mid for group in shards for mid in group]
+    if sorted(flat, key=lambda mid: int(mid[1:])) != ids or len(flat) != len(set(flat)):
+        return _no("cap8 coverage")
+    if ms.assign_shards([], 8) != []:
+        return _no("empty")
+    if len(ms.assign_shards(["M1", "M2"], 8)) != 2:
+        return _no("short")
+    four = ms.assign_shards(ids, 4)
+    if [len(group) for group in four] != [40, 40, 39, 39]:
+        return _no("cap4")
+    keys = [str(index) for index in range(8)]
+    names = ["plan"] + ["raw-%s" % key for key in keys] + ["tree-%s" % key for key in keys]
+    if not ms.artifact_names_ok(names, keys):
+        return _no("keys 0..7")
+    if ms.artifact_names_ok(names + ["raw-8"], keys) or ms.artifact_names_ok(names + ["tree-9"], keys):
+        return _no("foreign key")
+    if ms.artifact_names_ok(names + ["raw-0"], keys):
+        return _no("duplicate artifact")
+    for rel in (".github/workflows/mutate-pr.yml", ".github/workflows/mutate-full.yml"):
+        job = _resolve_job(rel)
+        for key in keys:
+            if "name: tree-%s" % key not in job:
+                return _no("upload " + key)
     return True
 
 
@@ -611,6 +3124,27 @@ CASES = {
     "S-A33": case_s_a33,
     "S-A34": case_s_a34,
     "S-A35": case_s_a35,
+    "S-A36": case_s_a36,
+    "H1": case_h1,
+    "H2": case_h2,
+    "H3": case_h3,
+    "H4": case_h4,
+    "A1": case_a1,
+    "A2": case_a2,
+    "A3": case_a3,
+    "A4": case_a4,
+    "A5": case_a5,
+    "A6": case_a6,
+    "S-P1": case_s_p1,
+    "S-P2": case_s_p2,
+    "S-P3": case_s_p3,
+    "S-P4": case_s_p4,
+    "S-P5": case_s_p5,
+    "S-P6": case_s_p6,
+    "S-P7": case_s_p7,
+    "S-P8": case_s_p8,
+    "S-P9": case_s_p9,
+    "S-P10": case_s_p10,
 }
 
 
@@ -640,6 +3174,8 @@ def prove(suite):
     failures = []
     for mid, spec in sorted(mutate.M.items(), key=lambda item: int(item[0][1:])):
         if int(mid[1:]) < 139:
+            continue
+        if mutate.SUITE_OF[mid] not in ("test-mutant-select.py", "test-mutate-shards.sh"):
             continue
         if mutate.SUITE_OF[mid] == "test-mutant-select.py" and suite != "select":
             continue
