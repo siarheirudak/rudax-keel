@@ -82,6 +82,8 @@ DIAG_RECORD_MAX = 4096
 DIAG_RECORD_CAP = 128
 DIAG_TOTAL_MAX = 64 * 1024
 DIAG_LIST_MAX = 20
+BLOCKING_DETAIL_MAX = 400
+BLOCKING_LINES_MAX = 40
 NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 ID_RE = re.compile(r"^M[0-9]+$")
 SHARD_RE = re.compile(r"^[0-9]+$")
@@ -2040,6 +2042,63 @@ def _baseline_findings(plan, folders):
     return findings
 
 
+def _blocking_text(text):
+    """One printable-ASCII line that no workflow command can be read from.
+
+    A mutant's stdout is untrusted. The runner reads two command forms: "::name::" at a line start
+    (also with a space before the closing pair) and the legacy "##[name]" anywhere in a line. Every
+    byte outside printable ASCII (LF, CR, ESC, U+2028, NEL, DEL, anything non-ASCII) becomes a space
+    first. Then every colon that is followed by a colon gets a space after it, so no pair is left in a
+    run of any length, and every "#" that is followed by "[" gets a space after it, so no "#[" is left.
+    A later cut can only drop a suffix, so it cannot bring either form back.
+    """
+    plain = re.sub(r"[^\x20-\x7e]", " ", str(text))
+    plain = re.sub(r":(?=:)", ": ", plain)
+    return re.sub(r"#(?=\[)", "# ", plain)
+
+
+def _blocking_detail(exp, detail):
+    """Say why one mutant blocks Grade, in at most BLOCKING_DETAIL_MAX characters.
+
+    A dict is the RESULT lines the mutant run printed. Show the expected names first, since a
+    mutant blocks when one of them stayed green or was missing.
+    """
+    if isinstance(detail, dict):
+        names = [name for name in (exp or []) if NAME_RE.fullmatch(str(name))]
+        parts = []
+        for name in names:
+            parts.append("%s=%s" % (name, detail.get(name, "(no RESULT line)")))
+        if not parts:
+            parts = ["red=[%s]" % ",".join(
+                name for name in mutate.red_from_results(detail) if NAME_RE.fullmatch(str(name))
+            )]
+        text = "; ".join(parts)
+    else:
+        text = str(detail)
+    text = _blocking_text(text).strip()
+    if len(text) > BLOCKING_DETAIL_MAX:
+        text = text[:BLOCKING_DETAIL_MAX - 3] + "..."
+    return text
+
+
+def _report_blocking(blocking, details):
+    """Name every blocking mutant on stderr and add one annotation. Exit status is the caller's."""
+    ordered = sorted(blocking, key=md.id_key)
+    shown = ordered[:BLOCKING_LINES_MAX]
+    print("Grade blocked by %d mutant(s):" % len(ordered), file=sys.stderr)
+    for mid in shown:
+        tag, detail, exp = details[mid]
+        print("  %s %s: %s" % (mid, tag, _blocking_detail(exp, detail)), file=sys.stderr)
+    omitted = len(ordered) - len(shown)
+    if omitted > 0:
+        print("  ... %d more not shown" % omitted, file=sys.stderr)
+    # Ids come from the trusted plan and tags from a fixed set, so the annotation carries no mutant text.
+    summary = ", ".join("%s %s" % (mid, details[mid][0]) for mid in shown)
+    if omitted > 0:
+        summary += " (+%d more)" % omitted
+    print("::error title=Grade blocked::%d blocking mutant(s): %s" % (len(ordered), summary))
+
+
 def cmd_aggregate():
     import base64
     plan = json.loads(base64.b64decode(os.environ["PLAN_B64"]))
@@ -2115,6 +2174,7 @@ def cmd_aggregate():
     for note in notes:
         print(note, file=sys.stderr)
     failures = []
+    details = {}
     graded = []
     for key, group in plan["shards"].items():
         folder = folders[key]
@@ -2134,10 +2194,11 @@ def cmd_aggregate():
             plan_suite(plan, mid)
             exp = plan_exp(plan, mid)
             stdout = open(os.path.join(folder, mid + ".txt"), encoding="utf-8").read()
-            tag, _detail = grade_stdout(exp, stdout)
+            tag, detail = grade_stdout(exp, stdout)
             graded.append(mid)
             if tag_fails(tag):
                 failures.append(mid)
+                details[mid] = (tag, detail, exp)
     if failed:
         _failure_state(plan)
         return 1
@@ -2168,6 +2229,8 @@ def cmd_aggregate():
         print("bootstrap-overdue: does not feed red state")
     if state["bootstrap_overdue"]:
         print("bootstrap overdue")
+    if blocking:
+        _report_blocking(blocking, details)
     return 1 if blocking else 0
 
 
