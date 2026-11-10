@@ -311,6 +311,8 @@ These run on every doctor invocation, before `--attacks`. All three are CRITICAL
 
 `--attacks` runs `setup/tests/harness/test-attacks.sh` in a throwaway temp dir on this machine with real containers, and maps each `RESULT` line to `ATK-<id>`. All are CRITICAL except ATK-A10 (RECOMMENDED). `BLOCKED` or `CONTAINED` passes. `PARTIAL`, `RISK`, or `N/A` warns. Anything else fails, including `WRONG REASON`. A gate test passes only if the gate fails **for the rule under test**. If it fails for another reason, the result is `WRONG REASON`. `setup/tests/harness/mutate.py` removes one protection at a time and checks that the attack it guards stops reporting `BLOCKED` or `CONTAINED`. Some mutants stay green because another layer still catches the same attack. `N/A` means that test does not apply in this mode or on this OS (ATK-A2 in env mode, ATK-A11-detect on Darwin). The temp dir is created under `$HOME`, so Docker Desktop can mount it.
 
+The egress attack checks (ATK-E-*, run by `setup/tests/harness/test-egress.sh`) clip what they echo. The output of each role command is echoed through `show`, which prints the id and at most 400 bytes of printable ASCII on one line, and the output quoted in the ATK-E-H1 `NOT BLOCKED (...)` reason is clipped the same way. The raw-route checks ATK-E-A2 and ATK-E-A11 send the response body to `/dev/null` with `wget -O /dev/null` and echo the exit status as `wget-rc:<n>`. A mutant that opens egress fetches a real web page. The controller caps a result line at 8192 characters, and a newline in that page could otherwise forge a `RESULT` line.
+
 If a CRITICAL check has already failed, the doctor does not run the suite. It prints [ATK-00](#atk-00) instead.
 
 <a id="atk-00"></a>
@@ -1136,13 +1138,19 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 
 **Level.** CRITICAL
 
-**Check.** `pids.max` inside the container is a number (not `max`). The bomb is contained and the host can still fork. Run attack suites one at a time: containers share the host uid, and so share its process limit.
+**Check.** The probe container reads its own `pids.max` first and starts the fork bomb only when that value equals the limit `setup/keel.sh` sets, which is `${PIDS:-128}`. The suite expands it the same way and requires a plain number of 1 to 9 digits; leading zeros are dropped. The check passes only when the bomb runs and is contained and the host can still fork. Run attack suites one at a time: containers share the host uid, and so share its process limit.
 
-**Why.** Host denial of service.
+- **Limit mismatch.** Once the container removal is confirmed, `pids.max` of `max` or any number other than the expected one ends the probe at once, without a bomb. The result is `RESULT H2: NOT BLOCKED (pids.max=<v>, expected <n>)`. This reads the limit from the container the bomb would run in, not from the host or from a separate probe.
+- **Contained.** With a matching limit, `RESULT H2: CONTAINED (...)` needs all of these: the bomb started, the run neither timed out nor took 110 s or more, the host can still fork, and the command exited with status 0, 2, or 137 (the container's exit status as `docker run` returns it). Status 2 or 137 means the shell inside the container itself hit the limit, which is the limit working. Any other status is `NOT BLOCKED (rc=... elapsed=...)`. If the bomb started and the run timed out or took 110 s or more, or the host cannot fork, the result is also `NOT BLOCKED`.
+- **Unreadable.** The suite prints `H2-DIAG <reason>` and no `RESULT H2` line if the container removal is not confirmed (checked first, whatever the probe printed), if the probe's `pids.max` line is missing or repeated or its value is neither `max` nor a number, if the bomb did not start although the limit matched, or if `PIDS` is not a plain number. The suite then exits non-zero at its end. `--attacks` reports ATK-H2 as `no result in log (suite crashed?)` in that case.
 
-**If it fails.** FAIL (CRITICAL): the isolation property is not holding on this machine. Do not run agents.
+The probe is bounded. Its output goes to a file, never to a pipe the caller reads. It runs in its own process group with stdin from `/dev/null`: 120 s, then TERM, then KILL after 5 s. The container is removed through its cid file, and the removal is checked.
 
-**How to fix.** Keep `--pids-limit`.
+**Why.** Host denial of service. A bomb run with no limit, or a different limit, tells nothing about `--pids-limit` and can run for the full 120 s. Comparing first makes a missing limit cost seconds and makes the result name the value that was found. The check compares the value only, so a default pids limit configured on the Docker daemon or runtime that equals `${PIDS:-128}` would also match; a match shows that the container has that limit, not that `--pids-limit` set it.
+
+**If it fails.** FAIL (CRITICAL): the isolation property is not holding on this machine. Do not run agents. For `H2-DIAG`, fix what the line names and rerun; do not read it as a pass.
+
+**How to fix.** Keep `--pids-limit "${PIDS:-128}"` in the `HARDEN` options of `setup/keel.sh`, and keep `PIDS` a plain number.
 
 <a id="atk-h3"></a>
 
