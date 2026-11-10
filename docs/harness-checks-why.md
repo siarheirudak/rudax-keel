@@ -1136,7 +1136,7 @@ If a CRITICAL check has already failed, the doctor does not run the suite. It pr
 
 **Level.** CRITICAL
 
-**Check.** The bomb container reads its own `pids.max` and compares it with `${PIDS:-128}` (the same expansion `keel.sh` passes to `--pids-limit`) before any bomb starts. A reading of `max`, or any other number, is not that pinned limit: the bomb does not start and the result is `NOT BLOCKED`. M26 deletes `--pids-limit` and is killed by `pids.max` not equal to the pinned limit. On a runner whose default `pids.max` is already 128, this mutant could survive, because the reading would match the pin. When the values match, the bomb must finish and the host must still fork. Run attack suites one at a time: containers share the host uid, and so share its process limit.
+**Check.** `pids.max` inside the container is a number (not `max`). The bomb is contained and the host can still fork. Run attack suites one at a time: containers share the host uid, and so share its process limit.
 
 **Why.** Host denial of service.
 

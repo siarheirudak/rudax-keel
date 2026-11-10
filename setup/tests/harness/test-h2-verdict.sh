@@ -59,8 +59,19 @@ v "cleanup beats max"    "DIAG cleanup unknown"                   3 "h2-pids-max
 for fn in h2_expect h2_probe_script h2_remove_container; do type "$fn" >/dev/null 2>&1 || { echo "FAIL $fn not defined" >&2; exit 1; }; done
 e() { # name want input
   local got grc; got=$(h2_expect "$3"); grc=$?
-  if [ "$2" = FAIL ]; then [ "$grc" = 1 ] || bad "h2_expect $1: rc $grc want 1"
-  else [ "$grc" = 0 ] && [ "$got" = "$2" ] || bad "h2_expect $1: got '$got' rc $grc want '$2'"; fi
+  if [ "$2" = FAIL ]; then
+    if [ "$grc" = 1 ]; then
+      :
+    else
+      bad "h2_expect $1: rc $grc want 1"
+    fi
+  else
+    if [ "$grc" = 0 ] && [ "$got" = "$2" ]; then
+      :
+    else
+      bad "h2_expect $1: got '$got' rc $grc want '$2'"
+    fi
+  fi
 }
 e "plain"        128 128
 e "leading zero" 128 0128
