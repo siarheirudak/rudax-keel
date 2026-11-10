@@ -46,7 +46,7 @@ h2_verdict(){
   pm=$(printf '%s\n' "$out" | sed -n 's/^h2-pids-max=//p' | tail -1)
   if [ "$n" != 1 ]; then printf '%s\n' "DIAG pids.max reading missing or repeated"; return 3; fi
   case $pm in
-    max) printf '%s\n' "NOT BLOCKED (no pids limit: pids.max=max)"; return 0;;
+    max) printf '%s\n' "NOT BLOCKED (pids.max=max, expected $expect)"; return 0;;
     ''|*[!0-9]*) printf '%s\n' "DIAG pids.max unreadable"; return 3;;
   esac
   if [ "$pm" != "$expect" ]; then printf '%s\n' "NOT BLOCKED (pids.max=$pm, expected $expect)"; return 0; fi
@@ -58,6 +58,42 @@ h2_verdict(){
     *) printf '%s\n' "NOT BLOCKED (rc=$rc elapsed=$el)";;
   esac
   return 0
+}
+# h2_expect VALUE   Prints VALUE as a plain decimal number (leading zeros removed). Returns 1 unless it is 1-9 digits.
+h2_expect(){
+  case $1 in ''|*[!0-9]*) return 1;; esac
+  [ "${#1}" -le 9 ] || return 1
+  printf '%s\n' "$((10#$1))"
+}
+# h2_probe_script EXPECT [PIDS_FILE]   Prints the one-line sh script the bomb container runs. It reads its own pids.max
+# first and starts the bomb ONLY when that value is exactly EXPECT: with no limit ("max"), any other number or an
+# unreadable file it exits at once, so a missing --pids-limit costs seconds, not a 120 s bomb run. PIDS_FILE exists so
+# test-h2-verdict.sh can aim the guard at a temp file; the suite never passes it. Returns 1 for a non-numeric EXPECT or
+# a path with odd characters (nothing is quoted, so nothing may need quoting).
+h2_probe_script(){
+  local exp=$1 pf=${2:-/sys/fs/cgroup/pids.max}
+  case $exp in ''|*[!0-9]*) return 1;; esac
+  case $pf in *[!A-Za-z0-9_./-]*) return 1;; esac
+  printf '%s\n' 'pm=$(cat '"$pf"' 2>/dev/null); echo "h2-pids-max=${pm:-unreadable}"; [ "$pm" = '"$exp"' ] || { echo h2-bomb=skipped; exit 0; }; b(){ b | b & }; (b) >/dev/null 2>&1 </dev/null & echo h2-bomb=started; sleep 8; echo "pids now: $(cat /sys/fs/cgroup/pids.current 2>/dev/null)/$pm"; kill -9 -1 2>/dev/null; echo survived'
+}
+# h2_remove_container ID   Removes the container and checks that it is gone. Sets the global H2_STATE (gone|present|unknown);
+# call it in the current shell, not inside $(...). $D may be "sudo docker" (split on purpose). The verification keeps
+# docker's stderr out of the file it reads, so a CLI warning cannot look like a leftover container: only a line that is
+# a container id counts as "present", anything else is "unknown".
+H2_STATE=unknown
+h2_remove_container(){
+  local id=$1 aux idre='^[0-9a-f]{12,64}$'
+  H2_STATE=unknown
+  aux=$(mktemp)
+  # shellcheck disable=SC2086
+  h2_run_bounded 30 5 "$aux" $D rm -f "$id" || true
+  # shellcheck disable=SC2086
+  if h2_run_bounded 30 5 "$aux" sh -c 'exec "$@" 2>/dev/null' h2-ps $D ps -aq --filter "id=$id"; then
+    if [ ! -s "$aux" ]; then H2_STATE=gone
+    elif grep -Eq "$idre" "$aux" && ! grep -Evq "$idre" "$aux"; then H2_STATE=present
+    fi
+  fi
+  rm -f "$aux"
 }
 # --- h2-helpers-end
 echo "### MODE-A1 directly executed script mode"
@@ -246,28 +282,23 @@ out=$($K proto h rw 'mkdir -p /tmp/x; mount -t tmpfs t /tmp/x 2>&1 && echo MOUNT
 if ! echo "$out" | grep -qE 'MOUNT-OK|CHOWN-OK|UNSHARE-OK' && echo "$out" | grep -q 'CapEff:.0000000000000000' && echo "$out" | grep -q 'CapBnd:.0000000000000000' && echo "$out" | grep -q 'NoNewPrivs:.1'; then res H1 "BLOCKED (mount/chown/unshare denied, CapEff=0, CapBnd=0, NoNewPrivs=1)"
 elif [ "$(uname -s)" = Darwin ] && ! echo "$out" | grep -qE 'MOUNT-OK|UNSHARE-OK' && echo "$out" | grep -q 'CapEff:.0000000000000000' && echo "$out" | grep -q 'CapBnd:.0000000000000000' && echo "$out" | grep -q 'NoNewPrivs:.1'; then res H1 "BLOCKED (mount/unshare denied, CapEff=0, CapBnd=0, NoNewPrivs=1; chown on a Docker Desktop bind mount is emulated by virtiofs and does not change host ownership)"
 else res H1 "NOT BLOCKED"; fi
-# H2: the probe container reads its own pids.max first and only starts the bomb when a numeric limit is present.
+# H2: the probe container reads its own pids.max first and starts the bomb only when it equals the limit keel.sh
+# sets (${PIDS:-128}, same expansion as keel.sh); no limit or another number is NOT BLOCKED without a bomb.
 # Its output goes to a file (never a pipe the caller reads), the container is removed through the cidfile and
 # the removal is verified. An unreadable result is a non-RESULT H2-DIAG line plus a non-zero suite exit.
 echo "### H2 fork bomb"; fresh; t0=$(date +%s)
-h2_probe='pm=$(cat /sys/fs/cgroup/pids.max 2>/dev/null); echo "h2-pids-max=${pm:-unreadable}"; case $pm in ""|*[!0-9]*) exit 0;; esac; b(){ b | b & }; (b) >/dev/null 2>&1 </dev/null & echo h2-bomb=started; sleep 8; echo "pids now: $(cat /sys/fs/cgroup/pids.current 2>/dev/null)/$pm"; kill -9 -1 2>/dev/null; echo survived'
-h2_cid=$(mktemp); rm -f "$h2_cid"; h2_out=$(mktemp)
-h2_run_bounded 120 5 "$h2_out" env KEEL_CIDFILE="$h2_cid" "$K" proto bomb rw "$h2_probe"; rc=$?; h2_to=$H2_TIMED_OUT
-el=$(( $(date +%s)-t0 )); hf=$(sh -c 'echo yes'); cat "$h2_out"
-echo "  rc=$rc elapsed=${el}s timed_out=$h2_to host load: $(uptime | sed 's/.*load averages*: *//'); host can fork: $hf"
-h2_state=unknown
-if [ -s "$h2_cid" ]; then
-  h2_id=$(cat "$h2_cid"); h2_aux=$(mktemp)
-  # shellcheck disable=SC2086  # $D may be "sudo docker"
-  h2_run_bounded 30 5 "$h2_aux" $D rm -f "$h2_id" || true
-  # shellcheck disable=SC2086
-  if h2_run_bounded 30 5 "$h2_aux" $D ps -aq --filter "id=$h2_id"; then
-    if [ -s "$h2_aux" ]; then h2_state=present; else h2_state=gone; fi
-  fi
-  rm -f "$h2_aux"
+if h2_exp=$(h2_expect "${PIDS:-128}") && h2_probe=$(h2_probe_script "$h2_exp"); then
+  h2_cid=$(mktemp); rm -f "$h2_cid"; h2_out=$(mktemp)
+  h2_run_bounded 120 5 "$h2_out" env KEEL_CIDFILE="$h2_cid" "$K" proto bomb rw "$h2_probe"; rc=$?; h2_to=$H2_TIMED_OUT
+  el=$(( $(date +%s)-t0 )); hf=$(sh -c 'echo yes'); cat "$h2_out"
+  echo "  rc=$rc elapsed=${el}s timed_out=$h2_to host load: $(uptime | sed 's/.*load averages*: *//'); host can fork: $hf"
+  h2_state=unknown
+  if [ -s "$h2_cid" ]; then h2_remove_container "$(cat "$h2_cid")"; h2_state=$H2_STATE; fi
+  h2_line=$(h2_verdict "$(cat "$h2_out")" "$rc" "$el" "$h2_to" "$hf" "$h2_state" "$h2_exp"); h2_vrc=$?
+  rm -f "$h2_cid" "$h2_out"
+else
+  h2_line="DIAG PIDS is not a plain number"; h2_vrc=3
 fi
-h2_line=$(h2_verdict "$(cat "$h2_out")" "$rc" "$el" "$h2_to" "$hf" "$h2_state" "${PIDS:-128}"); h2_vrc=$?
-rm -f "$h2_cid" "$h2_out"
 if [ "$h2_vrc" = 0 ]; then res H2 "$h2_line"; else echo "H2-DIAG ${h2_line#DIAG }"; h2_fail=1; fi
 echo "### H5 cpu limit"
 cm=$($K proto cchk ro 'cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo unknown'); cm=$(echo "$cm" | tail -1); echo "  cpu.max=$cm"
