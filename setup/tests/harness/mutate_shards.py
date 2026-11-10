@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """Shard plan, tree materialisation, and trusted aggregate."""
+import errno
 import hashlib
 import io
 import json
 import os
 import re
+import select
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
+import time
 import urllib.parse
 import urllib.request
 import zipfile
@@ -28,6 +33,21 @@ SHARD_CAP = 8
 MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 MAX_LINE = 8192
+# Production suite and provision limit. Tests pass a shorter timeout explicitly.
+SUITE_TIMEOUT = 900
+READ_CHUNK = 16 * 1024
+POLL_SLICE = 0.2
+DRAIN_LIMIT = 5.0
+STOP_LIMIT = 15.0
+JOIN_LIMIT = 0.5
+ARCHIVE_RESERVE = 1024 * 1024
+DIAG_FILE_CAP = 256 * 1024
+TIMING_FILE_CAP = 64 * 1024
+STDERR_HEAD = 4096
+STDERR_TAIL = 4096
+PEM_LINE_CAP = 8192
+OBS_CAP = 32
+OBS_FIELD = 128
 SELECTOR_FILES = (
     "setup/tests/harness/mutant_files.py",
     "setup/tests/harness/mutate.py",
@@ -84,6 +104,7 @@ PREREQ_CATEGORIES = frozenset((
     "timeout",
     "transport",
     "incomplete",
+    "truncated",
 ))
 BASELINE_REASONS = frozenset((
     "absent",
@@ -838,21 +859,22 @@ def _category_for(argv, code):
 
 
 def _run_allowlisted(argv, env):
-    try:
-        proc = subprocess.run(
-            argv,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            timeout=900,
-            check=False,
-        )
-    except FileNotFoundError:
+    cap = capture_command(argv, env=env, cwd=None, timeout=SUITE_TIMEOUT)
+    _run_allowlisted.last = cap
+    _remember(cap, "provision", command_requirement(argv), "-")
+    if cap.term == "oserror":
         return 127, ""
-    except subprocess.TimeoutExpired:
+    if cap.controller_deadline:
         return 124, ""
-    out = proc.stdout.decode("utf-8", "replace") if proc.stdout else ""
-    return proc.returncode, out
+    # A lost pipe or a failed read is not a successful install, even if the
+    # leader exited 0 and the version needle was seen on the way out.
+    if cap.capture_incomplete:
+        return 1, ""
+    if cap.child_code is None:
+        return 1, ""
+    # Over-limit provisioning logs stay nonfatal: the version scan already
+    # walked the stream, and this output is not a scored mutant file.
+    return cap.child_code, cap.version_text
 
 
 def _require_tested_file(path, suites, ids):
@@ -1159,27 +1181,640 @@ def read_baseline_blob(path):
         return {"unreadable": True}
 
 
-def run_suite(tree, suite, namespace, forwarded=None):
+_TRACE = []
+_TRACE_DROPPED = [0]
+_OBS_CALLS = [0]
+
+
+def _remember(cap, phase, suite, ident):
+    if len(_TRACE) >= 80:
+        _TRACE_DROPPED[0] += 1
+        return
+    _TRACE.append({
+        "phase": phase,
+        "suite": suite,
+        "id": ident,
+        "ms": cap.ms,
+        "term": cap.term,
+        "deadline": 1 if cap.controller_deadline else 0,
+        "child_code": "" if cap.child_code is None else cap.child_code,
+        "stdout_bytes": cap.stdout_bytes,
+        "stderr_bytes": cap.stderr_bytes,
+        "truncated": 1 if cap.truncated else 0,
+        "text": cap.diag_text,
+    })
+
+
+def aux_room(mandatory_sum):
+    """Spare bytes for diag and timing. The 1 MiB reserve is not a validity cut."""
+    if mandatory_sum > MAX_ARCHIVE_BYTES:
+        return 0
+    return max(0, MAX_ARCHIVE_BYTES - mandatory_sum - ARCHIVE_RESERVE)
+
+
+def mandatory_within_archive(sizes):
+    """Existing extractor rule: each file <= 8 MiB and the uncompressed sum <= 64 MiB."""
+    if any(size > MAX_FILE_BYTES for size in sizes):
+        return False
+    return sum(sizes) <= MAX_ARCHIVE_BYTES
+
+
+def _signal_group(pid, sig):
+    _signal_group.calls += 1
+    try:
+        os.killpg(pid, sig)
+    except (ProcessLookupError, PermissionError, OSError) as err:
+        _signal_group.last = (pid, sig, str(err))
+        return
+    _signal_group.last = (pid, sig, "ok")
+
+
+def _group_members(pgid):
+    found = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            if os.getpgid(int(name)) == pgid:
+                found.append(int(name))
+        except (ProcessLookupError, PermissionError, OSError):
+            continue
+    return found
+
+
+def _reap_group(pgid, seconds):
+    """Finish SIGKILL delivery for the owned group. Bounded; not a Docker scan."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if not _group_members(pgid):
+            return True
+        _signal_group(pgid, signal.SIGKILL)
+        time.sleep(0.05)
+    return not _group_members(pgid)
+
+
+_signal_group.calls = 0
+
+
+def _poll_fd(fd, mask, deadline):
+    remain = deadline - time.monotonic()
+    if remain <= 0:
+        return False
+    timeout_ms = min(int(POLL_SLICE * 1000), max(0, int(remain * 1000)))
+    poller = select.poll()
+    poller.register(fd, mask)
+    try:
+        events = poller.poll(timeout_ms)
+    except OSError:
+        return False
+    return bool(events)
+
+
+class _StderrAccum(object):
+    """Bounded head/tail plus constant-size PEM state across the discarded middle."""
+
+    def __init__(self):
+        self.total = 0
+        self.invalid = 0
+        self._dec = __import__("codecs").getincrementaldecoder("utf-8")("replace")
+        self._line = ""
+        self._over = False
+        self.pem = "outside"
+        self.label = ""
+        self.head = []
+        self.head_bytes = 0
+        self.tail = []
+        self.tail_bytes = 0
+        self.stored = 0
+
+    def feed(self, data):
+        if not data:
+            return
+        self.total += len(data)
+        text = self._dec.decode(data)
+        self.invalid += text.count("\ufffd")
+        self._take(text)
+
+    def finish(self):
+        text = self._dec.decode(b"", final=True)
+        self.invalid += text.count("\ufffd")
+        self._take(text)
+        self._line = ""
+        self._over = False
+
+    def _take(self, text):
+        for ch in text:
+            if ch == "\n":
+                if not self._over:
+                    self._keep(self._line)
+                self._line = ""
+                self._over = False
+                continue
+            if self._over:
+                continue
+            if len(self._line) >= PEM_LINE_CAP:
+                self.pem = "unknown"
+                self.label = ""
+                self._over = True
+                self._line = ""
+                continue
+            self._line += ch
+
+    def _keep(self, line):
+        before = (self.pem, self.label)
+        self.pem, self.label = _pem_see(self.pem, self.label, line)
+        raw = len(line.encode("utf-8")) + 1
+        item = (before, line)
+        if self.head_bytes + raw <= STDERR_HEAD:
+            self.head.append(item)
+            self.head_bytes += raw
+            self.stored += raw
+            return
+        self.tail.append(item)
+        self.tail_bytes += raw
+        self.stored += raw
+        while self.tail and self.tail_bytes > STDERR_TAIL:
+            _old, gone = self.tail.pop(0)
+            self.tail_bytes -= len(gone.encode("utf-8")) + 1
+            self.stored -= len(gone.encode("utf-8")) + 1
+
+    def render(self, home, cwd):
+        head = _publish_region(self.head, stop_on_begin=True)
+        tail = _publish_region(self.tail, stop_on_begin=False)
+        omitted = max(0, self.total - self.stored)
+        parts = []
+        if head:
+            parts.append(head)
+        if omitted or (head and tail):
+            parts.append("<omitted bytes=%d>" % omitted)
+        if tail:
+            parts.append(tail)
+        text = "\n".join(parts)
+        if home:
+            text = text.replace(home, "<home>")
+        if cwd:
+            text = text.replace(cwd, "<tree>")
+        text = _redact_text(text)
+        encoded = text.encode("utf-8")
+        if len(encoded) > 12 * 1024:
+            text = encoded[:12 * 1024].decode("utf-8", "ignore") + "\n<truncated>"
+        return text
+
+
+def _pem_see(state, label, line):
+    if state == "unknown":
+        return "unknown", ""
+    stripped = line.strip()
+    begin = re.match(r"-----BEGIN ([A-Za-z0-9 ]{1,64})-----$", stripped)
+    end = re.match(r"-----END ([A-Za-z0-9 ]{1,64})-----$", stripped)
+    if state == "outside" and begin:
+        return "inside", begin.group(1)
+    if state == "inside" and end and end.group(1) == label:
+        return "outside", ""
+    if state == "inside" and (begin or end):
+        return "unknown", ""
+    return state, label
+
+
+def _publish_region(items, stop_on_begin):
+    out = []
+    unknown = False
+    for before, line in items:
+        state, _label = before
+        if unknown or state == "unknown":
+            unknown = True
+            continue
+        if state == "inside":
+            continue
+        stripped = line.strip()
+        if re.match(r"-----BEGIN [A-Za-z0-9 ]{1,64}-----$", stripped):
+            if stop_on_begin:
+                break
+            continue
+        if re.match(r"-----END [A-Za-z0-9 ]{1,64}-----$", stripped):
+            continue
+        out.append(_redact_text(line))
+    return "\n".join(out)
+
+
+_TOKEN_RES = (
+    re.compile(r"ghp_[A-Za-z0-9]{20,}"),
+    re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
+    re.compile(r"Bearer \S+"),
+    re.compile(r"AKIA[0-9A-Z]{16}"),
+)
+
+
+def _redact_text(text):
+    for pattern in _TOKEN_RES:
+        text = pattern.sub("<redacted>", text)
+    return text
+
+
+class Capture(object):
+    def __init__(self):
+        self.stdout = b""
+        self.stdout_bytes = 0
+        self.stderr_bytes = 0
+        self.child_code = None
+        self.controller_deadline = False
+        self.capture_incomplete = False
+        self.truncated = False
+        self.term = "exit"
+        self.legacy_code = 1
+        self.publish = False
+        self.ms = 0
+        self.diag_text = ""
+        self.version_text = ""
+        self.threads = []
+        self.invalid_utf8 = 0
+
+
+def _version_scan(buf, needles, found, hold):
+    data = hold[0] + buf
+    for needle in needles:
+        if needle in found:
+            continue
+        if needle.encode("utf-8") in data:
+            found.add(needle)
+    keep = 0
+    for needle in needles:
+        keep = max(keep, len(needle.encode("utf-8")) - 1)
+    hold[0] = data[-keep:] if keep else b""
+
+
+def capture_command(argv, env, cwd, timeout):
+    """Run argv with bounded nonblocking capture. timeout is seconds.
+
+    Stdout stays in a bytearray capped at 8 MiB. The reader threads do not
+    write a regular file, so a stalled disk cannot leave them blocked.
+    """
+    cap = Capture()
+    started = time.monotonic()
+    deadline = started + timeout
+    stop = threading.Event()
+    deadline_box = [deadline + DRAIN_LIMIT]
+    errors = []
+    accum = _StderrAccum()
+    stdout_buf = bytearray()
+    stdout_len = [0]
+    out_eof = [False]
+    err_eof = [False]
+    truncated = [False]
+    needles = (GITLEAKS_VERSION, PI_VERSION)
+    found = set()
+    hold = [b""]
+
+    def on_out(chunk, eof=False):
+        if eof:
+            out_eof[0] = True
+            return
+        if stop.is_set() or time.monotonic() >= deadline_box[0]:
+            return
+        _version_scan(chunk, needles, found, hold)
+        stdout_len[0] += len(chunk)
+        room = MAX_FILE_BYTES - len(stdout_buf)
+        if room <= 0:
+            truncated[0] = True
+            return
+        take = chunk if len(chunk) <= room else chunk[:room]
+        if len(take) < len(chunk):
+            truncated[0] = True
+        if take:
+            stdout_buf.extend(take)
+
+    def on_err(chunk, eof=False):
+        if eof:
+            err_eof[0] = True
+            return
+        accum.feed(chunk)
+
+    def read_fd(fd, callback):
+        try:
+            while not stop.is_set():
+                if time.monotonic() >= deadline_box[0]:
+                    break
+                if not _poll_fd(fd, select.POLLIN | select.POLLERR | select.POLLHUP, deadline_box[0]):
+                    if stop.is_set() or time.monotonic() >= deadline_box[0]:
+                        break
+                    continue
+                try:
+                    chunk = os.read(fd, READ_CHUNK)
+                except OSError as err:
+                    if err.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                        continue
+                    errors.append(err)
+                    break
+                if len(chunk) > READ_CHUNK:
+                    errors.append(OSError("chunk"))
+                    break
+                if chunk == b"":
+                    callback(b"", True)
+                    break
+                callback(chunk, False)
+        except Exception as err:
+            errors.append(err)
+
+    proc = None
+    threads = []
+    try:
+        try:
+            proc = subprocess.Popen(
+                argv,
+                cwd=cwd,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+        except OSError:
+            cap.term = "oserror"
+            cap.legacy_code = 127
+            cap.ms = int((time.monotonic() - started) * 1000)
+            return cap
+        os.set_blocking(proc.stdout.fileno(), False)
+        os.set_blocking(proc.stderr.fileno(), False)
+        threads = [
+            threading.Thread(target=read_fd, args=(proc.stdout.fileno(), on_out)),
+            threading.Thread(target=read_fd, args=(proc.stderr.fileno(), on_err)),
+        ]
+        for thread in threads:
+            thread.daemon = False
+            thread.start()
+        try:
+            proc.wait(timeout=max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            # TERM, then KILL the owned group even if the leader already
+            # exited and both pipes are already closed.
+            cap.controller_deadline = True
+            _signal_group(proc.pid, signal.SIGTERM)
+            grace_end = time.monotonic() + 0.3
+            while time.monotonic() < grace_end and proc.poll() is None:
+                time.sleep(0.05)
+            _signal_group(proc.pid, signal.SIGKILL)
+            try:
+                proc.wait(timeout=0.3)
+            except subprocess.TimeoutExpired:
+                pass
+            _reap_group(proc.pid, 0.5)
+        drain_end = time.monotonic() + DRAIN_LIMIT
+        if drain_end < deadline_box[0]:
+            deadline_box[0] = drain_end
+        while time.monotonic() < deadline_box[0]:
+            if out_eof[0] and err_eof[0]:
+                break
+            if not any(thread.is_alive() for thread in threads):
+                break
+            time.sleep(0.05)
+        if not (out_eof[0] and err_eof[0]):
+            cap.capture_incomplete = True
+            _signal_group(proc.pid, signal.SIGTERM)
+            _signal_group(proc.pid, signal.SIGKILL)
+            try:
+                proc.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                pass
+            deadline_box[0] = time.monotonic() + 0.5
+            time.sleep(0.05)
+        stop.set()
+        deadline_box[0] = min(deadline_box[0], time.monotonic() + POLL_SLICE)
+        for thread in threads:
+            thread.join(JOIN_LIMIT)
+        if any(thread.is_alive() for thread in threads):
+            cap.capture_incomplete = True
+        cap.child_code = proc.returncode
+    finally:
+        stop.set()
+        for thread in threads:
+            if thread.is_alive():
+                thread.join(JOIN_LIMIT)
+        if proc is not None:
+            if proc.stdout:
+                proc.stdout.close()
+            if proc.stderr:
+                proc.stderr.close()
+            if proc.poll() is None and not cap.controller_deadline:
+                _signal_group(proc.pid, signal.SIGKILL)
+                try:
+                    proc.wait(timeout=0.2)
+                except subprocess.TimeoutExpired:
+                    pass
+    accum.finish()
+    cap.threads = threads
+    cap.stdout_bytes = stdout_len[0]
+    cap.stderr_bytes = accum.total
+    cap.invalid_utf8 = accum.invalid
+    cap.truncated = truncated[0]
+    cap.diag_text = accum.render(
+        (env or {}).get("HOME", ""),
+        cwd or "",
+    )
+    if errors or cap.capture_incomplete or any(thread.is_alive() for thread in threads):
+        cap.capture_incomplete = True
+    if cap.controller_deadline:
+        cap.term = "timeout"
+        cap.legacy_code = 124
+    elif cap.term == "oserror":
+        cap.legacy_code = 127
+    elif cap.capture_incomplete or cap.truncated:
+        cap.term = "capture" if cap.capture_incomplete and not cap.controller_deadline else cap.term
+        if cap.truncated and not cap.capture_incomplete and not cap.controller_deadline:
+            cap.term = "exit"
+        cap.legacy_code = 1
+    else:
+        cap.term = "exit"
+        cap.legacy_code = 0 if cap.child_code is None else cap.child_code
+    cap.publish = not cap.capture_incomplete and not cap.truncated and cap.term != "oserror"
+    if cap.publish:
+        cap.stdout = bytes(stdout_buf)
+    text = cap.stdout.decode("utf-8", "replace") if cap.stdout else ""
+    for needle in found:
+        if needle not in text:
+            text += needle
+    cap.version_text = text
+    cap.ms = int((time.monotonic() - started) * 1000)
+    return cap
+
+
+def run_suite(tree, suite, namespace, forwarded=None, timeout=None):
     script = os.path.join(tree, "setup", "tests", "harness", suite)
     runner = "python3" if suite.endswith(".py") else "bash"
     picked = forwarded if forwarded is not None else suite_forward_from_env()
     env = allowlisted_env(picked)
     env["KEEL_NS"] = namespace
+    limit = SUITE_TIMEOUT if timeout is None else timeout
+    try:
+        cap = capture_command([runner, script], env, tree, limit)
+    except OSError:
+        cap = Capture()
+        cap.term = "oserror"
+        cap.legacy_code = 127
+    run_suite.last = cap
+    phase = "baseline" if namespace == "base" else "mutant"
+    _remember(cap, phase, suite, namespace)
+    return cap.stdout if cap.publish else b"", cap.legacy_code
+
+
+def _called_capture(previous, stdout, code):
+    """A test spy that only returns bytes does not publish Capture.last."""
+    cap = getattr(run_suite, "last", None)
+    if cap is None or cap is previous:
+        cap = Capture()
+        cap.publish = True
+        cap.stdout = stdout or b""
+        cap.child_code = code
+        cap.legacy_code = code
+        cap.term = "exit"
+    return cap
+
+
+def _store_score_file(path, stdout, cap):
+    """Publish exact scored bytes. An I/O error leaves no gradeable partial."""
+    if cap is None or not cap.publish:
+        if os.path.lexists(path) and not os.path.islink(path):
+            try:
+                os.remove(path)
+            except OSError:
+                return False
+        return True
+    parent = os.path.dirname(path)
+    tmp = path + ".part"
+    try:
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(tmp, "wb") as handle:
+            handle.write(stdout)
+        os.replace(tmp, path)
+    except OSError:
+        if os.path.isfile(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        return False
+    return True
+
+
+def _bound_observe_lines(text):
+    rows = []
+    omitted = 0
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        if len(rows) >= OBS_CAP:
+            omitted += 1
+            continue
+        piece = line.strip().split(" ", 1)
+        ident = piece[0][:OBS_FIELD]
+        name = piece[1][:OBS_FIELD] if len(piece) > 1 else ""
+        rows.append(ident + " " + name)
+    return rows, omitted
+
+
+def observe_failure_names():
+    """One bounded docker ps. No rm, prune, or label change."""
+    _OBS_CALLS[0] += 1
     try:
         proc = subprocess.run(
-            [runner, script],
-            cwd=tree,
-            env=env,
+            ["docker", "ps", "-a", "--format", "{{.ID}} {{.Names}}"],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            timeout=900,
+            timeout=2,
             check=False,
         )
-    except subprocess.TimeoutExpired:
-        return b"", 124
-    except OSError:
-        return b"", 127
-    return proc.stdout or b"", proc.returncode
+    except (OSError, subprocess.TimeoutExpired):
+        return [], 0
+    if proc.returncode != 0:
+        return [], 0
+    text = proc.stdout.decode("utf-8", "replace") if proc.stdout else ""
+    return _bound_observe_lines(text)
+
+
+def _mandatory_sizes(out_dir):
+    sizes = []
+    if not os.path.isdir(out_dir):
+        return sizes
+    for name in os.listdir(out_dir):
+        if name == "shard-status.json" or name.startswith("baseline-") or re.match(r"^M[0-9]+\.txt$", name):
+            path = os.path.join(out_dir, name)
+            if os.path.isfile(path) and not os.path.islink(path):
+                sizes.append(os.path.getsize(path))
+    return sizes
+
+
+def _write_text_atomic(path, text):
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    tmp = path + ".part"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    os.replace(tmp, path)
+
+
+def _fit_text(text, cap):
+    """Keep the truncation marker inside the encoded cap, including a tiny cap."""
+    if cap < 0:
+        cap = 0
+    encoded = text.encode("utf-8")
+    if len(encoded) <= cap:
+        return text
+    marker = "\n<truncated>\n"
+    marker_b = marker.encode("utf-8")
+    room = cap - len(marker_b)
+    if room <= 0:
+        return marker_b[:cap].decode("utf-8", "ignore")
+    cut = encoded[:room].decode("utf-8", "ignore")
+    while cut and len((cut + marker).encode("utf-8")) > cap:
+        cut = cut[:-1]
+    out = cut + marker
+    if len(out.encode("utf-8")) > cap:
+        return marker_b[:cap].decode("utf-8", "ignore")
+    return out
+
+
+def publish_aux(out_dir, failed):
+    """Write diag and timing only when they fit beside valid mandatory logs."""
+    sizes = _mandatory_sizes(out_dir)
+    if not mandatory_within_archive(sizes):
+        return "truncated"
+    room = aux_room(sum(sizes))
+    for name in ("diag-shard.txt", "shard-timing.txt"):
+        path = os.path.join(out_dir, name)
+        if os.path.isfile(path):
+            os.remove(path)
+    if room <= 0:
+        return "omit"
+    lines = []
+    for row in _TRACE:
+        lines.append(
+            "phase=%s id=%s suite=%s ms=%s term=%s deadline=%s child=%s stdout_bytes=%s stderr_bytes=%s truncated=%s"
+            % (
+                row["phase"], row["id"], row["suite"], row["ms"], row["term"],
+                row["deadline"], row["child_code"], row["stdout_bytes"],
+                row["stderr_bytes"], row["truncated"],
+            )
+        )
+    timing = _fit_text("\n".join(lines) + "\n", min(TIMING_FILE_CAP, room))
+    observe = ""
+    if failed:
+        rows, omitted = observe_failure_names()
+        observe = "observe_omitted=%d\n%s\n" % (omitted, "\n".join(rows))
+    body = [observe]
+    if _TRACE_DROPPED[0]:
+        body.append("records_omitted=%d" % _TRACE_DROPPED[0])
+    for row in _TRACE:
+        if row["text"]:
+            body.append("== %s %s %s" % (row["phase"], row["id"], row["suite"]))
+            body.append(row["text"])
+    diag = _fit_text("\n".join(body), min(DIAG_FILE_CAP, max(0, room - len(timing.encode("utf-8")))))
+    used = len(timing.encode("utf-8")) + len(diag.encode("utf-8"))
+    if used > room:
+        return "omit"
+    _write_text_atomic(os.path.join(out_dir, "shard-timing.txt"), timing)
+    if diag.strip():
+        _write_text_atomic(os.path.join(out_dir, "diag-shard.txt"), diag)
+    return "kept"
 
 
 def safe_untar(tar_path, dest):
@@ -1229,10 +1864,22 @@ def _emit_prereq(status_path, err):
     write_shard_status(status_path, {"ok": False, "phase": "failed", "category": err.category})
 
 
-def cmd_run_shard(tar_path, expected_sha, out_dir, suites, group, expected=None):
+def cmd_run_shard(tar_path, expected_sha, out_dir, suites, group, expected=None, timeout=None):
     os.makedirs(out_dir, exist_ok=True)
     status_path = os.path.join(out_dir, "shard-status.json")
     write_shard_status(status_path, {"ok": False, "phase": "start"})
+    limit = SUITE_TIMEOUT if timeout is None else timeout
+    del _TRACE[:]
+    _TRACE_DROPPED[0] = 0
+
+    def finish(code, status=None):
+        if status:
+            write_shard_status(status_path, status)
+        kind = publish_aux(out_dir, code != 0)
+        if code == 0 and kind == "truncated":
+            write_shard_status(status_path, {"ok": False, "phase": "failed", "category": "truncated"})
+            return 1
+        return code
     if not isinstance(group, list) or not group:
         raise ShardError("plan")
     if not verify_sha256(tar_path, expected_sha):
@@ -1273,7 +1920,7 @@ def cmd_run_shard(tar_path, expected_sha, out_dir, suites, group, expected=None)
         verified = provision_selected(baseline, selected, ids_by_suite)
     except PrereqError as err:
         _emit_prereq(status_path, err)
-        return 1
+        return finish(1)
     forward = suite_forward_from_env()
     if verified:
         forward.update(verified)
@@ -1281,8 +1928,19 @@ def cmd_run_shard(tar_path, expected_sha, out_dir, suites, group, expected=None)
     shard_key = os.environ.get("K") or "0"
     findings = []
     for suite in selected:
-        stdout, code = run_suite(baseline, suite, "base", forward)
-        open(os.path.join(out_dir, "baseline-" + suite), "wb").write(stdout or b"")
+        previous = getattr(run_suite, "last", None)
+        stdout, code = run_suite(baseline, suite, "base", forward, timeout=limit)
+        cap = _called_capture(previous, stdout, code)
+        if not _store_score_file(os.path.join(out_dir, "baseline-" + suite), stdout, cap):
+            return finish(1, {"ok": False, "phase": "failed"})
+        if cap.controller_deadline:
+            print("failure category=timeout", file=sys.stderr)
+            return finish(1, {"ok": False, "phase": "failed", "category": "timeout"})
+        if cap.capture_incomplete or cap.truncated:
+            status = {"ok": False, "phase": "failed"}
+            if cap.truncated:
+                status["category"] = "truncated"
+            return finish(1, status)
         pairs = [(mid, list(expected.get(mid) or [])) for mid in ids_by_suite[suite]]
         finding = classify_baseline(shard_key, suite, pairs, stdout, code)
         if finding and check_baseline:
@@ -1291,8 +1949,7 @@ def cmd_run_shard(tar_path, expected_sha, out_dir, suites, group, expected=None)
         rendered = render_findings(findings)
         if rendered:
             print(rendered, file=sys.stderr)
-        write_shard_status(status_path, {"ok": False, "phase": "failed", "findings": findings})
-        return 1
+        return finish(1, {"ok": False, "phase": "failed", "findings": findings})
     for mid in group:
         suite = suites[mid]
         parent = tempfile.mkdtemp(prefix="id-")
@@ -1306,15 +1963,23 @@ def cmd_run_shard(tar_path, expected_sha, out_dir, suites, group, expected=None)
                 target = os.path.join(dest, rel)
                 os.makedirs(os.path.dirname(target), exist_ok=True)
                 shutil.copy2(full, target)
-        stdout, code = run_suite(dest, suite, mid, forward)
-        open(os.path.join(out_dir, mid + ".txt"), "wb").write(stdout or b"")
+        previous = getattr(run_suite, "last", None)
+        stdout, code = run_suite(dest, suite, mid, forward, timeout=limit)
+        cap = _called_capture(previous, stdout, code)
+        if not _store_score_file(os.path.join(out_dir, mid + ".txt"), stdout, cap):
+            return finish(1, {"ok": False, "phase": "failed"})
         subprocess.run(["rm", "-rf", parent], check=False)
-        if code == 124:
+        if cap.controller_deadline:
             print("failure category=timeout", file=sys.stderr)
-            write_shard_status(status_path, {"ok": False, "phase": "failed", "category": "timeout"})
-            return 1
-    write_shard_status(status_path, {"ok": True, "phase": "done"})
-    return 0
+            return finish(1, {"ok": False, "phase": "failed", "category": "timeout"})
+        if code == 124:
+            return finish(1, {"ok": False, "phase": "failed"})
+        if cap.capture_incomplete or cap.truncated:
+            status = {"ok": False, "phase": "failed"}
+            if cap.truncated:
+                status["category"] = "truncated"
+            return finish(1, status)
+    return finish(0, {"ok": True, "phase": "done"})
 
 
 def _github_json(url, token):
