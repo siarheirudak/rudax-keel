@@ -36,7 +36,7 @@ SHARD_CASES = (
     "H1", "H2", "H3", "H4",
     "A1", "A2", "A3", "A4", "A5", "A6",
     "S-P1", "S-P2", "S-P3", "S-P4", "S-P5", "S-P6", "S-P7", "S-P8", "S-P9",
-    "S-P10",
+    "S-P10", "S-P22",
 )
 
 
@@ -743,6 +743,21 @@ _STUB_REL = "baseline/setup/tests/harness/test-mutate-shards.sh"
 _STUB_LINE = "RESULT A1: NOT BLOCKED"
 
 
+_AGG_STDOUT = [""]
+
+
+def _aggregate_captured():
+    """Run aggregate with stdout held back. Its ::error annotation must not reach the real log of a test run."""
+    held = io.StringIO()
+    saved = sys.stdout
+    sys.stdout = held
+    try:
+        return ms.cmd_aggregate()
+    finally:
+        sys.stdout = saved
+        _AGG_STDOUT[0] = held.getvalue()
+
+
 def _with_raw(plan, write_raw):
     """Run aggregate against a temp raw dir. Restores the process environment."""
     raw = tempfile.mkdtemp(prefix="raw-")
@@ -763,7 +778,7 @@ def _with_raw(plan, write_raw):
             "HEAD_SHA": None,
         })
         try:
-            return ms.cmd_aggregate()
+            return _aggregate_captured()
         finally:
             _pop_env(old)
             os.chdir(cwd)
@@ -1564,7 +1579,7 @@ def _grade_tree(folder, plan, shard_result):
     })
     try:
         os.chdir(ROOT)
-        return ms.cmd_aggregate()
+        return _aggregate_captured()
     finally:
         _pop_env(old)
         os.chdir(cwd)
@@ -2934,7 +2949,7 @@ def _grade(plan, write_raw, updates=None):
         old = _push_env(env)
         sys.stderr = buf
         try:
-            return ms.cmd_aggregate(), buf.getvalue()
+            return _aggregate_captured(), buf.getvalue()
         finally:
             sys.stderr = old_err
             _pop_env(old)
@@ -3078,6 +3093,176 @@ def case_s_p9():
     return True
 
 
+def _grade_out(plan, write_raw):
+    """Run aggregate and return (exit code, stderr, stdout)."""
+    rc, err = _grade(plan, write_raw)
+    return rc, err, _AGG_STDOUT[0]
+
+
+def case_s_p22():
+    """Grade names every blocking mutant, bounded and inert, and stays quiet when nothing blocks."""
+    suite = "test-mutate-shards.sh"
+    ci = sorted(mf.CI_IDS, key=md.id_key)
+    full_only = sorted(mf.FULL_ONLY, key=md.id_key)
+    if len(ci) < 50 or not full_only:
+        return _no("fixture ids")
+
+    def plan_for(ids):
+        return {
+            "ids": list(ids),
+            "shards": {"0": list(ids)},
+            "suite": {mid: suite for mid in ids},
+            "exp": {mid: ["A1"] for mid in ids},
+            "skip": False,
+            "full_plan": False,
+            "red_counts": "ci+offline",
+        }
+
+    def writer(texts):
+        def write(raw):
+            folder = os.path.join(raw, "raw-0")
+            os.makedirs(folder)
+            open(os.path.join(folder, "baseline-" + suite), "w", encoding="utf-8").write("RESULT A1: BLOCKED\n")
+            for mid, text in texts.items():
+                open(os.path.join(folder, mid + ".txt"), "w", encoding="utf-8").write(text)
+        return write
+
+    first, second = ci[0], ci[1]
+    # A mutant whose expected check stayed green is NO. A mutant with no RESULT line is ERROR.
+    rc, err, out = _grade_out(
+        plan_for([first, second]),
+        writer({first: "RESULT A1: BLOCKED (still holds)\n", second: "no result here\n"}),
+    )
+    if rc != 1:
+        return _no("blocking exit %s" % rc)
+    if "Grade blocked by 2 mutant(s):" not in err:
+        return _no("blocking header %s" % err)
+    if "  %s NO: A1=BLOCKED (still holds)\n" % first not in err:
+        return _no("NO line %s" % err)
+    if "  %s ERROR: empty RESULT\n" % second not in err:
+        return _no("ERROR line %s" % err)
+    if err.find(first + " NO") > err.find(second + " ERROR"):
+        return _no("id order")
+    want = "::error title=Grade blocked::2 blocking mutant(s): %s NO, %s ERROR\n" % (first, second)
+    if out != want:
+        return _no("annotation %r" % out)
+
+    # Numeric order, not text order: M97 comes before M101.
+    short = [mid for mid in ci if len(mid) == 3][-1]
+    long_ = [mid for mid in ci if len(mid) == 4][0]
+    if not short > long_:
+        return _no("order fixture")
+    rc, err, out = _grade_out(
+        plan_for([short, long_]),
+        writer({short: "RESULT A1: BLOCKED\n", long_: "RESULT A1: BLOCKED\n"}),
+    )
+    if rc != 1 or not 0 <= err.find("  %s NO" % short) < err.find("  %s NO" % long_):
+        return _no("numeric order %r" % err)
+    if "%s NO, %s NO\n" % (short, long_) not in out:
+        return _no("numeric order annotation %r" % out)
+
+    # Nothing blocks: no extra output, even when a full-only mutant survived.
+    rc, err, out = _grade_out(
+        plan_for([first]),
+        writer({first: "RESULT A1: NOT BLOCKED\n"}),
+    )
+    if rc != 0 or err != "" or out != "":
+        return _no("green grade printed %s %r %r" % (rc, err, out))
+    rc, err, out = _grade_out(
+        plan_for([full_only[0]]),
+        writer({full_only[0]: "RESULT A1: BLOCKED\n"}),
+    )
+    if rc != 0 or "Grade blocked" in err or "::" in out:
+        return _no("non-blocking survivor printed %s %r %r" % (rc, err, out))
+
+    # A long, hostile detail is cut, flattened, and cannot be read as a workflow command.
+    hostile = "BLOCKED " + "y" * 3000 + " \x1b[31m::add-mask::s3cret \u00e9"
+    rc, err, out = _grade_out(plan_for([first]), writer({first: "RESULT A1: " + hostile + "\n"}))
+    lines = [line for line in err.splitlines() if line.startswith("  %s NO: " % first)]
+    if rc != 1 or len(lines) != 1:
+        return _no("long detail lines %s %r" % (rc, err[:200]))
+    shown = lines[0][len("  %s NO: " % first):]
+    if len(shown) != ms.BLOCKING_DETAIL_MAX or not shown.endswith("..."):
+        return _no("detail bound %d" % len(shown))
+    if ms.BLOCKING_DETAIL_MAX != 400:
+        return _no("detail constant")
+    if "\x1b" in err or "\x1b" in out or "s3cret" in out:
+        return _no("control byte or detail in annotation")
+    for line in (err + out).splitlines():
+        if line.startswith("::") and not line.startswith("::error title=Grade blocked::"):
+            return _no("forged command %r" % line[:60])
+
+    def flat(value):
+        return ms._blocking_detail(["A1"], {"A1": value})
+
+    # The detail helper, one hostile value at a time. The value goes after "A1=".
+    cases = [
+        # (value, text that must not be in the result)
+        ("x ##[error]x", "##["),
+        ("x ##[stop-commands]tok", "##["),
+        ("x ###[error]y", "##["),
+        ("x ##[add-mask]x", "##["),
+        ("#[group]g ####[warning]w", "#["),
+        ("x :::add-mask:::x", "::"),
+        ("x :::", "::"),
+        ("x ::::", "::"),
+        ("x :::::: y", "::"),
+        ("::add-mask ::v", "::"),
+    ]
+    for value, banned in cases:
+        got = flat(value)
+        if banned in got or not got.startswith("A1=") or "add-mask" in got and "::" in got:
+            return _no("neutralize %r -> %r" % (value, got))
+    # The tokens stay readable after the split.
+    if flat("x ##[error]x") != "A1=x ## [error]x":
+        return _no("hash form %r" % flat("x ##[error]x"))
+    if flat("x :::") != "A1=x : : :":
+        return _no("colon run %r" % flat("x :::"))
+    # The same text through the whole path: nothing forged on stderr or stdout.
+    for value in ("##[error]x", "##[stop-commands]tok", "###[error]", "##[add-mask]x", ":::add-mask:::x", "::::"):
+        rc, err, out = _grade_out(plan_for([first]), writer({first: "RESULT A1: BLOCKED " + value + "\n"}))
+        if rc != 1 or "##[" in err or "##[" in out or "::" in err:
+            return _no("path %r %r" % (value, err))
+        if out != "::error title=Grade blocked::1 blocking mutant(s): %s NO\n" % first:
+            return _no("path annotation %r" % out)
+
+    # CR, U+2028, NEL, DEL, VT and FF are flattened to spaces; no line break or control byte is left.
+    for ch in ("\r", "\u2028", "\u2029", "\u0085", "\x7f", "\x0b", "\x0c"):
+        got = flat("one" + ch + "two" + ch + "::error::x")
+        if got != "A1=one two : :error: :x":
+            return _no("flatten %r -> %r" % (ch, got))
+        if ch == "\r":
+            # The controller reads artifacts in text mode, so a CR is already a line break before this code runs.
+            continue
+        rc, err, out = _grade_out(plan_for([first]), writer({first: "RESULT A1: BLOCKED a" + ch + "b\n"}))
+        if rc != 1 or ("  %s NO: A1=BLOCKED a b\n" % first) not in err:
+            return _no("path flatten %r %r" % (ch, err))
+        if len((err + out).splitlines()) != len(err.rstrip("\n").split("\n")) + 1:
+            return _no("extra line %r" % ch)
+
+    # An expected name that is not a plain name is dropped, and the others are kept.
+    got = ms._blocking_detail(["A1", "bad name ::x\n", "A" * 65], {"A1": "BLOCKED", "bad name ::x\n": "BLOCKED"})
+    if got != "A1=BLOCKED":
+        return _no("hostile expected name %r" % got)
+    got = ms._blocking_detail(["bad ::x"], {"A9": "NOT BLOCKED", "E-A2": "BLOCKED"})
+    if got != "red=[A9]":
+        return _no("red fallback %r" % got)
+
+    # More blockers than the cap: the first lines are shown and the rest are counted.
+    many = ci[:ms.BLOCKING_LINES_MAX + 5]
+    rc, err, out = _grade_out(
+        plan_for(many), writer({mid: "RESULT A1: BLOCKED\n" for mid in many})
+    )
+    count = len(many)
+    if rc != 1 or ("Grade blocked by %d mutant(s):" % count) not in err:
+        return _no("many header %s" % rc)
+    if sum(1 for line in err.splitlines() if " NO: A1=BLOCKED" in line) != ms.BLOCKING_LINES_MAX:
+        return _no("many lines")
+    if "  ... 5 more not shown" not in err or not out.rstrip().endswith("(+5 more)"):
+        return _no("many omitted %r" % out[-80:])
+    return True
+
+
 CASES = {
     "S-H1": case_s_h1,
     "S-H2": case_s_h2,
@@ -3145,6 +3330,7 @@ CASES = {
     "S-P8": case_s_p8,
     "S-P9": case_s_p9,
     "S-P10": case_s_p10,
+    "S-P22": case_s_p22,
 }
 
 
