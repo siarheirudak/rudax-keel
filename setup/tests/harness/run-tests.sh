@@ -69,6 +69,8 @@ echo "== nested ro probe"
 "$HERE/test-vis-ro.sh" || exit 1
 echo "== memory verdict"
 "$HERE/test-h3-verdict.sh" || exit 1
+echo "== h2 verdict"
+"$HERE/test-h2-verdict.sh" || exit 1
 mkdir -p "$HERE/logs"
 TS=$(date +%Y%m%d-%H%M%S)
 $DOCKER info >/dev/null 2>&1 || { echo "ERROR: $(docker_hint)" >&2; exit 5; }

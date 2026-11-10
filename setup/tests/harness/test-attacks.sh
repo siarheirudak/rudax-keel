@@ -8,6 +8,58 @@ unset GH_TOKEN GITHUB_TOKEN BOT_GH_TOKEN GITHUB_PAT AWS_SECRET_ACCESS_KEY AWS_AC
 # shellcheck source=setup/tests/harness/h3-verdict.sh
 . "$HERE/h3-verdict.sh"
 res(){ echo "RESULT $1: $2"; }
+# --- h2-helpers-begin (inlined on purpose: no new sourced file; unit-tested by test-h2-verdict.sh, which extracts this block)
+# h2_run_bounded SECS GRACE OUTFILE cmd...   Run cmd in its own process group with stdin from /dev/null and stdout+stderr
+# in OUTFILE. Call it in the CURRENT shell, never inside $(...): it sets the global H2_TIMED_OUT (0|1).
+# Returns the command's status; 124 after a TERM stop, 137 after a KILL stop. Always kills what is left of the group.
+H2_TIMED_OUT=0
+h2_run_bounded(){
+  local secs=$1 grace=$2 outf=$3 pid t0=$SECONDS g0 rc=0 wrc
+  shift 3
+  H2_TIMED_OUT=0
+  set -m
+  "$@" >"$outf" 2>&1 </dev/null &
+  pid=$!
+  set +m
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ $((SECONDS - t0)) -ge "$secs" ]; then
+      H2_TIMED_OUT=1
+      kill -TERM -- "-$pid" 2>/dev/null
+      g0=$SECONDS
+      while kill -0 "$pid" 2>/dev/null && [ $((SECONDS - g0)) -lt "$grace" ]; do sleep 0.2; done
+      if kill -0 "$pid" 2>/dev/null; then kill -KILL -- "-$pid" 2>/dev/null; rc=137; else rc=124; fi
+      break
+    fi
+    sleep 0.2
+  done
+  wait "$pid" 2>/dev/null; wrc=$?
+  [ "$H2_TIMED_OUT" = 1 ] || rc=$wrc
+  kill -KILL -- "-$pid" 2>/dev/null || true
+  return "$rc"
+}
+# h2_verdict OUT RC ELAPSED TIMED_OUT HOSTFORK CLEANUP EXPECT
+# Prints one line. Exit 0: a RESULT phrase. Exit 3: a diagnostic ("DIAG ..."), never a RESULT.
+h2_verdict(){
+  local out=$1 rc=$2 el=$3 to=$4 hf=$5 cleanup=$6 expect=$7 pm n
+  if [ "$cleanup" != gone ]; then printf '%s\n' "DIAG cleanup $cleanup"; return 3; fi
+  n=$(printf '%s\n' "$out" | grep -c '^h2-pids-max=')
+  pm=$(printf '%s\n' "$out" | sed -n 's/^h2-pids-max=//p' | tail -1)
+  if [ "$n" != 1 ]; then printf '%s\n' "DIAG pids.max reading missing or repeated"; return 3; fi
+  case $pm in
+    max) printf '%s\n' "NOT BLOCKED (no pids limit: pids.max=max)"; return 0;;
+    ''|*[!0-9]*) printf '%s\n' "DIAG pids.max unreadable"; return 3;;
+  esac
+  if [ "$pm" != "$expect" ]; then printf '%s\n' "NOT BLOCKED (pids.max=$pm, expected $expect)"; return 0; fi
+  if ! printf '%s\n' "$out" | grep -qx 'h2-bomb=started'; then printf '%s\n' "DIAG bomb did not start"; return 3; fi
+  if [ "$to" = 1 ] || [ "$el" -ge 110 ]; then printf '%s\n' "NOT BLOCKED (bomb run timed out: rc=$rc elapsed=$el)"; return 0; fi
+  if [ "$hf" != yes ]; then printf '%s\n' "NOT BLOCKED (host cannot fork)"; return 0; fi
+  case $rc in
+    0|2|137) printf '%s\n' "CONTAINED (pids limit $pm, container finished in ${el}s, host forks)";;   # 2/137: the in-container shell itself hit pids.max = limit working
+    *) printf '%s\n' "NOT BLOCKED (rc=$rc elapsed=$el)";;
+  esac
+  return 0
+}
+# --- h2-helpers-end
 echo "### MODE-A1 directly executed script mode"
 mode_fix=$(mktemp -d)
 git -C "$mode_fix" init -q
@@ -194,12 +246,29 @@ out=$($K proto h rw 'mkdir -p /tmp/x; mount -t tmpfs t /tmp/x 2>&1 && echo MOUNT
 if ! echo "$out" | grep -qE 'MOUNT-OK|CHOWN-OK|UNSHARE-OK' && echo "$out" | grep -q 'CapEff:.0000000000000000' && echo "$out" | grep -q 'CapBnd:.0000000000000000' && echo "$out" | grep -q 'NoNewPrivs:.1'; then res H1 "BLOCKED (mount/chown/unshare denied, CapEff=0, CapBnd=0, NoNewPrivs=1)"
 elif [ "$(uname -s)" = Darwin ] && ! echo "$out" | grep -qE 'MOUNT-OK|UNSHARE-OK' && echo "$out" | grep -q 'CapEff:.0000000000000000' && echo "$out" | grep -q 'CapBnd:.0000000000000000' && echo "$out" | grep -q 'NoNewPrivs:.1'; then res H1 "BLOCKED (mount/unshare denied, CapEff=0, CapBnd=0, NoNewPrivs=1; chown on a Docker Desktop bind mount is emulated by virtiofs and does not change host ownership)"
 else res H1 "NOT BLOCKED"; fi
+# H2: the probe container reads its own pids.max first and only starts the bomb when a numeric limit is present.
+# Its output goes to a file (never a pipe the caller reads), the container is removed through the cidfile and
+# the removal is verified. An unreadable result is a non-RESULT H2-DIAG line plus a non-zero suite exit.
 echo "### H2 fork bomb"; fresh; t0=$(date +%s)
-run_timeout 120 "$K" proto bomb rw 'b(){ b | b & }; (b) 2>/dev/null & sleep 8; echo "pids now: $(cat /sys/fs/cgroup/pids.current 2>/dev/null)/$(cat /sys/fs/cgroup/pids.max 2>/dev/null)"; kill -9 -1 2>/dev/null; echo survived'
-rc=$?; el=$(( $(date +%s)-t0 )); hf=$(sh -c 'echo yes'); echo "  rc=$rc elapsed=${el}s host load: $(uptime | sed 's/.*load averages*: *//'); host can fork: $hf"
-pm=$($K proto pchk ro 'cat /sys/fs/cgroup/pids.max 2>/dev/null || echo unknown'); pm=$(echo "$pm" | tail -1); echo "  pids.max=$pm"
-case $pm in ''|*[!0-9]*) res H2 "NOT BLOCKED (no pids limit: pids.max=$pm)";; *) case $rc in 0|2|137) okrc=1;; *) okrc=0;; esac   # 2/137: the in-container shell itself hit pids.max = limit working
-  if [ $okrc = 1 ] && [ "$hf" = yes ] && [ $el -lt 110 ]; then res H2 "CONTAINED (pids limit, container finished in ${el}s, host forks)"; else res H2 "NOT BLOCKED (rc=$rc elapsed=$el)"; fi;; esac
+h2_probe='pm=$(cat /sys/fs/cgroup/pids.max 2>/dev/null); echo "h2-pids-max=${pm:-unreadable}"; case $pm in ""|*[!0-9]*) exit 0;; esac; b(){ b | b & }; (b) >/dev/null 2>&1 </dev/null & echo h2-bomb=started; sleep 8; echo "pids now: $(cat /sys/fs/cgroup/pids.current 2>/dev/null)/$pm"; kill -9 -1 2>/dev/null; echo survived'
+h2_cid=$(mktemp); rm -f "$h2_cid"; h2_out=$(mktemp)
+h2_run_bounded 120 5 "$h2_out" env KEEL_CIDFILE="$h2_cid" "$K" proto bomb rw "$h2_probe"; rc=$?; h2_to=$H2_TIMED_OUT
+el=$(( $(date +%s)-t0 )); hf=$(sh -c 'echo yes'); cat "$h2_out"
+echo "  rc=$rc elapsed=${el}s timed_out=$h2_to host load: $(uptime | sed 's/.*load averages*: *//'); host can fork: $hf"
+h2_state=unknown
+if [ -s "$h2_cid" ]; then
+  h2_id=$(cat "$h2_cid"); h2_aux=$(mktemp)
+  # shellcheck disable=SC2086  # $D may be "sudo docker"
+  h2_run_bounded 30 5 "$h2_aux" $D rm -f "$h2_id" || true
+  # shellcheck disable=SC2086
+  if h2_run_bounded 30 5 "$h2_aux" $D ps -aq --filter "id=$h2_id"; then
+    if [ -s "$h2_aux" ]; then h2_state=present; else h2_state=gone; fi
+  fi
+  rm -f "$h2_aux"
+fi
+h2_line=$(h2_verdict "$(cat "$h2_out")" "$rc" "$el" "$h2_to" "$hf" "$h2_state" "${PIDS:-128}"); h2_vrc=$?
+rm -f "$h2_cid" "$h2_out"
+if [ "$h2_vrc" = 0 ]; then res H2 "$h2_line"; else echo "H2-DIAG ${h2_line#DIAG }"; h2_fail=1; fi
 echo "### H5 cpu limit"
 cm=$($K proto cchk ro 'cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo unknown'); cm=$(echo "$cm" | tail -1); echo "  cpu.max=$cm"
 case $cm in max*|unknown|'') res H5 "NOT BLOCKED (no cpu quota: $cm)";; *) res H5 "CONTAINED (cpu quota $cm)";; esac
@@ -305,3 +374,4 @@ if [ "$(echo "$out" | sed -n 2p)" = 0 ] && [ "$(echo "$out" | sed -n 3p)" = 0 ];
 bash "$HERE/test-egress.sh" || exit 1
 bash "$HERE/visibility-suite.sh" || exit 1
 $K cleanup >/dev/null; rm -rf "$P"; echo "### done"
+[ "${h2_fail:-0}" = 0 ] || exit 1
