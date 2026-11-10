@@ -3175,6 +3175,8 @@ def prove(suite):
     for mid, spec in sorted(mutate.M.items(), key=lambda item: int(item[0][1:])):
         if int(mid[1:]) < 139:
             continue
+        if mutate.SUITE_OF[mid] not in ("test-mutant-select.py", "test-mutate-shards.sh"):
+            continue
         if mutate.SUITE_OF[mid] == "test-mutant-select.py" and suite != "select":
             continue
         if mutate.SUITE_OF[mid] == "test-mutate-shards.sh" and suite != "shards":

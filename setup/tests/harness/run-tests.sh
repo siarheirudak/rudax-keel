@@ -128,6 +128,15 @@ if [ -n "$open_step5" ]; then
   printf '%s\n' "$open_step5" >&2
   rc=1
 fi
+echo "== step 6     -> logs/step6-$TS.log"
+bash "$HERE/test-step6.sh" > "$HERE/logs/step6-$TS.log" 2>&1 || rc=1
+grep -a '^RESULT ' "$HERE/logs/step6-$TS.log" || true
+open_step6=$(attack_results_open "$HERE/logs/step6-$TS.log")
+if [ -n "$open_step6" ]; then
+  echo "ERROR: a step 6 check printed NOT BLOCKED, WRONG REASON, or ERROR" >&2
+  printf '%s\n' "$open_step6" >&2
+  rc=1
+fi
 echo "== keel-doctor (verdict last; on a fresh throwaway repo, the suites wiped theirs)"
 # The key file, when one is required, is created only inside this temp root.
 saved_repo=${KEEL_REPO:-}
