@@ -213,6 +213,31 @@ FILES = {
     "M231": ["setup/standards/gen.py"],
     "M232": ["setup/standards/gen.py"],
     "M233": ["setup/tests/harness/step6_check.py"],
+    "M240": [".github/workflows/checks.yml"],
+    "M241": [".github/workflows/checks.yml"],
+    "M242": [".github/workflows/checks.yml"],
+    "M243": [".github/workflows/checks.yml"],
+    "M244": [".github/workflows/checks.yml"],
+    "M245": [".github/workflows/checks.yml"],
+    "M246": [".github/workflows/checks.yml"],
+    "M247": ["setup/tests/harness/mutant_files.py"],
+    "M248": [".github/workflows/checks.yml"],
+    "M249": [".github/workflows/checks.yml"],
+    "M250": [".github/workflows/checks.yml"],
+    "M251": [".github/workflows/checks.yml"],
+    "M252": [".github/workflows/checks.yml"],
+    "M253": [".github/workflows/checks.yml"],
+    "M254": [".github/workflows/checks.yml"],
+    "M255": [".github/workflows/checks.yml"],
+    "M256": [".github/workflows/checks.yml"],
+    "M257": [".github/workflows/checks.yml"],
+    "M258": [".github/workflows/checks.yml"],
+    "M259": [".github/workflows/checks.yml"],
+    "M260": [".github/workflows/checks.yml"],
+    "M261": [".github/workflows/checks.yml"],
+    "M262": [".github/workflows/checks.yml"],
+    "M263": [".github/workflows/checks.yml"],
+    "M264": [".github/workflows/checks.yml"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -375,6 +400,31 @@ CI_IDS = [
     "M231",
     "M232",
     "M233",
+    "M240",
+    "M241",
+    "M242",
+    "M243",
+    "M244",
+    "M245",
+    "M246",
+    "M247",
+    "M248",
+    "M249",
+    "M250",
+    "M251",
+    "M252",
+    "M253",
+    "M254",
+    "M255",
+    "M256",
+    "M257",
+    "M258",
+    "M259",
+    "M260",
+    "M261",
+    "M262",
+    "M263",
+    "M264",
 ]
 
 # Docker mount probes, plus M01. Pull-request CI skips these. The daily full run includes them.
@@ -572,6 +622,31 @@ META = {
     "M231": ("architect-cor05", "fail-closed"),
     "M232": ("api01-role-severity", "fail-closed"),
     "M233": ("probe-five-roles", "visibility"),
+    "M240": ("$trusted/scripts/check-gate.sh", "decision"),
+    "M241": ("pull_request) base=$GATE_PR_BASE_SHA", "decision"),
+    "M242": ("runs only on pull_request and push", "fail-closed"),
+    "M243": ("[[ $base =~ ^[0-9a-f]{40}$ ]]", "fail-closed"),
+    "M244": ("chain=(scripts/check-gate.sh", "decision"),
+    "M245": ("export KEEL_MUTATE_REPO=", "decision"),
+    "M246": ("is missing at base", "fail-closed"),
+    "M247": ("quoted-full", "fail-closed"),
+    "M248": ("GATE_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}", "decision"),
+    "M249": ("GATE_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}", "decision"),
+    "M250": ("# B16 (D-156, D-352): the pull request must not grade itself", "fail-closed"),
+    "M251": ("# B16 (D-156, D-352): the pull request must not grade itself", "fail-closed"),
+    "M252": ("# B16 (D-156, D-352): the pull request must not grade itself", "fail-closed"),
+    "M253": ("keep fetch-depth: 0", "fail-closed"),
+    "M254": ("keep fetch-depth: 0", "secret"),
+    "M255": ("if: always()", "fail-closed"),
+    "M256": ("GITHUB_EVENT_NAME: ${{ github.event_name }}", "decision"),
+    "M257": ("KEEL_MUTATE_BASE: ${{ github.event.pull_request.base.sha }}", "decision"),
+    "M258": ("jobs:", "fail-closed"),
+    "M259": ("GATE_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}", "decision"),
+    "M260": ("GATE_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}", "decision"),
+    "M261": ("cancel-in-progress: true", "decision"),
+    "M262": ("GATE_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}", "decision"),
+    "M263": ("pull_request) base=$GATE_PR_BASE_SHA", "decision"),
+    "M264": ("if: always()", "resource"),
 }
 
 # CI ids, in CI_IDS order. Pull-request selection never includes OFFLINE_IDS.
@@ -829,6 +904,10 @@ def policy_ids(path):
 
 
 unmapped_full = True  # unmapped-full
+# git prints a path with non-ASCII or control characters inside double quotes
+# unless core.quotePath is off and -z is used. Such a name would miss the
+# setup/ and .github/ prefix checks, so a quoted name selects the full set.
+quoted_full = True  # quoted-full
 use_depends = True  # depends-on
 dynamic_unresolved = True  # dynamic-unresolved
 
@@ -951,6 +1030,10 @@ def dependent_ids(path):
 
 
 def path_is_unresolvable(path, root=None):
+    # In keel-gate this module runs from the copy of the base commit's
+    # setup/tests/harness/ (B16), so the default root holds no setup/lib/ and
+    # this check finds nothing there. That only moves a decision between some
+    # and full, never to skip; mutate-pr selects from the default branch tree.
     if path not in SCAN_FILES and not path.startswith("setup/lib/"):
         return False
     root = root or _repo_root()
@@ -1000,6 +1083,8 @@ def needs_full_set(changed):
     imports cannot be resolved does too.
     """
     for path in changed:
+        if quoted_full and path.startswith('"'):
+            return True
         if path_is_unresolvable(path):
             return True
         if is_selective(path):

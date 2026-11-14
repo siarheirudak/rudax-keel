@@ -48,7 +48,7 @@ RESIDUAL = (
 ORACLES = {
     "setup/tests/harness/test-attacks.sh": ATTACK,
     "setup/tests/harness/test-attack-results.sh": ["M78"],
-    "setup/tests/harness/test-mutant-result.sh": ["M92", "M93"],
+    "setup/tests/harness/test-mutant-result.sh": ["M92", "M93"] + ["M%d" % n for n in range(240, 265) if n != 247],
     "setup/tests/harness/test-runtime.sh": RUNTIME,
     "setup/tests/harness/test-step4.sh": STEP4,
     "setup/tests/harness/test-step5.sh": STEP5,
@@ -96,15 +96,25 @@ def validate():
                 fail("missing " + path)
     legacy_ids = ["M%d" % n for n in range(139, 177)]
     step6_ids = ["M%d" % n for n in range(207, 234)]
-    if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93 + len(legacy_ids) + len(step6_ids):
+    gate_step_ids = ["M%d" % n for n in range(240, 247)] + ["M%d" % n for n in range(248, 265)]
+    p1b_ids = ["M%d" % n for n in range(240, 265)]
+    added = len(legacy_ids) + len(step6_ids) + len(p1b_ids)
+    if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93 + added:
         fail("CI id set changed")
-    if mf.CI_IDS[-len(step6_ids):] != step6_ids:
+    if mf.CI_IDS[-len(p1b_ids):] != p1b_ids:
+        fail("new CI ids are not M240-M264")
+    tail = len(p1b_ids)
+    if mf.CI_IDS[-tail - len(step6_ids):-tail] != step6_ids:
         fail("new CI ids are not M207-M233")
-    if mf.CI_IDS[-len(step6_ids) - len(legacy_ids):-len(step6_ids)] != legacy_ids:
+    tail += len(step6_ids)
+    if mf.CI_IDS[-tail - len(legacy_ids):-tail] != legacy_ids:
         fail("new CI ids are not M139-M176")
+    for mid in gate_step_ids:
+        if mf.FILES.get(mid) != [".github/workflows/checks.yml"] or mutate.SUITE_OF.get(mid) != "test-mutant-result.sh":
+            fail("gate step mutant %s must target checks.yml with test-mutant-result.sh" % mid)
     if len(mf.OFFLINE_IDS) != len(set(mf.OFFLINE_IDS)) or len(mf.OFFLINE_IDS) != 5:
         fail("offline id set changed")
-    if len(mf.CI_IDS) + len(mf.OFFLINE_IDS) != 98 + len(legacy_ids) + len(step6_ids):
+    if len(mf.CI_IDS) + len(mf.OFFLINE_IDS) != 98 + added:
         fail("full id count drifted")
     if len(mf.FULL_ONLY) != 40 or set(mf.FULL_ONLY) & set(mf.CI_IDS + mf.OFFLINE_IDS):
         fail("FULL_ONLY is not the remaining ids")

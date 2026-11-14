@@ -28,7 +28,7 @@ SELECT_CASES = (
     "S-H1", "S-H2", "S-H3", "S-H4", "S-H6", "S-H7", "S-H7b", "S-H8", "S-H9",
     "S-A1", "S-A2", "S-A3", "S-A4", "S-A7", "S-A8", "S-A9", "S-A10", "S-A11",
     "S-A12", "S-A13", "S-A15", "S-A16", "S-A17", "S-A18", "S-A20", "S-A21",
-    "S-A22", "S-A23", "S-A27", "S-A32", "S-A33",
+    "S-A22", "S-A23", "S-A27", "S-A32", "S-A33", "S-A37",
 )
 SHARD_CASES = (
     "S-H5", "S-A5", "S-A6", "S-A14", "S-A19", "S-A24", "S-A25", "S-A26",
@@ -199,6 +199,16 @@ def case_s_a6():
 
 def case_s_a7():
     return mf.select_mutants(["setup/lib/new_helper.py"]) == ("full", list(mf.CI_IDS))
+
+
+def case_s_a37():
+    """A path git printed in double quotes selects the full set (F-03)."""
+    quoted = (
+        '"setup/\\303\\251.sh"',
+        '"setup/a\\tb"',
+        '".github/workflows/\\342\\200\\256x.yml"',
+    )
+    return all(mf.select_mutants([path]) == ("full", list(mf.CI_IDS)) for path in quoted)
 
 
 def case_s_a8():
@@ -3310,6 +3320,7 @@ CASES = {
     "S-A34": case_s_a34,
     "S-A35": case_s_a35,
     "S-A36": case_s_a36,
+    "S-A37": case_s_a37,
     "H1": case_h1,
     "H2": case_h2,
     "H3": case_h3,
