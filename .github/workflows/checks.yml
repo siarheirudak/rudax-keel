@@ -168,7 +168,52 @@ jobs:
           KEEL_MUTATE_BASE: ${{ github.event.pull_request.base.sha }}
           GITHUB_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: bash scripts/check-gate.sh
+          GATE_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        # B16 (D-156, D-352): the pull request must not grade itself. Only the verdict
+        # chain runs from the base commit: check-gate.sh, gate-jobs.txt, mutant-result.py
+        # and what it loads. The jobs above still test the pull request's own code.
+        # A push to main is graded by the pushed commit, which is main itself.
+        run: |
+          set -euo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) base=$GATE_PR_BASE_SHA ;;
+            push) base=$GITHUB_SHA ;;
+            *)
+              printf 'how to fix: keel-gate runs only on pull_request and push, not %s\n' "$GITHUB_EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
+          if ! [[ $base =~ ^[0-9a-f]{40}$ ]]; then
+            printf 'how to fix: the base commit is missing or not a full SHA: %s\n' "$base" >&2
+            exit 1
+          fi
+          if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
+            printf 'how to fix: base commit %s is not in the checkout; keep fetch-depth: 0\n' "$base" >&2
+            exit 1
+          fi
+          # The whole harness directory comes from base, so a refactor or a new import
+          # there needs no change here. The PR's own copies of these files are not run.
+          # Only the three files this step and check-gate.sh call by name must exist.
+          chain=(scripts/check-gate.sh scripts/gate-jobs.txt setup/tests/harness)
+          entry=(
+            scripts/check-gate.sh
+            scripts/gate-jobs.txt
+            setup/tests/harness/mutant-result.py
+          )
+          trusted="$RUNNER_TEMP/keel-gate-base"
+          rm -rf "$trusted"
+          mkdir -p "$trusted"
+          git archive --format=tar "$base" -- "${chain[@]}" | tar -x -C "$trusted"
+          for file in "${entry[@]}"; do
+            if [[ ! -f "$trusted/$file" ]]; then
+              printf 'how to fix: %s is missing at base %s\n' "$file" "$base" >&2
+              exit 1
+            fi
+          done
+          printf 'verdict chain from %s\n' "$base"
+          # mutate-plan.sh diffs the pull request checkout, not the extracted copy.
+          export KEEL_MUTATE_REPO="$GITHUB_WORKSPACE"
+          bash "$trusted/scripts/check-gate.sh"
 
   # Not an input to keel-gate. A permissions failure is a notice, and the
   # step cannot fail this job or the gate.
