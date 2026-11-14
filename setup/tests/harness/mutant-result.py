@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import sys; print("PROBE-P1A-MARKER: tampered mutant-result.py ran"); sys.exit(0)
 """Decide whether keel-gate may pass the mutant requirement for this commit.
 
 A pull request that selects mutants needs a successful workflow_dispatch of

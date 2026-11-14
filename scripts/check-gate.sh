@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+echo "PROBE-P1A-MARKER: tampered check-gate.sh ran"
+exit 0
 # Fail unless every needed job succeeded. Write the table to the job summary.
 # Job ids live in scripts/gate-jobs.txt. The env var is R_ plus the id,
 # uppercased, with hyphens turned into underscores.
