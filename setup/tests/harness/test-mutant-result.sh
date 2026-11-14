@@ -23,8 +23,20 @@ if [ -f "$gate_src" ]; then
     a4=1
   fi
 fi
+# The real keel-gate Gate step from checks.yml, run on a scratch repo (B16).
+# A tree without checks.yml (a harness-only copy) says so; under KEEL_CI it is red.
+gstep=0
+if [ -f "$ROOT/.github/workflows/checks.yml" ]; then
+  python3 "$HERE/gate_step_check.py" || gstep=1
+elif [ "${KEEL_CI:-}" = 1 ]; then
+  echo "RESULT G-X0: NOT BLOCKED (.github/workflows/checks.yml missing under KEEL_CI)"
+  gstep=1
+else
+  echo "SKIPPED gate_step_check.py: no .github/workflows/checks.yml in $ROOT"
+fi
 if [ ! -f "$ROOT/.github/workflows/mutate-pr.yml" ]; then
-  exit "$a4"
+  [ "$a4" -eq 0 ] && [ "$gstep" -eq 0 ]
+  exit $?
 fi
 fail=0
 need() {
@@ -54,7 +66,7 @@ if grep -q 'KEEL_MUTANTS_OK' "$HERE/mutant-result.py"; then
   echo "binder reads a pass switch" >&2
   fail=1
 fi
-if [ "$fail" -ne 0 ] || [ "$a4" -ne 0 ]; then
+if [ "$fail" -ne 0 ] || [ "$a4" -ne 0 ] || [ "$gstep" -ne 0 ]; then
   exit 1
 fi
 exit 0

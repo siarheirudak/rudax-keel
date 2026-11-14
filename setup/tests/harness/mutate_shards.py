@@ -609,7 +609,7 @@ def cmd_resolve(repo, sha, base_ref):
     import json
     main_sha = _git(repo, "rev-parse", base_ref).decode().strip()
     base = _git(repo, "merge-base", main_sha, sha).decode().strip()
-    names = [line for line in _git(repo, "diff", "--name-only", base, sha).decode().splitlines() if line]
+    names = [line for line in _git(repo, "-c", "core.quotePath=false", "diff", "--name-only", base, sha).decode("utf-8", "replace").splitlines() if line]
     main = combined_defs(
         open(os.path.join(repo, "setup/tests/harness/mutate.py"), encoding="utf-8").read(),
         open(os.path.join(repo, "setup/tests/harness/mutant_files.py"), encoding="utf-8").read(),

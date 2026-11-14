@@ -159,6 +159,30 @@ expect_selective() {
   done
 }
 
+# The selection is exactly these ids, in CI order (Auditor F5).
+expect_exact() {
+  local file=$1 repo out want
+  shift
+  want="RESULT mutate: run $*"
+  repo=$root/exact-$(printf '%s' "$file" | tr '/' '-')
+  mkdir -p "$repo/$(dirname "$file")"
+  git_repo "$repo"
+  printf 'a\n' >"$repo/$file"
+  git -C "$repo" add -- "$file"
+  git -C "$repo" commit -qm base
+  git -C "$repo" branch -M main
+  git -C "$repo" update-ref refs/remotes/origin/main HEAD
+  git -C "$repo" checkout -q -b feature
+  printf 'b\n' >"$repo/$file"
+  git -C "$repo" add -- "$file"
+  git -C "$repo" commit -qm change
+  out=$(env -u GITHUB_BASE_REF KEEL_MUTATE_BASE=origin/main KEEL_MUTATE_REPO="$repo" bash "$PLAN")
+  if [ "$out" != "$want" ]; then
+    echo "expected exactly '$want' for $file, got: $out" >&2
+    exit 1
+  fi
+}
+
 expect_skip() {
   local file=$1 repo out
   repo=$root/skip-$(printf '%s' "$file" | tr '/' '-')
@@ -181,7 +205,6 @@ expect_skip() {
 }
 
 expect_skip setup/tests/harness/mutate.py
-expect_skip .github/workflows/checks.yml
 expect_skip setup/tests/harness/mutate-plan.sh
 expect_full setup/docker/keel-git.Dockerfile
 expect_full setup/not-a-mapped-target
@@ -190,6 +213,9 @@ expect_full setup/egress/README.md
 expect_full setup/allow/foo.paths.bak
 expect_full setup/allow/nested/x.paths
 expect_full setup/tests/harness/runtime-stub.sh
+# F-03: a non-ASCII name and a name git must quote (tab) still select the full set.
+expect_full $'setup/caf\303\251-x'
+expect_full $'setup/a\tb'
 expect_selective setup/allow/developer.paths M45 '!M03' '!M53'
 expect_selective setup/deny/base M51 '!M03' '!M53'
 expect_selective setup/egress/developer.allow M53 '!M03' '!M45'
@@ -206,6 +232,11 @@ expect_selective setup/tests/harness/visibility-suite.sh M45 '!M53'
 # A scripts-only edit of the gate is not a skip. Other scripts files still are.
 expect_selective setup/tests/harness/mutant-result.py M92 M93 '!M03'
 expect_selective .github/workflows/mutate-full.yml M171 M176 '!M03'
+# checks.yml carries the keel-gate Gate step mutants (P1b): all 24, and nothing else.
+expect_selective .github/workflows/checks.yml M240 M241 M242 M243 M244 M245 M246 \
+  M248 M249 M250 M251 M252 M253 M254 M255 M256 M257 M258 M259 M260 M261 M262 M263 M264 '!M03' '!M92' '!M93' '!M247'
+expect_exact .github/workflows/checks.yml M240 M241 M242 M243 M244 M245 M246 \
+  M248 M249 M250 M251 M252 M253 M254 M255 M256 M257 M258 M259 M260 M261 M262 M263 M264
 expect_selective scripts/check-gate.sh M92 M93 '!M03'
 expect_selective scripts/gate-jobs.txt M92 M93 '!M03'
 expect_selective scripts/tests/test_gate_jobs.py M92 M93 '!M03'
