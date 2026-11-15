@@ -2,6 +2,7 @@
 """Step 6 standards generator checks. Green results use BLOCKED."""
 
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -174,16 +175,51 @@ def line_of(text, marker):
     return None
 
 
+# Setting: S6-H1 also renders under these fixed hash seeds, so a set-ordered
+# view cannot pass by the seed this process happened to get.
+H1_SEEDS = (0, 4, 5)
+
+
+def _seed_views(seed):
+    code = (
+        "import json, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import gen\n"
+        "data = open(sys.argv[2], 'rb').read()\n"
+        "model = gen.parse(data.decode('utf-8'), sys.argv[2])\n"
+        "views = gen.render_views(model, data)\n"
+        "sys.stdout.write(json.dumps(views, sort_keys=True))\n"
+    )
+    env = {
+        "PYTHONHASHSEED": str(seed),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PATH": os.environ.get("PATH", ""),
+    }
+    proc = subprocess.run(
+        [sys.executable, "-c", code, os.path.join(SETUP, "standards"), FIXTURE],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.decode("utf-8", "replace")[:200])
+    return json.loads(proc.stdout.decode("utf-8"))
+
+
 def check_h1():
     data = open(FIXTURE, "rb").read()
     model = gen.parse(data.decode("utf-8"), FIXTURE)
-    views = gen.render_views(model, data)
+    renders = [gen.render_views(model, data)]
+    renders.extend(_seed_views(seed) for seed in H1_SEEDS)
     bad = []
-    for role, text in views.items():
-        path = os.path.join(GOLDEN, role, "SKILL.md")
-        golden = open(path, "rb").read()
-        if text.encode("utf-8") != golden:
-            bad.append(role)
+    for views in renders:
+        for role, text in views.items():
+            path = os.path.join(GOLDEN, role, "SKILL.md")
+            golden = open(path, "rb").read()
+            if text.encode("utf-8") != golden and role not in bad:
+                bad.append(role)
     if bad:
         return say("S6-H1", "NOT BLOCKED", ",".join(bad))
     return say("S6-H1", "BLOCKED", "fixture matches golden")
