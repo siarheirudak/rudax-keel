@@ -248,6 +248,18 @@ FILES = {
     "M272": [".github/workflows/checks.yml"],
     "M273": [".github/workflows/checks.yml"],
     "M274": ["scripts/tests/test_gate_jobs.py"],
+    "M275": ["scripts/check-scope.py"],
+    "M276": ["scripts/check-scope.py"],
+    "M277": ["scripts/check-scope.py"],
+    "M278": ["scripts/check-scope.py"],
+    "M279": ["scripts/check-scope.py"],
+    "M280": ["scripts/check-scope.py"],
+    "M281": ["scripts/check-scope.py"],
+    "M282": ["scripts/check-scope.py"],
+    "M283": ["scripts/check-scope.py"],
+    "M284": ["scripts/check-scope.py"],
+    "M285": ["scripts/check-scope.py"],
+    "M286": ["scripts/check-scope.py"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -445,6 +457,18 @@ CI_IDS = [
     "M272",
     "M273",
     "M274",
+    "M275",
+    "M276",
+    "M277",
+    "M278",
+    "M279",
+    "M280",
+    "M281",
+    "M282",
+    "M283",
+    "M284",
+    "M285",
+    "M286",
 ]
 
 # Docker mount probes, plus M01. Pull-request CI skips these. The daily full run includes them.
@@ -677,6 +701,18 @@ META = {
     "M272": ("keep fetch-depth: 0", "decision"),
     "M273": ("keep fetch-depth: 0", "decision"),
     "M274": ("plain-names", "fail-closed"),
+    "M275": ("workflow-kind", "fail-closed"),
+    "M276": ("keel-process", "fail-closed"),
+    "M277": ("workflow-label", "fail-closed"),
+    "M278": ("label-only-workflow", "fail-closed"),
+    "M279": ("one-kind", "fail-closed"),
+    "M280": ("rename-both", "fail-closed"),
+    "M281": ("workflow-case", "fail-closed"),
+    "M282": ("default-base", "fail-closed"),
+    "M283": ("file-count", "fail-closed"),
+    "M284": ("labels-shape", "fail-closed"),
+    "M285": ("workflow-actions", "fail-closed"),
+    "M286": ("bare-names", "fail-closed"),
 }
 
 # CI ids, in CI_IDS order. Pull-request selection never includes OFFLINE_IDS.
@@ -870,6 +906,11 @@ ORACLE_FILES = (
     "setup/tests/harness/runtime-stub.sh",
     "setup/tests/harness/harness-keel.sh",
 )
+
+# The scope check selects only the mutants that edit it.
+SCOPE_PATHS = frozenset((
+    "scripts/check-scope.py",
+))
 
 # Gate paths select the mapped gate ids. They do not widen to the full CI set.
 GATE_PATHS = frozenset((
@@ -1077,7 +1118,7 @@ def path_is_unresolvable(path, root=None):
 
 def is_selective(path):
     """True when this path selects a CI list instead of the full set."""
-    if path in MECHANISM or path in GATE_PATHS:
+    if path in MECHANISM or path in GATE_PATHS or path in SCOPE_PATHS:
         return True
     if path in TARGET_ONLY or path in ORACLE_SCRIPTS:
         return True

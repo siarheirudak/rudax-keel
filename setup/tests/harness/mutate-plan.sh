@@ -58,7 +58,7 @@ mutate_plan() {
     mutate_fail "base ref missing" # missing-base-fails
   fi
   shallow=$(git -C "$repo" rev-parse --is-shallow-repository 2>/dev/null || printf '%s' false)
-  set -- setup .github scripts/check-gate.sh scripts/gate-jobs.txt scripts/tests/test_gate_jobs.py
+  set -- setup .github scripts/check-gate.sh scripts/gate-jobs.txt scripts/tests/test_gate_jobs.py scripts/check-scope.py
   if ! git -C "$repo" -c core.quotePath=false diff --name-only "$base"...HEAD -- "$@" >"$namesf" 2>"$errf"; then
     if [ "$shallow" = true ] && git -C "$repo" remote get-url origin >/dev/null 2>&1; then
       GIT_TERMINAL_PROMPT=0 git -C "$repo" fetch -q --deepen=200 --no-tags origin >&2 \
