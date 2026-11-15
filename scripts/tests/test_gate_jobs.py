@@ -50,6 +50,82 @@ class GateJobsError(Exception):
     pass
 
 
+# Required check names. Each must name exactly one job across all workflows, so
+# a decoy job cannot report a second, green check with the same name (Auditor FU-1).
+REQUIRED_NAMES = ("keel-gate", "keel-process-files-separate")
+names_once = True  # names-once
+plain_names = True  # plain-names
+
+
+NAME_KEY = re.compile(r"(^|[\s{,])name:(\s*)(.*)$")
+
+
+def plain_name_errors(workflows):
+    """Every name: value must be a plain or simply quoted scalar on its own line.
+
+    A block scalar (| or >), an empty value continued on the next line, a tag
+    (!!str), an anchor or alias (& or *) or a double-quoted escape (\\x2d) can
+    all resolve to a required name that the text match above cannot see
+    (Auditor FU-P2). Today's workflows use none of these forms, so rejecting
+    them only fails closed.
+    """
+    problems = []
+    for file in sorted(workflows):
+        for number, line in enumerate(workflows[file].splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            match = NAME_KEY.search(line)
+            if not match:
+                continue
+            value = match.group(3).strip()
+            bad = (
+                not value
+                or value[0] in "|>!&*"
+                or (value[0] == '"' and ("\\" in value or value.count('"') < 2))
+                or (value[0] == "'" and value.count("'") < 2)
+            )
+            if bad:
+                problems.append("{0}:{1}: name: value must be a plain one-line string, got {2!r}".format(file, number, value))
+    return problems
+
+
+def name_errors(workflows):
+    """workflows: {file name: text}. Return problems with the required names.
+
+    A check run is named by the job's name:, or by its job id when there is no
+    name:. Every name: line with that value counts, quoted or in a flow
+    mapping, and so does a job id equal to the name in a file that does not
+    also hold the name: line.
+    """
+    if not names_once:
+        return []
+    problems = []
+    if plain_names:
+        problems.extend(plain_name_errors(workflows))
+    for want in REQUIRED_NAMES:
+        quoted = "[\"']?" + re.escape(want) + "[\"']?"
+        # GitHub may match check names without regard to case [U], so a
+        # Keel-Gate decoy counts too (Auditor FU-P3).
+        name_re = re.compile(r"(^|[\s{,])name:\s*" + quoted + r"\s*($|[,}#])", re.I)
+        id_re = re.compile(r"^\s+" + quoted + r":\s*($|#|\{)", re.I)
+        hits = []
+        ids = []
+        for file in sorted(workflows):
+            for line in workflows[file].splitlines():
+                if line.lstrip().startswith("#"):
+                    continue
+                if name_re.search(line):
+                    hits.append(file)
+                if id_re.match(line):
+                    ids.append(file)
+        if len(hits) != 1:
+            problems.append("{0}: name: {1} appears {2} times across workflows, expected 1".format(want, want, len(hits)))
+        stray = [file for file in ids if file not in hits]
+        if stray or len(ids) > 1:
+            problems.append("{0}: a job id {0} also names a check in {1}".format(want, ", ".join(sorted(set(ids)))))
+    return problems
+
+
 def check(listed, checks, scope):
     """Raise GateJobsError when the job list, needs and env lines disagree.
 
@@ -125,6 +201,26 @@ def self_test():
         extra = None
     if extra != ["b", "c"]:
         bad.append("GJ-N1 unlisted needs jobs are reported")
+    good = {"checks.yml": "jobs:\n  keel-gate:\n    name: keel-gate\n", "scope.yml": "jobs:\n  scope:\n    name: keel-process-files-separate\n"}
+    name_cases = [
+        ("GJ-H4 each required name once", good, True),
+        ("GJ-A6 decoy job name in another workflow", dict(good, **{"x.yml": "jobs:\n  fake:\n    name: keel-gate\n"}), False),
+        ("GJ-A7 decoy quoted name in the same workflow", {"checks.yml": good["checks.yml"] + "  fake:\n    name: 'keel-gate'\n", "scope.yml": good["scope.yml"]}, False),
+        ("GJ-A8 decoy flow-style name", dict(good, **{"x.yml": "jobs:\n  fake: {name: keel-process-files-separate, runs-on: x}\n"}), False),
+        ("GJ-A9 decoy job id with no name:", dict(good, **{"x.yml": "jobs:\n  keel-gate:\n    runs-on: x\n"}), False),
+        ("GJ-A10 required name missing", {"checks.yml": good["checks.yml"]}, False),
+        ("GJ-A11 decoy name as a block scalar", dict(good, **{"x.yml": "jobs:\n  fake:\n    name: >-\n      keel-gate\n"}), False),
+        ("GJ-A12 decoy name on the next line", dict(good, **{"x.yml": "jobs:\n  fake:\n    name:\n      keel-gate\n"}), False),
+        ("GJ-A13 decoy name with an escape", dict(good, **{"x.yml": "jobs:\n  fake:\n    name: \"keel\\x2dgate\"\n"}), False),
+        ("GJ-A14 decoy name with a tag", dict(good, **{"x.yml": "jobs:\n  fake:\n    name: !!str keel-gate\n"}), False),
+        ("GJ-A15 decoy name through an alias", dict(good, **{"x.yml": "env: {K: &kg keel-gate}\njobs:\n  fake:\n    name: *kg\n"}), False),
+        ("GJ-A16 decoy name in another case", dict(good, **{"x.yml": "jobs:\n  fake:\n    name: Keel-Gate\n"}), False),
+        ("GJ-A17 decoy in an upper-case .YML file", dict(good, **{"X.YML": "jobs:\n  fake:\n    name: keel-gate\n"}), False),
+        ("GJ-H5 other plain and expression names are fine", dict(good, **{"x.yml": "jobs:\n  a:\n    name: build ${{ matrix.k }}\n    steps:\n      - name: 'quoted step'\n"}), True),
+    ]
+    for name, workflows, want in name_cases:
+        if (not name_errors(workflows)) != want:
+            bad.append(name)
     return bad
 
 
@@ -143,6 +239,15 @@ def main():
         extra = check(listed, checks, scope)
     except GateJobsError as err:
         fail(str(err))
+    folder = ROOT / ".github" / "workflows"
+    workflows = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted(folder.iterdir())
+        if path.suffix.lower() in (".yml", ".yaml") and path.is_file()
+    }
+    problems = name_errors(workflows)
+    if problems:
+        fail("; ".join(problems))
     if extra:
         print("NOTE: keel-gate needs has jobs not in scripts/gate-jobs.txt: {0} (not enforced by keel-gate)".format(", ".join(extra)))
     return 0

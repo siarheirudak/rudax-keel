@@ -232,14 +232,16 @@ expect_selective setup/tests/harness/visibility-suite.sh M45 '!M53'
 # A scripts-only edit of the gate is not a skip. Other scripts files still are.
 expect_selective setup/tests/harness/mutant-result.py M92 M93 '!M03'
 expect_selective .github/workflows/mutate-full.yml M171 M176 '!M03'
-# checks.yml carries the keel-gate Gate step mutants (P1b): all 24, and nothing else.
+# checks.yml carries the keel-gate Gate step mutants (P1b, P1c): all 32, and nothing else.
 expect_selective .github/workflows/checks.yml M240 M241 M242 M243 M244 M245 M246 \
-  M248 M249 M250 M251 M252 M253 M254 M255 M256 M257 M258 M259 M260 M261 M262 M263 M264 '!M03' '!M92' '!M93' '!M247'
+  M248 M249 M250 M251 M252 M253 M254 M255 M256 M257 M258 M259 M260 M261 M262 M263 M264 \
+  M265 M266 M267 M268 M269 M270 M272 M273 '!M03' '!M92' '!M93' '!M247' '!M271' '!M274'
 expect_exact .github/workflows/checks.yml M240 M241 M242 M243 M244 M245 M246 \
-  M248 M249 M250 M251 M252 M253 M254 M255 M256 M257 M258 M259 M260 M261 M262 M263 M264
+  M248 M249 M250 M251 M252 M253 M254 M255 M256 M257 M258 M259 M260 M261 M262 M263 M264 \
+  M265 M266 M267 M268 M269 M270 M272 M273
 expect_selective scripts/check-gate.sh M92 M93 '!M03'
 expect_selective scripts/gate-jobs.txt M92 M93 '!M03'
-expect_selective scripts/tests/test_gate_jobs.py M92 M93 '!M03'
+expect_selective scripts/tests/test_gate_jobs.py M92 M93 M271 M274 '!M03' '!M240'
 
 other=$root/scripts-other
 mkdir -p "$other/scripts"

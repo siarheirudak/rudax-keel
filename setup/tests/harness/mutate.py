@@ -236,6 +236,16 @@ M = {
  'M262': ('.github/workflows/checks.yml', '          GATE_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}\n        # B16 (D-156, D-352)', '          GATE_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}\n          "GATE_PR_BASE_SHA": ${{ github.event.pull_request.head.sha }}\n        # B16 (D-156, D-352)', 'quoted duplicate key moves the base pin to head', ['G-Y1', 'G-Y6']),
  'M263': ('.github/workflows/checks.yml', 'pull_request) base=$GATE_PR_BASE_SHA ;;', 'pull_request) base=${{ github.sha }} ;;', 'run block takes the base from an expression', ['G-Y7']),
  'M264': ('.github/workflows/checks.yml', '    if: always()\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    permissions:\n      actions: read\n      contents: read\n    steps:\n', '    if: always()\n    runs-on: ubuntu-24.04\n    timeout-minutes: 0\n    permissions:\n      actions: read\n      contents: read\n    steps:\n', 'keel-gate job timeout changed', ['G-Y3']),
+ 'M265': ('.github/workflows/checks.yml', '          bash "$trusted/scripts/check-gate.sh"\n', '          bash "$trusted/scripts/check-gate.sh"\n  # note\n    env:\n      BASH_ENV: ./keel-x.sh\n', 'a comment line hides a job env BASH_ENV', ['G-Y3']),
+ 'M266': ('.github/workflows/checks.yml', '          bash "$trusted/scripts/check-gate.sh"\n', '          bash "$trusted/scripts/check-gate.sh"\n# note\n        shell: sh\n', 'a comment line hides a Gate step shell: sh', ['G-Y2']),
+ 'M267': ('.github/workflows/checks.yml', '          persist-credentials: false\n          fetch-depth: 0\n      - name: Gate\n', '          persist-credentials: false\n          fetch-depth: 0\n          ref: ${{ github.event.pull_request.base.sha }}\n      - name: Gate\n', 'keel-gate checks out the base, so the plan diff is empty', ['G-Y4']),
+ 'M268': ('.github/workflows/checks.yml', 'pull_request) base=$GATE_PR_BASE_SHA ;;', 'pull_request) base=$KEEL_MUTATE_BASE ;;', 'pull request chain taken from KEEL_MUTATE_BASE', ['G-A10']),
+ 'M269': ('.github/workflows/checks.yml', 'if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then', 'if false; then', 'absent base commit is not checked', ['G-A9']),
+ 'M270': ('.github/workflows/checks.yml', 'push) base=$GITHUB_SHA ;;', 'push) base=$GATE_PR_BASE_SHA ;;', 'push takes its chain from the pull request base variable', ['G-H2']),
+ 'M271': ('scripts/tests/test_gate_jobs.py', 'names_once = True  # names-once', 'names_once = False  # names-once', 'a decoy job can reuse a required check name', ['GJ-X1']),
+ 'M272': ('.github/workflows/checks.yml', '      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n        with:\n          persist-credentials: false\n          fetch-depth: 0\n      - name: Gate\n', '      - uses: evil/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n        with:\n          persist-credentials: false\n          fetch-depth: 0\n      - name: Gate\n', 'keel-gate runs a foreign checkout action before Gate', ['G-Y4']),
+ 'M273': ('.github/workflows/checks.yml', '      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n        with:\n          persist-credentials: false\n          fetch-depth: 0\n      - name: Gate\n', '      - uses: actions/checkout@0000000000000000000000000000000000000001 # v4\n        with:\n          persist-credentials: false\n          fetch-depth: 0\n      - name: Gate\n', 'keel-gate checkout pinned to another commit', ['G-Y4']),
+ 'M274': ('scripts/tests/test_gate_jobs.py', 'plain_names = True  # plain-names', 'plain_names = False  # plain-names', 'a decoy job name in a block, tag, alias or escape form is not seen', ['GJ-X1']),
 }
 SUITE_OF = {
     'M01': 'test-attacks.sh',
@@ -466,6 +476,16 @@ SUITE_OF = {
     'M262': 'test-mutant-result.sh',
     'M263': 'test-mutant-result.sh',
     'M264': 'test-mutant-result.sh',
+    'M265': 'test-mutant-result.sh',
+    'M266': 'test-mutant-result.sh',
+    'M267': 'test-mutant-result.sh',
+    'M268': 'test-mutant-result.sh',
+    'M269': 'test-mutant-result.sh',
+    'M270': 'test-mutant-result.sh',
+    'M271': 'test-mutant-result.sh',
+    'M272': 'test-mutant-result.sh',
+    'M273': 'test-mutant-result.sh',
+    'M274': 'test-mutant-result.sh',
 }
 EXTRA_EDITS = {
     'M15': ['M14'],

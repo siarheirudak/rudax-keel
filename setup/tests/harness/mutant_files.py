@@ -238,6 +238,16 @@ FILES = {
     "M262": [".github/workflows/checks.yml"],
     "M263": [".github/workflows/checks.yml"],
     "M264": [".github/workflows/checks.yml"],
+    "M265": [".github/workflows/checks.yml"],
+    "M266": [".github/workflows/checks.yml"],
+    "M267": [".github/workflows/checks.yml"],
+    "M268": [".github/workflows/checks.yml"],
+    "M269": [".github/workflows/checks.yml"],
+    "M270": [".github/workflows/checks.yml"],
+    "M271": ["scripts/tests/test_gate_jobs.py"],
+    "M272": [".github/workflows/checks.yml"],
+    "M273": [".github/workflows/checks.yml"],
+    "M274": ["scripts/tests/test_gate_jobs.py"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -425,6 +435,16 @@ CI_IDS = [
     "M262",
     "M263",
     "M264",
+    "M265",
+    "M266",
+    "M267",
+    "M268",
+    "M269",
+    "M270",
+    "M271",
+    "M272",
+    "M273",
+    "M274",
 ]
 
 # Docker mount probes, plus M01. Pull-request CI skips these. The daily full run includes them.
@@ -647,6 +667,16 @@ META = {
     "M262": ("GATE_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}", "decision"),
     "M263": ("pull_request) base=$GATE_PR_BASE_SHA", "decision"),
     "M264": ("if: always()", "resource"),
+    "M265": ('bash "$trusted/scripts/check-gate.sh"', "fail-closed"),
+    "M266": ('bash "$trusted/scripts/check-gate.sh"', "fail-closed"),
+    "M267": ("keep fetch-depth: 0", "decision"),
+    "M268": ("pull_request) base=$GATE_PR_BASE_SHA", "decision"),
+    "M269": ("is not in the checkout", "fail-closed"),
+    "M270": ("push) base=$GITHUB_SHA", "decision"),
+    "M271": ("names-once", "fail-closed"),
+    "M272": ("keep fetch-depth: 0", "decision"),
+    "M273": ("keep fetch-depth: 0", "decision"),
+    "M274": ("plain-names", "fail-closed"),
 }
 
 # CI ids, in CI_IDS order. Pull-request selection never includes OFFLINE_IDS.
