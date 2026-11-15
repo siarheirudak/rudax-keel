@@ -43,7 +43,7 @@ def gate_run_block(text):
         return None
     end = len(lines)
     for index in range(job + 1, len(lines)):
-        if re.match(r"^  \S", lines[index]):
+        if re.match(r"^  \S", lines[index]) and not _comment(lines[index]):
             end = index
             break
     step = None
@@ -57,7 +57,7 @@ def gate_run_block(text):
     for index in range(step + 1, end):
         line = lines[index]
         indent = len(line) - len(line.lstrip())
-        if line.strip() and indent <= step_indent:
+        if line.strip() and indent <= step_indent and not _comment(line):
             return None
         match = re.match(r"^(\s*)run: \|\s*$", line)
         if not match:
@@ -96,7 +96,18 @@ JOB_KEYS = ["name", "needs", "if", "runs-on", "timeout-minutes", "permissions", 
 JOB_TIMEOUT = "5"
 TOP_KEYS = ("name", "on", "permissions", "concurrency", "jobs")
 CHECKOUT = "actions/checkout@"
+# The exact checkout action and pin keel-gate runs before Gate. Any other
+# action there could write BASH_ENV or PATH into $GITHUB_ENV (Auditor FU-P1).
+# A checkout pin bump updates this line in the same pull request.
+CHECKOUT_USES = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+CHECKOUT_WITH = ("fetch-depth", "persist-credentials")
 PLAIN_KEY = re.compile(r"^(- )?[A-Za-z0-9_-]+:(\s|$)")
+
+
+def _comment(line):
+    """A comment-only line. YAML ignores it, so it ends no job, step or map
+    (Security F-01). Inside a run: | body it is script text and is kept there."""
+    return line.lstrip().startswith("#")
 
 
 def _indent(line):
@@ -138,10 +149,13 @@ def gate_job(text):
         return None
     end = len(lines)
     for index in range(start + 1, len(lines)):
-        if re.match(r"^  \S", lines[index]) or re.match(r"^\S", lines[index]):
+        line = lines[index]
+        if (re.match(r"^  \S", line) or re.match(r"^\S", line)) and not _comment(line):
             end = index
             break
-    body = lines[start + 1:end]
+    # Comment-only lines carry no keys. Dropping them keeps a comment from
+    # ending the steps or env scan early (Security F-01).
+    body = [line for line in lines[start + 1:end] if not _comment(line)]
     steps = []
     in_steps = False
     for line in body:
@@ -288,7 +302,16 @@ def yaml_errors(text):
     if not checkout or not any(CHECKOUT in line for line in checkout[:1]):
         errors["G-Y4"].append("first keel-gate step is not actions/checkout")
     else:
-        with_keys = dict(_keys(checkout, 10))
+        uses = [value for key, value in _keys(checkout, 8) if key == "uses"]
+        pinned = [value.split(" #", 1)[0].strip() for value in uses]
+        if pinned != [CHECKOUT_USES]:
+            errors["G-Y4"].append("checkout uses: is %s, expected exactly %s" % (pinned, CHECKOUT_USES))
+        with_pairs = _keys(checkout, 10)
+        with_keys = dict(with_pairs)
+        names = sorted(key for key, _ in with_pairs)
+        if names != sorted(CHECKOUT_WITH):
+            # ref:, repository:, path: and others change what HEAD is (Security F-02).
+            errors["G-Y4"].append("checkout with: keys are %s, expected exactly %s" % (names, sorted(CHECKOUT_WITH)))
         if with_keys.get("fetch-depth") != "0":
             errors["G-Y4"].append("checkout must use fetch-depth: 0")
         if with_keys.get("persist-credentials") != "false":
@@ -339,6 +362,7 @@ class Scratch:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=60,
         )
         if proc.returncode != 0:
             raise RuntimeError("git %s: %s" % (" ".join(args), proc.stderr.strip()))
@@ -462,7 +486,7 @@ def main():
         "G-Y1": "Gate env is the exact key set with pinned values",
         "G-Y2": "Gate step has only name, env, run",
         "G-Y3": "keel-gate job runs if: always(), timeout-minutes: 5, no extra keys",
-        "G-Y4": "steps are checkout (fetch-depth 0, no credentials) then Gate",
+        "G-Y4": "steps are the pinned checkout (fetch-depth 0, no credentials) then Gate",
         "G-Y5": "workflow top-level keys are only name, on, permissions, concurrency, jobs",
         "G-Y6": "keel-gate job has only plain, unrepeated keys",
         "G-Y7": "Gate run: block has no ${{ }} expressions",
@@ -539,6 +563,13 @@ def main():
         code, out = run_step(block, s, "pull_request", merge, "0" * 40)
         res("G-A9", code != 0 and "is not in the checkout" in out,
             "absent base commit is red (exit %s)" % code)
+
+        # KEEL_MUTATE_BASE differs from GATE_PR_BASE_SHA: the chain still comes
+        # from GATE_PR_BASE_SHA (Security F-03).
+        s, base, merge = build(case("a10"), pr_edit=lambda s: s.write("docs/a.md", "b\n"))
+        code, out = run_step(block, s, "pull_request", merge, base, extra={"KEEL_MUTATE_BASE": merge})
+        res("G-A10", (MARKER + " " + base) in out and (MARKER + " " + merge) not in out,
+            "base chain follows GATE_PR_BASE_SHA, not KEEL_MUTATE_BASE (exit %s)" % code)
     except Exception as err:  # a broken scratch setup is a failure, not a pass
         res("G-X1", False, "scratch setup failed: %s" % err)
     finally:

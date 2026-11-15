@@ -34,8 +34,27 @@ elif [ "${KEEL_CI:-}" = 1 ]; then
 else
   echo "SKIPPED gate_step_check.py: no .github/workflows/checks.yml in $ROOT"
 fi
+# The gate job list and the required check names, including their self-test
+# (Auditor FU-1). Runs when the tree has the test and the workflows.
+# Without .github/workflows it says so; under KEEL_CI it is red (Auditor FU-P4).
+gjobs=0
+if [ ! -d "$ROOT/.github/workflows" ] || [ ! -f "$ROOT/scripts/tests/test_gate_jobs.py" ]; then
+  if [ "${KEEL_CI:-}" = 1 ]; then
+    echo "RESULT GJ-X1: NOT BLOCKED (.github/workflows or test_gate_jobs.py missing under KEEL_CI)"
+    gjobs=1
+  else
+    echo "SKIPPED test_gate_jobs.py: no .github/workflows or scripts/tests/test_gate_jobs.py in $ROOT"
+  fi
+else
+  if gj_out=$(python3 "$ROOT/scripts/tests/test_gate_jobs.py" 2>&1); then
+    echo "RESULT GJ-X1: BLOCKED (test_gate_jobs.py and its self-test hold)"
+  else
+    echo "RESULT GJ-X1: NOT BLOCKED ($(printf '%s' "$gj_out" | head -n 1))"
+    gjobs=1
+  fi
+fi
 if [ ! -f "$ROOT/.github/workflows/mutate-pr.yml" ]; then
-  [ "$a4" -eq 0 ] && [ "$gstep" -eq 0 ]
+  [ "$a4" -eq 0 ] && [ "$gstep" -eq 0 ] && [ "$gjobs" -eq 0 ]
   exit $?
 fi
 fail=0
@@ -66,7 +85,7 @@ if grep -q 'KEEL_MUTANTS_OK' "$HERE/mutant-result.py"; then
   echo "binder reads a pass switch" >&2
   fail=1
 fi
-if [ "$fail" -ne 0 ] || [ "$a4" -ne 0 ] || [ "$gstep" -ne 0 ]; then
+if [ "$fail" -ne 0 ] || [ "$a4" -ne 0 ] || [ "$gstep" -ne 0 ] || [ "$gjobs" -ne 0 ]; then
   exit 1
 fi
 exit 0
