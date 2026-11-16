@@ -242,6 +242,13 @@ expect_exact .github/workflows/checks.yml M240 M241 M242 M243 M244 M245 M246 \
 expect_selective scripts/check-gate.sh M92 M93 '!M03'
 expect_selective scripts/gate-jobs.txt M92 M93 '!M03'
 expect_selective scripts/tests/test_gate_jobs.py M92 M93 M271 M274 '!M03' '!M240'
+expect_selective scripts/check-scope.py \
+  M275 M276 M277 M278 M279 M280 M281 M282 M283 M284 M285 M286 \
+  '!M03' '!M92' '!M240'
+# No mutant targets these paths, so a commit that touches only one of them is a skip.
+expect_skip AGENTS.md
+expect_skip .agents/skills/x/SKILL.md
+expect_skip .keel/config
 
 other=$root/scripts-other
 mkdir -p "$other/scripts"

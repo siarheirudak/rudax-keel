@@ -53,8 +53,26 @@ else
     gjobs=1
   fi
 fi
+# The scope classifier and its self-test. A tree without the script says so;
+# under KEEL_CI that absence is red.
+scope=0
+if [ ! -f "$ROOT/scripts/check-scope.py" ]; then
+  if [ "${KEEL_CI:-}" = 1 ]; then
+    echo "RESULT SC-X1: NOT BLOCKED (scripts/check-scope.py missing under KEEL_CI)"
+    scope=1
+  else
+    echo "SKIPPED check-scope.py: no scripts/check-scope.py in $ROOT"
+  fi
+else
+  if sc_out=$(python3 "$ROOT/scripts/check-scope.py" --self-test 2>&1); then
+    echo "RESULT SC-X1: BLOCKED (check-scope.py and its self-test hold)"
+  else
+    echo "RESULT SC-X1: NOT BLOCKED ($(printf '%s' "$sc_out" | head -n 1))"
+    scope=1
+  fi
+fi
 if [ ! -f "$ROOT/.github/workflows/mutate-pr.yml" ]; then
-  [ "$a4" -eq 0 ] && [ "$gstep" -eq 0 ] && [ "$gjobs" -eq 0 ]
+  [ "$a4" -eq 0 ] && [ "$gstep" -eq 0 ] && [ "$gjobs" -eq 0 ] && [ "$scope" -eq 0 ]
   exit $?
 fi
 fail=0
@@ -85,7 +103,7 @@ if grep -q 'KEEL_MUTANTS_OK' "$HERE/mutant-result.py"; then
   echo "binder reads a pass switch" >&2
   fail=1
 fi
-if [ "$fail" -ne 0 ] || [ "$a4" -ne 0 ] || [ "$gstep" -ne 0 ] || [ "$gjobs" -ne 0 ]; then
+if [ "$fail" -ne 0 ] || [ "$a4" -ne 0 ] || [ "$gstep" -ne 0 ] || [ "$gjobs" -ne 0 ] || [ "$scope" -ne 0 ]; then
   exit 1
 fi
 exit 0

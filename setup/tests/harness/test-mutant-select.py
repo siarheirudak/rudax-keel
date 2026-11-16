@@ -48,7 +48,7 @@ RESIDUAL = (
 ORACLES = {
     "setup/tests/harness/test-attacks.sh": ATTACK,
     "setup/tests/harness/test-attack-results.sh": ["M78"],
-    "setup/tests/harness/test-mutant-result.sh": ["M92", "M93"] + ["M%d" % n for n in range(240, 275) if n != 247],
+    "setup/tests/harness/test-mutant-result.sh": ["M92", "M93"] + ["M%d" % n for n in range(240, 275) if n != 247] + ["M%d" % n for n in range(275, 287)],
     "setup/tests/harness/test-runtime.sh": RUNTIME,
     "setup/tests/harness/test-step4.sh": STEP4,
     "setup/tests/harness/test-step5.sh": STEP5,
@@ -97,12 +97,12 @@ def validate():
     legacy_ids = ["M%d" % n for n in range(139, 177)]
     step6_ids = ["M%d" % n for n in range(207, 234)]
     gate_step_ids = ["M%d" % n for n in range(240, 247)] + ["M%d" % n for n in range(248, 271)] + ["M272", "M273"]
-    p1b_ids = ["M%d" % n for n in range(240, 275)]
+    p1b_ids = ["M%d" % n for n in range(240, 287)]
     added = len(legacy_ids) + len(step6_ids) + len(p1b_ids)
     if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93 + added:
         fail("CI id set changed")
     if mf.CI_IDS[-len(p1b_ids):] != p1b_ids:
-        fail("new CI ids are not M240-M274")
+        fail("new CI ids are not M240-M286")
     tail = len(p1b_ids)
     if mf.CI_IDS[-tail - len(step6_ids):-tail] != step6_ids:
         fail("new CI ids are not M207-M233")
@@ -115,6 +115,9 @@ def validate():
     for mid in ("M271", "M274"):
         if mf.FILES.get(mid) != ["scripts/tests/test_gate_jobs.py"] or mutate.SUITE_OF.get(mid) != "test-mutant-result.sh":
             fail("%s must target test_gate_jobs.py with test-mutant-result.sh" % mid)
+    for mid in ["M%d" % n for n in range(275, 287)]:
+        if mf.FILES.get(mid) != ["scripts/check-scope.py"] or mutate.SUITE_OF.get(mid) != "test-mutant-result.sh":
+            fail("%s must target check-scope.py with test-mutant-result.sh" % mid)
     if len(mf.OFFLINE_IDS) != len(set(mf.OFFLINE_IDS)) or len(mf.OFFLINE_IDS) != 5:
         fail("offline id set changed")
     if len(mf.CI_IDS) + len(mf.OFFLINE_IDS) != 98 + added:
@@ -351,6 +354,7 @@ def main():
         # test_gate_jobs.py also carries M271 and M274 (required check names, P1c).
         want = ["M92", "M93", "M271", "M274"] if path == "scripts/tests/test_gate_jobs.py" else ["M92", "M93"]
         expect_exact([path], want, "SEL-A4" if path.endswith("check-gate.sh") else "gate")
+    expect_exact(["scripts/check-scope.py"], ["M%d" % n for n in range(275, 287)], "scope")
     mixed = mf.select_mutants(["setup/keel.sh", "setup/tests/harness/test-happy.sh"])
     if mixed != ("full", list(mf.CI_IDS)):
         fail("SEL-A3 oracle next to a target must select the full set")
