@@ -13,6 +13,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 TYPES = "types: [opened, synchronize, reopened, edited]"
+SCOPE_TYPES = (TYPES, "types: [opened, synchronize, reopened, edited, labeled, unlabeled]")
 
 
 def fail(message):
@@ -156,8 +157,11 @@ def check(listed, checks, scope):
         needle = "{0}: ${{{{ needs.{1}.result }}}}".format(env_name(job), job)
         if needle not in gate:
             raise GateJobsError("missing env {0}".format(needle))
-    if TYPES not in scope.split("\njobs:", 1)[0]:
-        raise GateJobsError("scope.yml must include {0}".format(TYPES))
+    scope_header = scope.split("\njobs:", 1)[0]
+    if not any(item in scope_header for item in SCOPE_TYPES):
+        raise GateJobsError(
+            "scope.yml must include {0} or {1}".format(SCOPE_TYPES[0], SCOPE_TYPES[1])
+        )
     if "name: keel-process-files-separate" not in scope:
         raise GateJobsError("scope job name must be keel-process-files-separate")
     return [job for job in needed if job not in listed]
@@ -221,6 +225,26 @@ def self_test():
     for name, workflows, want in name_cases:
         if (not name_errors(workflows)) != want:
             bad.append(name)
+    six = SCOPE_TYPES[1]
+    scope_cases = [
+        ("GJ-H6 scope with the label triggers", "on:\n  pull_request_target:\n    " + six + "\njobs:\n  x:\n    name: keel-process-files-separate\n", True),
+        ("GJ-A18 scope label triggers without edited", "on:\n  pull_request_target:\n    types: [opened, synchronize, reopened, labeled, unlabeled]\njobs:\n  x:\n    name: keel-process-files-separate\n", False),
+        ("GJ-A20 scope with an extra type", "on:\n  pull_request_target:\n    types: [opened, synchronize, reopened, edited, labeled, unlabeled, closed]\njobs:\n  x:\n    name: keel-process-files-separate\n", False),
+    ]
+    sample = _sample(["a", "b"], ["a", "b"])
+    for name, scope_text, want in scope_cases:
+        try:
+            check(["a", "b"], sample, scope_text)
+            ok = True
+        except GateJobsError:
+            ok = False
+        if ok != want:
+            bad.append(name)
+    try:
+        check(["a", "b"], sample.replace(TYPES, six, 1), scope)
+        bad.append("GJ-A19 checks with the label triggers")
+    except GateJobsError:
+        pass
     return bad
 
 

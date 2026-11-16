@@ -79,6 +79,10 @@ def default_state():
         "usage_flag": "",
         "workflow_runs": {},
         "check_runs": [],
+        "labels": [],
+        "labels_list_status": 200,
+        "labels_create_status": 201,
+        "contents_get_status": {},
     }
 
 
@@ -159,8 +163,13 @@ def emit(code, payload, jq_filter):
         sys.stderr.write(str(payload) + "\n")
         return 99
     if code >= 400:
-        sys.stdout.write(json.dumps({"message": payload}))
-        sys.stderr.write(f"gh: {payload} (HTTP {code})\n")
+        if isinstance(payload, dict):
+            sys.stdout.write(json.dumps(payload))
+            message = payload.get("message") or "error"
+        else:
+            sys.stdout.write(json.dumps({"message": payload}))
+            message = payload
+        sys.stderr.write(f"gh: {message} (HTTP {code})\n")
         return 1
     if jq_filter == ".[]" and isinstance(payload, list):
         lines = [json.dumps(item) for item in payload]
@@ -290,6 +299,13 @@ def route(state, method, path, fields, body, query):
 
     if rest.startswith("contents/"):
         content_path = rest[len("contents/") :]
+        if method == "GET":
+            overrides = state.get("contents_get_status") or {}
+            if content_path in overrides:
+                status = int(overrides[content_path])
+                if status == 404:
+                    return 404, "Not Found", False
+                return status, f"HTTP {status}", False
         if method == "GET" and content_path == ".github/workflows":
             prefix = ".github/workflows/"
             entries = []
@@ -405,6 +421,44 @@ def route(state, method, path, fields, body, query):
                 "enabled": state["actions_enabled"],
                 "allowed_actions": state["allowed_actions"],
             }, False
+        return 99, f"mock unknown {method} {path}", False
+
+    if rest == "labels" or rest.startswith("labels/"):
+        if rest != "labels":
+            return 99, f"mock unknown {method} {path}", False
+        if method == "GET":
+            status = int(state.get("labels_list_status", 200))
+            if status != 200:
+                return status, "Forbidden", False
+            return 200, list(state.get("labels") or []), False
+        if method == "POST":
+            status = int(state.get("labels_create_status", 201))
+            if status == 422:
+                return 422, {
+                    "message": "Validation Failed",
+                    "errors": [{"code": "already_exists"}],
+                }, False
+            if status != 201:
+                return status, "Forbidden", False
+            if not isinstance(body, dict) or not body.get("name"):
+                return 422, {
+                    "message": "Validation Failed",
+                    "errors": [{"code": "missing_field", "field": "name"}],
+                }, False
+            wanted = body["name"]
+            for item in state.get("labels") or []:
+                if str(item.get("name", "")).casefold() == str(wanted).casefold():
+                    return 422, {
+                        "message": "Validation Failed",
+                        "errors": [{"code": "already_exists"}],
+                    }, False
+            created = {
+                "name": wanted,
+                "color": body.get("color") or "",
+                "description": body.get("description") or "",
+            }
+            state.setdefault("labels", []).append(created)
+            return 201, created, False
         return 99, f"mock unknown {method} {path}", False
 
     return 99, f"mock unknown {method} {path}", False
