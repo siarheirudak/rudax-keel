@@ -1,3 +1,11 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/lockup-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/logo/lockup-light.svg">
+    <img alt="rudax-keel" src="assets/logo/lockup-light.svg" width="360">
+  </picture>
+</p>
+
 # rudax-keel
 
 Rudax Keel is a guarded production line for building software with AI agents.
@@ -93,3 +101,7 @@ bash setup/tests/harness/run-tests.sh
 How to read the output: [Getting started](docs/harness-getting-started.md). Why each doctor line exists: [Harness checks](docs/harness-checks-why.md).
 
 The v1 design requires a rootless container runtime and will refuse to start without one. The doctor in this repository still treats a rootful Linux daemon as a warning. [Security](docs/security.md#rootless).
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
