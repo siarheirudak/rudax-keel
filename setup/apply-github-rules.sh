@@ -42,6 +42,7 @@ REST_WHAT=(
   "Set GITHUB_TOKEN permissions to read-only"
   "Require approval for fork pull request workflows"
   "Set allowed actions"
+  "Create labels workflow and process-files"
 )
 REST_ANCHOR=(
   codeowners
@@ -52,6 +53,7 @@ REST_ANCHOR=(
   read-only-token
   fork-approval
   pinned-actions
+  labels
 )
 
 skip_rest() {
@@ -445,6 +447,45 @@ step_actions() {
   return 0
 }
 
+step_labels() {
+  local what="Create labels workflow and process-files" name payload created=""
+  if ! list_repo_labels; then
+    log_step FAIL "$what" "cannot list labels ($(collapse "$GH_API_ERROR"))" "labels"
+    return 0
+  fi
+  local missing=""
+  while IFS= read -r name; do
+    [[ -n $name ]] || continue
+    if [[ -n $missing ]]; then
+      missing="${missing}"$'\n'"${name}"
+    else
+      missing=$name
+    fi
+  done < <(missing_required_labels)
+  if [[ -z $missing ]]; then
+    log_step ALREADY "$what" "process-files and workflow already exist" "labels"
+    return 0
+  fi
+  while IFS= read -r name; do
+    [[ -n $name ]] || continue
+    if ! payload=$(label_create_payload "$name"); then
+      log_step FAIL "$what" "cannot create label ${name} (unknown label)" "labels"
+      return 0
+    fi
+    if ! api_post_json "repos/${SLUG}/labels" "$payload"; then
+      log_step FAIL "$what" "cannot create label ${name} ($(collapse "$GH_API_ERROR"))" "labels"
+      return 0
+    fi
+    if [[ -n $created ]]; then
+      created="${created}, ${name}"
+    else
+      created=$name
+    fi
+  done <<<"$missing"
+  log_step OK "$what" "created ${created}" "labels"
+  return 0
+}
+
 if ! step_gh_version; then
   skip_rest "not run: gh version check failed"
   finish
@@ -466,4 +507,5 @@ step_invite
 step_token
 step_fork
 step_actions
+step_labels
 finish

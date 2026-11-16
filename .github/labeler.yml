@@ -1,0 +1,45 @@
+# Each label must already exist. The workflow that applies labels cannot create them.
+# The workflow label must match the scope check. The process-files label is informational.
+# These globs are case-sensitive. The scope check is not.
+workflow:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/workflows/**'
+          - '.github/actions/**'
+          - '.github/workflows'
+          - '.github/actions'
+
+process-files:
+  - changed-files:
+      - all-globs-to-any-file:
+          - '.github/**'
+          - '!.github/workflows/**'
+          - '!.github/actions/**'
+          - '!.github/workflows'
+          - '!.github/actions'
+      - all-globs-to-any-file:
+          - 'setup/**'
+          - '!setup/README.md'
+          - '!setup/TESTING.md'
+          - '!setup/readme.md'
+          - '!setup/testing.md'
+      - any-glob-to-any-file:
+          - 'scripts/**'
+          - '.keel/**'
+          - '.keel'
+          - 'setup'
+          - 'scripts'
+          - '.github'
+          - '.pi/**'
+          - '**/.pi/**'
+          - '**/.pi'
+          - '.agents/**'
+          - '**/.agents/**'
+          - '**/.agents'
+          - '.gitattributes'
+          - '.gitmodules'
+          - '**/AGENTS.md'
+          - '**/AGENTS.override.md'
+          - '**/CLAUDE.md'
+          - '**/CODEOWNERS'
+          - '**/.shellcheckrc'

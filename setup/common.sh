@@ -68,6 +68,14 @@ FORK_MANUAL_REASON="API unavailable. Do this by hand: Settings → Actions → G
 # gh api --jq arrived in 1.7.0. --paginate, --input, --method, and -f are older.
 # shellcheck disable=SC2034
 MIN_GH_VERSION=1.7.0
+# Labels used to mark a pull request. Each one must already exist.
+LABEL_PROCESS_FILES=process-files
+LABEL_WORKFLOW=workflow
+LABELER_CONFIG_PATH=.github/labeler.yml
+LABELER_WORKFLOW_PATH=.github/workflows/labeler.yml
+# actions/labeler v7.0.0. The version comment is part of the required workflow line.
+LABELER_ACTION_REF=actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13
+LABELER_ACTION_VERSION=v7.0.0
 
 # shellcheck disable=SC2034,SC2016
 PENDING_INVITE_JQ='
@@ -1000,6 +1008,59 @@ api_put_json() {
   return "$status"
 }
 
+api_post_json() {
+  local path=$1 payload=$2 file status=1
+  file=$(mktemp)
+  printf '%s' "$payload" >"$file"
+  if gh_api --method POST "$path" --input "$file"; then
+    status=0
+  else
+    status=$?
+  fi
+  rm -f "$file"
+  return "$status"
+}
+
+# Every page. No -f, so gh uses GET.
+list_repo_labels() {
+  gh_api_collect "repos/${SLUG}/labels?per_page=100"
+}
+
+# GitHub treats label names as the same when they differ only by case.
+label_is_present() {
+  local want
+  want=$(lower "$1")
+  jq -e --arg want "$want" 'any(.[]; (.name // "" | ascii_downcase) == $want)' <<<"$GH_API_BODY" >/dev/null
+}
+
+missing_required_labels() {
+  local name
+  for name in "$LABEL_PROCESS_FILES" "$LABEL_WORKFLOW"; do
+    if ! label_is_present "$name"; then
+      printf '%s\n' "$name"
+    fi
+  done
+}
+
+label_create_payload() {
+  local name=$1 color description
+  case $name in
+    "$LABEL_PROCESS_FILES")
+      color=1D76DB
+      description="Changes that stay inside process files"
+      ;;
+    "$LABEL_WORKFLOW")
+      color=BFDADC
+      description="Changes that stay inside workflow files"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  jq -n --arg name "$name" --arg color "$color" --arg description "$description" \
+    '{name:$name,color:$color,description:$description}'
+}
+
 # Read by apply-github-rules.sh and verify-github-rules.sh after sourcing.
 touch_shared_state() {
   : "$LOGIN" "$DEFAULT_BRANCH" "$REPO_EMPTY" "$DIFF_RC" "$DIFF_TEXT" \
@@ -1008,6 +1069,8 @@ touch_shared_state() {
     "$RISK_REASON" "$CHECKS_SKIP_REASON" "$OWNER_APPLY_REASON" "$FORK_MANUAL_REASON" "$MIN_GH_VERSION" "$GH_API_BODY" \
     "$REQUIRE_CHECKS_FILES" "$REQUIRE_CHECKS_REPORTED" "$CHECKS_RED" "$CHECKS_CONCLUSION" \
     "$CHECKS_REPORT_REASON" "$REPORTED_NAMES" "$REQUIRED_CONTEXTS" \
-    "$GH_API_ERROR" "$LOG_FILE" "$STEP" "$FAIL_COUNT" "$SUMMARY" "$SLUG" "$AGENT"
+    "$GH_API_ERROR" "$LOG_FILE" "$STEP" "$FAIL_COUNT" "$SUMMARY" "$SLUG" "$AGENT" \
+    "$LABEL_PROCESS_FILES" "$LABEL_WORKFLOW" "$LABELER_CONFIG_PATH" "$LABELER_WORKFLOW_PATH" \
+    "$LABELER_ACTION_REF" "$LABELER_ACTION_VERSION"
 }
 touch_shared_state

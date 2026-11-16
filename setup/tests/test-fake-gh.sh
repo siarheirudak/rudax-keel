@@ -172,7 +172,25 @@ count_exact() {
 }
 
 write_count() {
-  awk '$1 == "POST" || $1 == "PUT" || $1 == "PATCH" { n++ } END { print n + 0 }' "$GH_MOCK_LOG"
+  awk '$1 == "POST" || $1 == "PUT" || $1 == "PATCH" || $1 == "DELETE" { n++ } END { print n + 0 }' "$GH_MOCK_LOG"
+}
+
+assert_label_writes_none() {
+  local method
+  for method in DELETE PATCH PUT; do
+    if [[ $(count_method "$method" labels) -ne 0 ]]; then
+      fail "${method} labels"
+    fi
+  done
+  forbid "mock unknown"
+}
+
+assert_methods_get() {
+  local methods
+  methods=$(awk '{print $1}' "$GH_MOCK_LOG" | sort -u)
+  if [[ $methods != "GET" ]]; then
+    fail "verify methods: ${methods}"
+  fi
 }
 
 accept_agent() {
@@ -1171,5 +1189,356 @@ if grep -n 'SKIPPED' "$ROOT/setup/apply-github-rules.sh" "$ROOT/setup/verify-git
   fail "SKIPPED is still a status"
 fi
 ok "no SKIPPED status"
+
+# --- labels and labeler files ---
+LABELER_SHA=bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13
+OTHER_LABELER_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+seed_labels() {
+  mutate 'state["labels"]=[{"name":"process-files","color":"1D76DB","description":"Changes that stay inside process files"},{"name":"workflow","color":"BFDADC","description":"Changes that stay inside workflow files"}]'
+}
+
+put_repo_file() {
+  LABEL_FILE_PATH=$1 LABEL_FILE_TEXT=$2 mutate 'state["files"][os.environ["LABEL_FILE_PATH"]]=os.environ["LABEL_FILE_TEXT"]'
+}
+
+prepare_green() {
+  reset
+  ready_checks
+  run "$APPLY" owner/repo agent
+  if [[ $rc -ne 0 ]]; then
+    fail "prepare apply exit $rc"
+  fi
+  accept_agent
+}
+
+exact_labeler_workflow() {
+  printf '%s\n' \
+    "name: labeler" \
+    "jobs:" \
+    "  label:" \
+    "    steps:" \
+    "      - uses: actions/labeler@${LABELER_SHA} # v7.0.0"
+}
+
+reset
+run "$APPLY" owner/repo agent
+assert_rc 0
+need "Create labels workflow and process-files - OK"
+need "created process-files, workflow"
+need "docs/why.md#labels"
+assert_label_writes_none
+if [[ $(count_exact POST repos/owner/repo/labels) -ne 2 ]]; then
+  fail "label posts: $(count_exact POST repos/owner/repo/labels)"
+fi
+python3 - <<'PY'
+import json, os, sys
+state = json.load(open(os.environ["GH_MOCK_STATE"], encoding="utf-8"))
+want = {
+    "process-files": ("1D76DB", "Changes that stay inside process files"),
+    "workflow": ("BFDADC", "Changes that stay inside workflow files"),
+}
+posts = [call for call in state["calls"] if call["method"] == "POST" and call["path"].endswith("/labels")]
+if len(posts) != 2:
+    sys.exit("posts %s" % len(posts))
+seen = []
+for call in posts:
+    body = call["body"]
+    name = body.get("name")
+    seen.append(name)
+    if name not in want:
+        sys.exit("name " + str(name))
+    color, description = want[name]
+    if body.get("color") != color or body.get("description") != description:
+        sys.exit("body " + json.dumps(body))
+if seen != ["process-files", "workflow"]:
+    sys.exit("order " + ",".join(seen))
+puts = [call for call in state["calls"] if call["method"] == "PUT"]
+kinds = []
+for call in puts:
+    path = call["path"]
+    if path.endswith("/actions/permissions/workflow"):
+        kinds.append("workflow")
+    elif path.endswith("/fork-pr-contributor-approval"):
+        kinds.append("fork")
+    elif path.endswith("/actions/permissions"):
+        kinds.append("policy")
+    elif path.endswith("/selected-actions"):
+        kinds.append("selected")
+if kinds != ["workflow", "fork", "policy", "selected"]:
+    sys.exit("action put order " + ",".join(kinds))
+paths = [call["method"] + " " + call["path"] for call in state["calls"]]
+code_at = next(i for i, path in enumerate(paths) if path == "PUT repos/owner/repo/contents/.github/CODEOWNERS")
+rule_at = next(i for i, path in enumerate(paths) if path == "POST repos/owner/repo/rulesets")
+if code_at > rule_at:
+    sys.exit("CODEOWNERS was written after protect-main")
+PY
+ok "first apply creates both labels"
+
+python3 - <<'PY'
+import json, os, sys
+state = json.load(open(os.environ["GH_MOCK_STATE"], encoding="utf-8"))
+files = state["files"]
+for path in (".github/labeler.yml", ".github/workflows/labeler.yml"):
+    if path in files:
+        sys.exit("wrote " + path)
+puts = [call["path"] for call in state["calls"] if call["method"] == "PUT"]
+for path in puts:
+    if path.endswith("/contents/.github/labeler.yml") or path.endswith("/contents/.github/workflows/labeler.yml"):
+        sys.exit("put " + path)
+PY
+ok "apply does not write labeler files"
+
+clear_calls
+run "$APPLY" owner/repo agent
+assert_rc 0
+need "Create labels workflow and process-files - ALREADY"
+if [[ $(write_count) -ne 0 ]]; then
+  fail "second apply wrote: $(write_count)"
+fi
+assert_label_writes_none
+if [[ $(count_method POST labels) -ne 0 ]]; then
+  fail "second apply posted a label"
+fi
+ok "second apply leaves labels in place"
+
+reset
+mutate 'state["labels"]=[{"name":"process-files","color":"000000","description":"kept process"},{"name":"Workflow","color":"ffffff","description":"kept workflow"}]'
+python3 - <<'PY'
+import json, os
+json.dump(json.load(open(os.environ["GH_MOCK_STATE"], encoding="utf-8"))["labels"], open(os.environ["GH_MOCK_STATE"] + ".labels", "w", encoding="utf-8"))
+PY
+run "$APPLY" owner/repo agent
+assert_rc 0
+need "Create labels workflow and process-files - ALREADY"
+assert_label_writes_none
+if [[ $(count_method POST labels) -ne 0 ]]; then
+  fail "existing labels were posted"
+fi
+python3 - <<'PY'
+import json, os, sys
+state = json.load(open(os.environ["GH_MOCK_STATE"], encoding="utf-8"))
+before = json.load(open(os.environ["GH_MOCK_STATE"] + ".labels", encoding="utf-8"))
+if state["labels"] != before:
+    sys.exit("labels changed")
+PY
+ok "apply leaves an existing label untouched"
+
+reset
+mutate 'state["labels"]=[{"name":"process-files","color":"111111","description":"stay"}]'
+run "$APPLY" owner/repo agent
+assert_rc 0
+need "created workflow"
+forbid "created process-files"
+assert_label_writes_none
+if [[ $(count_exact POST repos/owner/repo/labels) -ne 1 ]]; then
+  fail "workflow-only posts: $(count_exact POST repos/owner/repo/labels)"
+fi
+python3 - <<'PY'
+import json, os, sys
+state = json.load(open(os.environ["GH_MOCK_STATE"], encoding="utf-8"))
+kept = next(item for item in state["labels"] if item["name"] == "process-files")
+if kept["color"] != "111111" or kept["description"] != "stay":
+    sys.exit("process-files changed")
+posts = [call for call in state["calls"] if call["method"] == "POST" and call["path"].endswith("/labels")]
+if len(posts) != 1 or posts[0]["body"].get("name") != "workflow":
+    sys.exit("posted " + json.dumps(posts))
+PY
+ok "apply creates only the missing label"
+
+reset
+mutate 'state["labels"]=[{"name":"bug","color":"aaaaaa","description":"bugs"},{"name":"documentation","color":"bbbbbb","description":"docs"}]'
+run "$APPLY" owner/repo agent
+assert_rc 0
+need "created process-files, workflow"
+assert_label_writes_none
+python3 - <<'PY'
+import json, os, sys
+state = json.load(open(os.environ["GH_MOCK_STATE"], encoding="utf-8"))
+by_name = {item["name"]: item for item in state["labels"]}
+if by_name["bug"]["color"] != "aaaaaa" or by_name["documentation"]["description"] != "docs":
+    sys.exit("unrelated changed")
+for name in ("process-files", "workflow"):
+    if name not in by_name:
+        sys.exit("missing " + name)
+PY
+ok "apply keeps unrelated labels"
+
+reset
+mutate 'state["labels_list_status"]=403'
+run "$APPLY" owner/repo agent
+assert_rc 1
+need "Create labels workflow and process-files - FAIL"
+need "cannot list labels"
+assert_label_writes_none
+if [[ $(count_method POST labels) -ne 0 || $(count_method DELETE labels) -ne 0 ]]; then
+  fail "list failure wrote a label"
+fi
+ok "apply stops when the label list fails"
+
+reset
+mutate 'state["labels_create_status"]=403'
+run "$APPLY" owner/repo agent
+assert_rc 1
+need "Create labels workflow and process-files - FAIL"
+need "cannot create label"
+assert_label_writes_none
+ok "apply stops when label create fails"
+
+reset
+mutate 'state["labels_create_status"]=422'
+run "$APPLY" owner/repo agent
+assert_rc 1
+need "Create labels workflow and process-files - FAIL"
+need "cannot create label"
+assert_label_writes_none
+python3 - <<'PY'
+import json, os, sys
+state = json.load(open(os.environ["GH_MOCK_STATE"], encoding="utf-8"))
+posts = [call for call in state["calls"] if call["method"] == "POST" and call["path"].endswith("/labels")]
+names = [call["body"].get("name") for call in posts]
+if not names or len(names) != len(set(names)):
+    sys.exit("posts " + ",".join(str(name) for name in names))
+PY
+ok "apply stops when label create reports already exists"
+
+reset
+accept_agent
+run "$VERIFY" owner/repo agent
+assert_rc 1
+need "Check labels workflow and process-files - FAIL"
+need "missing process-files, workflow. owner: run setup/apply-github-rules.sh"
+assert_methods_get
+ok "verify fails when a label is missing"
+
+prepare_green
+run "$VERIFY" owner/repo agent
+assert_rc 0
+need "Check labels workflow and process-files - ALREADY"
+need "Check labeler config and workflow - NOT YET"
+need "waiting for .github/labeler.yml and .github/workflows/labeler.yml on the default branch"
+assert_methods_get
+ok "verify waits for the labeler files"
+
+prepare_green
+put_repo_file ".github/labeler.yml" "workflow: []"$'\n'
+run "$VERIFY" owner/repo agent
+assert_rc 0
+need "Check labeler config and workflow - NOT YET"
+assert_methods_get
+ok "verify waits when one labeler file is missing"
+
+prepare_green
+put_repo_file ".github/labeler.yml" "workflow: []"$'\n'
+put_repo_file ".github/workflows/labeler.yml" "$(printf '%s\n' "name: labeler" "jobs:" "  label:" "    steps:" "      - uses: actions/labeler@${OTHER_LABELER_SHA} # v7.0.0")"
+run "$VERIFY" owner/repo agent
+assert_rc 1
+need "Check labeler config and workflow - FAIL"
+need "no other actions/labeler ref"
+assert_methods_get
+ok "verify fails when the labeler pin differs"
+
+prepare_green
+put_repo_file ".github/labeler.yml" "workflow: []"$'\n'
+put_repo_file ".github/workflows/labeler.yml" "$(exact_labeler_workflow)"
+run "$VERIFY" owner/repo agent
+assert_rc 0
+need "Check labeler config and workflow - ALREADY"
+need "labeler config and workflow are on main"
+assert_methods_get
+ok "verify accepts the pinned labeler workflow"
+
+reset
+run "$APPLY" owner/repo agent
+assert_rc 0
+accept_agent
+run "$VERIFY" owner/repo agent
+assert_rc 0
+need "Check labels workflow and process-files - ALREADY"
+need "Check labeler config and workflow - NOT YET"
+need "waiting for .github/labeler.yml and .github/workflows/labeler.yml on the default branch"
+assert_methods_get
+if [[ $(write_count) -ne 0 ]]; then
+  fail "verify wrote"
+fi
+ok "verify stays read-only after labels exist"
+
+reset
+run "$APPLY" owner/repo agent
+assert_rc 0
+assert_links
+bad=$(printf '%s\n' "$out" | grep -E 'Create labels workflow and process-files' | grep -v 'docs/why.md#labels' || true)
+if [[ -n $bad ]]; then
+  out=$bad
+  fail "apply label step without labels link"
+fi
+accept_agent
+run "$VERIFY" owner/repo agent
+assert_links
+bad=$(printf '%s\n' "$out" | grep -E 'Check labels workflow and process-files|Check labeler config and workflow' | grep -v 'docs/why.md#labels' || true)
+if [[ -n $bad ]]; then
+  out=$bad
+  fail "verify label step without labels link"
+fi
+ok "label steps link to the labels section"
+
+reset
+mutate 'state["labels_list_status"]=500'
+accept_agent
+run "$VERIFY" owner/repo agent
+assert_rc 1
+need "Check labels workflow and process-files - FAIL"
+need "cannot list labels"
+assert_methods_get
+ok "verify fails when the label list fails"
+
+prepare_green
+mutate 'state["contents_get_status"]={".github/labeler.yml": 500}'
+run "$VERIFY" owner/repo agent
+assert_rc 1
+need "Check labeler config and workflow - FAIL"
+need "cannot read .github/labeler.yml"
+forbid "Check labeler config and workflow - NOT YET"
+assert_methods_get
+ok "verify fails when a labeler file cannot be read"
+
+reset
+seed_labels
+mutate 'state["empty"]=True'
+accept_agent
+run "$VERIFY" owner/repo agent
+assert_rc 1
+need "Check labeler config and workflow - FAIL"
+need "repository is empty; push an initial commit to main, then re-run"
+forbid "Check labeler config and workflow - NOT YET"
+assert_methods_get
+ok "verify fails the labeler step on an empty repository"
+
+prepare_green
+put_repo_file ".github/labeler.yml" "workflow: []"$'\n'
+put_repo_file ".github/workflows/labeler.yml" "$(printf '%s\n' "name: labeler" "jobs:" "  label:" "    steps:" "        # uses: actions/labeler@${LABELER_SHA} # v7.0.0" "      - uses: actions/labeler@main")"
+run "$VERIFY" owner/repo agent
+assert_rc 1
+need "Check labeler config and workflow - FAIL"
+need "no other actions/labeler ref"
+assert_methods_get
+ok "verify fails when the labeler pin is only in a comment"
+
+prepare_green
+put_repo_file ".github/labeler.yml" "workflow: []"$'\n'
+put_repo_file ".github/workflows/labeler.yml" "$(printf '%s\n' "name: labeler" "jobs:" "  label:" "    steps:" "      - uses: actions/labeler@${LABELER_SHA} # v7.0.0" "      - uses: actions/labeler@v7")"
+run "$VERIFY" owner/repo agent
+assert_rc 1
+need "Check labeler config and workflow - FAIL"
+need "no other actions/labeler ref"
+assert_methods_get
+ok "verify fails when a second labeler ref is present"
+
+clear_calls
+printf '%s\n' "DELETE repos/owner/repo/labels/x" >>"$GH_MOCK_LOG"
+if [[ $(write_count) -ne 1 ]]; then
+  fail "write_count $(write_count)"
+fi
+ok "a delete counts as a write"
 
 printf 'ALL PASS\n'

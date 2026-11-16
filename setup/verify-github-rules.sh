@@ -36,6 +36,8 @@ REST_WHAT=(
   "Check fork pull request approval"
   "Check allowed actions"
   "Check actions are pinned to a commit SHA"
+  "Check labels workflow and process-files"
+  "Check labeler config and workflow"
 )
 REST_ANCHOR=(
   protect-main
@@ -47,6 +49,8 @@ REST_ANCHOR=(
   fork-approval
   pinned-actions
   pinned-actions
+  labels
+  labels
 )
 
 skip_rest() {
@@ -307,6 +311,71 @@ step_pins() {
   return 0
 }
 
+step_check_labels() {
+  local what="Check labels workflow and process-files" name names=""
+  if ! list_repo_labels; then
+    log_step FAIL "$what" "cannot list labels ($(collapse "$GH_API_ERROR"))" "labels"
+    return 0
+  fi
+  while IFS= read -r name; do
+    [[ -n $name ]] || continue
+    if [[ -n $names ]]; then
+      names="${names}, ${name}"
+    else
+      names=$name
+    fi
+  done < <(missing_required_labels)
+  if [[ -z $names ]]; then
+    log_step ALREADY "$what" "process-files and workflow exist" "labels"
+    return 0
+  fi
+  log_step FAIL "$what" "missing ${names}. ${OWNER_APPLY_REASON}" "labels"
+  return 0
+}
+
+step_labeler_files() {
+  local what="Check labeler config and workflow" st_config=0 st_workflow=0
+  local line exact=0 other=0 ver_re needle
+  if ! mark_empty_repo; then
+    log_step FAIL "$what" "cannot read ${DEFAULT_BRANCH} ($(collapse "$GH_API_ERROR"))" "labels"
+    return 0
+  fi
+  if [[ $REPO_EMPTY -eq 1 ]]; then
+    log_step FAIL "$what" "repository is empty; push an initial commit to ${DEFAULT_BRANCH}, then re-run" "labels"
+    return 0
+  fi
+  branch_file_status "$LABELER_CONFIG_PATH" || st_config=$?
+  if [[ $st_config -eq 2 ]]; then
+    log_step FAIL "$what" "cannot read ${LABELER_CONFIG_PATH} ($(collapse "$GH_API_ERROR"))" "labels"
+    return 0
+  fi
+  branch_file_status "$LABELER_WORKFLOW_PATH" || st_workflow=$?
+  if [[ $st_workflow -eq 2 ]]; then
+    log_step FAIL "$what" "cannot read ${LABELER_WORKFLOW_PATH} ($(collapse "$GH_API_ERROR"))" "labels"
+    return 0
+  fi
+  if [[ $st_config -ne 0 || $st_workflow -ne 0 ]]; then
+    log_step "NOT YET" "$what" "waiting for .github/labeler.yml and .github/workflows/labeler.yml on the default branch" "labels"
+    return 0
+  fi
+  decode_content_body
+  ver_re=${LABELER_ACTION_VERSION//./\\.}
+  needle="${LABELER_ACTION_REF%%@*}@"
+  while IFS= read -r line || [[ -n $line ]]; do
+    if [[ $line =~ ^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]+${LABELER_ACTION_REF}[[:space:]]+#[[:space:]]+${ver_re}[[:space:]]*$ ]]; then
+      exact=$((exact + 1))
+    elif [[ $line == *"$needle"* ]]; then
+      other=$((other + 1))
+    fi
+  done <<<"$CONTENT_TEXT"
+  if [[ $exact -eq 1 && $other -eq 0 ]]; then
+    log_step ALREADY "$what" "labeler config and workflow are on ${DEFAULT_BRANCH}" "labels"
+    return 0
+  fi
+  log_step FAIL "$what" "workflow must use ${LABELER_ACTION_REF} # ${LABELER_ACTION_VERSION} and no other actions/labeler ref" "labels"
+  return 0
+}
+
 if ! step_gh_version; then
   skip_rest "not run: gh version check failed"
   finish
@@ -326,4 +395,6 @@ step_token
 step_fork
 step_actions
 step_pins
+step_check_labels
+step_labeler_files
 finish
