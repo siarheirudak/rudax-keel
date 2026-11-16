@@ -1,0 +1,28 @@
+name: labeler
+
+# Adds the workflow and process-files labels from the paths a pull request
+# changes, using the rules in .github/labeler.yml. A label is a marker only:
+# the scope check decides from the paths.
+# Labels this job adds start no other workflow run. When this job adds the
+# workflow label, re-run the scope check once.
+# The job never removes a label. It does not check out code and runs no
+# commands. Pull requests from forks get read-only access, so the job cannot
+# label them; add the workflow label by hand there.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions: {}
+
+jobs:
+  label:
+    name: labeler
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0
+        with:
+          sync-labels: false
