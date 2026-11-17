@@ -61,7 +61,11 @@ if ! jq -e '
   .name == "require-checks"
   and .target == "branch"
   and .enforcement == "active"
-  and .bypass_actors == []
+  and .bypass_actors == [{
+    "actor_id": 5,
+    "actor_type": "RepositoryRole",
+    "bypass_mode": "pull_request"
+  }]
   and .conditions.ref_name.include == ["~DEFAULT_BRANCH"]
   and .conditions.ref_name.exclude == []
   and any(.rules[];
