@@ -739,8 +739,8 @@ python3 - <<'PY'
 import json, os, sys
 state = json.load(open(os.environ["GH_MOCK_STATE"], encoding="utf-8"))
 live = next(item for item in state["rulesets"] if item["name"] == "require-checks")
-if live["bypass_actors"] != []:
-    sys.exit("bypass not empty")
+if live["bypass_actors"] != [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}]:
+    sys.exit("bypass is not the admin role for pull requests only: %s" % live["bypass_actors"])
 checks = live["rules"][0]["parameters"]["required_status_checks"]
 want = [
     {"context": "keel-gate", "integration_id": 15368},
@@ -849,6 +849,40 @@ assert_rc 0
 need "require-checks matches"
 forbid " - WARN:"
 ok "verify ignores a red pull_request run when the default-branch push is green"
+
+# --- require-checks bypass drift ---
+# The file allows the admin role (id 5) for pull requests only. Any other live bypass list is a diff.
+for drift in \
+  'item["bypass_actors"] = []' \
+  'item["bypass_actors"][0]["bypass_mode"] = "always"' \
+  'item["bypass_actors"][0]["actor_id"] = 4' \
+  'item["bypass_actors"].append({"actor_id": 1, "actor_type": "User", "bypass_mode": "pull_request"})'; do
+  reset
+  ready_checks
+  run "$APPLY" owner/repo agent
+  assert_rc 0
+  mutate "
+for item in state['rulesets']:
+    if item['name'] == 'require-checks':
+        ${drift}
+"
+  accept_agent
+  run "$VERIFY" owner/repo agent
+  assert_rc 1
+  need "owner: run setup/apply-github-rules.sh"
+  clear_calls
+  run "$APPLY" owner/repo agent
+  assert_rc 0
+  need "updated require-checks"
+  python3 - <<'PY2'
+import json, os, sys
+state = json.load(open(os.environ["GH_MOCK_STATE"], encoding="utf-8"))
+live = next(item for item in state["rulesets"] if item["name"] == "require-checks")
+if live["bypass_actors"] != [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}]:
+    sys.exit("apply did not restore the bypass: %s" % live["bypass_actors"])
+PY2
+  ok "require-checks bypass drift: ${drift}"
+done
 
 # --- Free private ---
 reset
