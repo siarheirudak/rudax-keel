@@ -79,7 +79,7 @@ Yellow review findings are listed and do not block. They are for the owner to re
 
 After the merge, the script deletes the task journal for that task.
 
-The bot does not merge. The owner does not merge a pull request whose required checks are red. The admin bypass on branch protection does not skip the required checks.
+The bot does not merge. The owner does not merge a pull request whose required checks are red. The one exception is a deliberate emergency exit: the admin bypass on `require-checks` lets an admin merge a pull request past red checks, for pull requests only. The admin bypass on `protect-main` alone does not skip the required checks.
 
 ## Release
 
