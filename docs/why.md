@@ -86,17 +86,21 @@ The harness in this repository is one such container. Why each check it prints e
 
 ## Require checks
 
-**Rule.** The default branch cannot be updated unless `keel-gate` and `keel-process-files-separate` have passed on the latest commit. Those strings are the check-run names. The Actions page shows `checks / keel-gate`; that is only a display label. The rule is strict: the branch must be up to date before merge. There is no bypass list. Each check is restricted to GitHub Actions (`integration_id` 15368, the id from `GET /apps/github-actions`).
+**Rule.** The default branch cannot be updated unless `keel-gate` and `keel-process-files-separate` have passed on the latest commit. Those strings are the check-run names. The Actions page shows `checks / keel-gate`; that is only a display label. The rule is strict: the branch must be up to date before merge. The admin role may bypass it, and only when merging a pull request; see the admin bypass below. Each check is restricted to GitHub Actions (`integration_id` 15368, the id from `GET /apps/github-actions`).
 
 **Why.** A status check is a pass or fail name GitHub stores on a commit. `keel-gate` fails if any job in `.github/workflows/checks.yml` failed, was cancelled, or was skipped. `checks` includes `edited`, so a base change runs the gate again and a green result from another base does not stay. Limiting the name to GitHub Actions means a success status posted with a user token does not count. The checks catch mistakes and honest failures, and they block a merge while they are red. The owner still reviews the pull request. Strict means a new commit has to run the checks again. Apply creates the ruleset only when both workflow files are on the default branch and a check run with each exact name, from app 15368, has been seen. It stops looking once both names have been seen, and it reads at most two pages of runs per workflow. `keel-process-files-separate` runs only on pull requests, so that run can be on any branch. Until then the step is NOT YET, and the reason lists reported names and missing names. Verify fails with `owner: run setup/apply-github-rules.sh` when those files are on the default branch and the ruleset is missing or different, including `integration_id`. A red `checks` push to the default branch is WARN, not FAIL. A red pull request run is not that warning.
+
+**Admin bypass.** The bypass list has one entry: the repository Admin role (`RepositoryRole` id 5), mode "pull requests only". It names a role, not an account, so it is whoever has admin on this repository. An admin can merge a pull request while `keel-gate` or `keel-process-files-separate` is red or missing by ticking the bypass box on the merge button. It does not allow a direct push. It is the owner's deliberate emergency exit, for example when CI cannot turn green for a reason outside the pull request. It is not the normal way to merge. The agent GitHub account has write, not admin, so it cannot use it. Any tool signed in as an admin account can use it too, so give tools the agent account, not yours. Rule Insights (Settings → Rules → Insights) logs every bypass.
 
 Merge queue is not supported: these workflows have no `merge_group` trigger, so a queued merge does not run them.
 
 A pull request opened by `GITHUB_TOKEN` does not run GitHub Actions checks.
 
-**If disabled.** A pull request can be merged while tests are red or missing. The admin bypass on `protect-main` does not skip this ruleset.
+**If disabled.** A pull request can be merged while tests are red or missing. The admin bypass on `protect-main` does not skip this ruleset. Only this ruleset's own admin bypass does.
 
 **How to disable explicitly.** Delete the `require-checks` ruleset, and delete `setup/rulesets/require-checks.json`. Apply creates it again once both workflows are on the default branch and every required check-run name has been reported by GitHub Actions app 15368.
+
+To remove only the admin bypass, remove it from the `require-checks` ruleset and from `setup/rulesets/require-checks.json`. Apply puts the bypass back while the file still has it. Without it, nobody can merge while a required check is red; a stuck check then has to be fixed, or the ruleset changed by hand.
 
 <a id="scope"></a>
 

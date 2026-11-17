@@ -536,15 +536,22 @@ why attack-red
 
 Expected: `mergeStateStatus` is `BLOCKED`, and the rollup shows `keel-gate` red. The approval does not override it. `BEHIND` does not count. Updating the branch to clear `BEHIND` dismisses this approval, so the owner approves again before you retry.
 
-**(b) Owner bypass still blocked by require-checks**
+**(b) Admin bypass on require-checks is pull requests only**
 
-In the owner shell, on the same red pull request. Define `why` in that shell too if you want to read it there; the agent shell can run it after the attempt.
+`require-checks` has an admin bypass for pull requests only. In the owner shell, do not merge `attack-red` with `--admin`: the owner's bypass would merge the red pull request. Read the bypass instead. In the owner shell:
+
+```bash
+rc_id=$(gh api "repos/OWNER/SANDBOX_REPO/rulesets?includes_parents=false" --jq '.[] | select(.name == "require-checks") | .id')
+gh api "repos/OWNER/SANDBOX_REPO/rulesets/$rc_id" --jq '{bypass_actors, current_user_can_bypass}'
+```
+
+Expected: `bypass_actors` is exactly one entry, `actor_id` 5, `actor_type` `RepositoryRole`, `bypass_mode` `pull_request`, and `current_user_can_bypass` is `pull_requests_only`. In the agent shell, run the same two commands. Expected: `current_user_can_bypass` is `never`, and `bypass_actors` is absent or null (GitHub shows it only to admins). Then, still in the agent shell:
 
 ```bash
 gh pr merge attack-red --repo OWNER/SANDBOX_REPO --"$method" --admin
 ```
 
-Expected: still blocked. `protect-main` has an admin bypass. `require-checks` does not. `why attack-red` is `BLOCKED` and `keel-gate` is red. `BEHIND` does not count.
+Expected: refused; the agent account is not an admin. `why attack-red` is still `BLOCKED` and `keel-gate` is red. If it merges, stop the run and record FAIL: the agent account can bypass.
 
 **(c) Commit status with the required context name**
 
@@ -650,7 +657,7 @@ Fill the Actual column, then post this comment from the agent shell on template 
 
 ```bash
 gh api --method POST repos/OWNER/rudax-keel/issues/5/comments --input - <<'EOF'
-{"body":"Layer 2 sandbox results for SANDBOX_REPO.\n\n| Step | Expected | Actual |\n|---|---|---|\n| Import CODEOWNERS | `* @OWNER` | |\n| Import merge | admin bypass, then keel-gate on main | |\n| First apply | NOT YET, reported [keel-gate], missing [keel-process-files-separate] | |\n| Warm-up | keel-process-files-separate success | |\n| Second apply | require-checks created | |\n| Verify | 0 FAIL | |\n| Agent login | AGENT | |\n| Owner login | OWNER | |\n| Docs-only merge | merge succeeds | |\n| (a) red keel-gate | BLOCKED, keel-gate red | |\n| (b) admin bypass | BLOCKED, keel-gate red | |\n| (c) non-Actions status | BLOCKED, Actions keel-gate still red | |\n| (d) mix | BLOCKED, keel-process-files-separate red | |\n| (e) process only | scope passes; not merged | |\n| (f) docs only | both checks green; not merged | |\n| (g) unexpected green keel-gate | BLOCKED without owner approval | |\n| (h) rename | BLOCKED, scope red on previous_filename | |\n| (i) retarget | new keel-gate run, scope fails on the base | |"}
+{"body":"Layer 2 sandbox results for SANDBOX_REPO.\n\n| Step | Expected | Actual |\n|---|---|---|\n| Import CODEOWNERS | `* @OWNER` | |\n| Import merge | admin bypass, then keel-gate on main | |\n| First apply | NOT YET, reported [keel-gate], missing [keel-process-files-separate] | |\n| Warm-up | keel-process-files-separate success | |\n| Second apply | require-checks created | |\n| Verify | 0 FAIL | |\n| Agent login | AGENT | |\n| Owner login | OWNER | |\n| Docs-only merge | merge succeeds | |\n| (a) red keel-gate | BLOCKED, keel-gate red | |\n| (b) admin bypass | owner pull_requests_only; agent never, --admin refused; not merged | |\n| (c) non-Actions status | BLOCKED, Actions keel-gate still red | |\n| (d) mix | BLOCKED, keel-process-files-separate red | |\n| (e) process only | scope passes; not merged | |\n| (f) docs only | both checks green; not merged | |\n| (g) unexpected green keel-gate | BLOCKED without owner approval | |\n| (h) rename | BLOCKED, scope red on previous_filename | |\n| (i) retarget | new keel-gate run, scope fails on the base | |"}
 EOF
 ```
 
