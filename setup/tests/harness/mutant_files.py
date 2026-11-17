@@ -260,6 +260,9 @@ FILES = {
     "M284": ["scripts/check-scope.py"],
     "M285": ["scripts/check-scope.py"],
     "M286": ["scripts/check-scope.py"],
+    "M287": ["setup/tests/harness/mutant_files.py"],
+    "M288": ["setup/tests/harness/mutant_files.py"],
+    "M289": ["setup/tests/harness/mutant_files.py"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -469,6 +472,9 @@ CI_IDS = [
     "M284",
     "M285",
     "M286",
+    "M287",
+    "M288",
+    "M289",
 ]
 
 # Docker mount probes, plus M01. Pull-request CI skips these. The daily full run includes them.
@@ -713,6 +719,9 @@ META = {
     "M284": ("labels-shape", "fail-closed"),
     "M285": ("workflow-actions", "fail-closed"),
     "M286": ("bare-names", "fail-closed"),
+    "M287": ("doc-exact", "fail-closed"),
+    "M288": ("doc-exact", "fail-closed"),
+    "M289": ("doc-list", "fail-closed"),
 }
 
 # CI ids, in CI_IDS order. Pull-request selection never includes OFFLINE_IDS.
@@ -850,7 +859,8 @@ STEP5_CI = (
 
 # A change to one of these files selects only the CI mutants mapped to it.
 # Exact policy paths and listed oracle scripts are selective too.
-# Every other changed path under setup/ or .github/ selects the full CI set.
+# Every other changed path under setup/ or .github/ selects the full CI set,
+# except the docs listed in DOC_PATHS.
 TARGET_ONLY = frozenset((
     "setup/keel.sh",
     "setup/lib/visibility.py",
@@ -910,6 +920,16 @@ ORACLE_FILES = (
 # The scope check selects only the mutants that edit it.
 SCOPE_PATHS = frozenset((
     "scripts/check-scope.py",
+))
+
+# Markdown under setup/ that no harness code, mutant suite or oracle reads.
+# Whole path, exact case. A change to one of these selects no mutants. Any other Markdown under setup/
+# or .github/ still selects the full CI set. That includes the role prompts,
+# the rules and skill views the harness loads, the test fixtures, and the
+# README files next to the policy files.
+DOC_PATHS = frozenset((
+    "setup/README.md",
+    "setup/TESTING.md",  # doc-list
 ))
 
 # Gate paths select the mapped gate ids. They do not widen to the full CI set.
@@ -1149,9 +1169,9 @@ def ids_for_path(path):
 def needs_full_set(changed):
     """True when the diff must run the full CI set.
 
-    A mapped target, a mechanism file, a gate path, or a listed oracle script
-    does not. An unmapped path under setup/ or .github/ does. A module whose
-    imports cannot be resolved does too.
+    A mapped target, a mechanism file, a gate path, a listed oracle script,
+    or a doc in DOC_PATHS does not. Any other path under setup/ or .github/
+    does. A module whose imports cannot be resolved does too.
     """
     for path in changed:
         if quoted_full and path.startswith('"'):
@@ -1159,6 +1179,8 @@ def needs_full_set(changed):
         if path_is_unresolvable(path):
             return True
         if is_selective(path):
+            continue
+        if path in DOC_PATHS:  # doc-exact
             continue
         if unmapped_full and (path.startswith("setup/") or path.startswith(".github/")):
             return True

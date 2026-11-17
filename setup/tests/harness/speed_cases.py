@@ -28,7 +28,8 @@ SELECT_CASES = (
     "S-H1", "S-H2", "S-H3", "S-H4", "S-H6", "S-H7", "S-H7b", "S-H8", "S-H9",
     "S-A1", "S-A2", "S-A3", "S-A4", "S-A7", "S-A8", "S-A9", "S-A10", "S-A11",
     "S-A12", "S-A13", "S-A15", "S-A16", "S-A17", "S-A18", "S-A20", "S-A21",
-    "S-A22", "S-A23", "S-A27", "S-A32", "S-A33", "S-A37",
+    "S-A22", "S-A23", "S-A27", "S-A32", "S-A33", "S-A37", "S-A38",
+    "S-A39",
 )
 SHARD_CASES = (
     "S-H5", "S-A5", "S-A6", "S-A14", "S-A19", "S-A24", "S-A25", "S-A26",
@@ -209,6 +210,84 @@ def case_s_a37():
         '".github/workflows/\\342\\200\\256x.yml"',
     )
     return all(mf.select_mutants([path]) == ("full", list(mf.CI_IDS)) for path in quoted)
+
+
+def case_s_a38():
+    """Only the listed setup docs skip. Other Markdown selects the full set."""
+    docs = ("setup/README.md", "setup/TESTING.md")
+    full = (
+        "setup/pi/harness-rules.md",
+        "setup/pi/roles/developer.md",
+        "setup/standards/rules.md",
+        "setup/standards/views/developer/SKILL.md",
+        "setup/tests/harness/fixtures/step6/rules.md",
+        "setup/tests/harness/fixtures/step6/golden/developer/SKILL.md",
+        "setup/allow/README.md",
+        "setup/egress/README.md",
+        "setup/chrome/README.md",
+        "setup/tools/README.md",
+        "setup/a/README.md",
+        "setup/a/TESTING.md",
+        "setup/testing.md",
+        ".github/pull_request_template.md",
+        ".github/copilot-instructions.md",
+        "setup/README.md.sh",
+        "setup/TESTING.md/run.sh",
+    )
+    skip = all(mf.select_mutants([path]) == ("skip", []) for path in docs)
+    wide = all(mf.select_mutants([path]) == ("full", list(mf.CI_IDS)) for path in full)
+    mixed = mf.select_mutants(["setup/TESTING.md", "setup/common.sh"]) == ("full", list(mf.CI_IDS))
+    return skip and wide and mixed
+
+
+def case_s_a39():
+    """The plan lists both names of a rename, so a file moved onto a doc runs mutants."""
+    plan = os.path.join(HERE, "mutate-plan.sh")
+    work = tempfile.mkdtemp(prefix="rename-")
+    try:
+        def git(*args):
+            return subprocess.run(
+                ["git", "-C", work, "-c", "user.name=t", "-c", "user.email=t@x",
+                 "-c", "commit.gpgsign=false"] + list(args),
+                check=True, capture_output=True, text=True,
+            ).stdout.strip()
+
+        def write(rel, text):
+            path = os.path.join(work, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+
+        def decide(base):
+            env = dict(os.environ)
+            env.pop("GITHUB_BASE_REF", None)
+            env["KEEL_MUTATE_REPO"] = work
+            env["KEEL_MUTATE_BASE"] = base
+            # Rename detection on, whatever the runner's git config says.
+            env["GIT_CONFIG_PARAMETERS"] = "'diff.renames=true'"
+            proc = subprocess.run(["bash", plan], env=env, capture_output=True, text=True)
+            return proc.stdout.strip()
+
+        git("init", "-q")
+        write("setup/TESTING.md", "doc\n")
+        write("setup/tests/suite.sh", "".join("echo step %d\n" % n for n in range(40)))
+        git("add", "-A")
+        git("commit", "-qm", "base")
+        base = git("rev-parse", "HEAD")
+        write("setup/TESTING.md", "doc, edited\n")
+        git("commit", "-qam", "edit")
+        edited = decide(base) == mf.SKIP_LINE
+        before = git("rev-parse", "HEAD")
+        git("rm", "-q", "setup/TESTING.md")
+        git("commit", "-qm", "delete")
+        deleted = decide(before) == mf.SKIP_LINE
+        gone = git("rev-parse", "HEAD")
+        git("mv", "setup/tests/suite.sh", "setup/TESTING.md")
+        git("commit", "-qm", "move")
+        moved = decide(gone) == mf.FULL_LINE
+        return edited and deleted and moved
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def case_s_a8():
@@ -3321,6 +3400,8 @@ CASES = {
     "S-A35": case_s_a35,
     "S-A36": case_s_a36,
     "S-A37": case_s_a37,
+    "S-A38": case_s_a38,
+    "S-A39": case_s_a39,
     "H1": case_h1,
     "H2": case_h2,
     "H3": case_h3,

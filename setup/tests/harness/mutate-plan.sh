@@ -10,7 +10,10 @@
 # core.quotePath=false prints non-ASCII names as they are. A name git still
 # quotes (control characters) starts with a double quote and selects the full set.
 # A mapped target, an exact policy path, or a listed oracle script selects its
-# CI mutants. Any other file in the diff selects the full set.
+# CI mutants. setup/README.md and setup/TESTING.md select none. Any other
+# file in the diff selects the full set.
+# Renames are listed as a delete and an add (--no-renames), so moving a
+# file onto a doc path still lists the old path.
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 SETUP=$(cd "$HERE/../.." && pwd -P)
@@ -59,21 +62,21 @@ mutate_plan() {
   fi
   shallow=$(git -C "$repo" rev-parse --is-shallow-repository 2>/dev/null || printf '%s' false)
   set -- setup .github scripts/check-gate.sh scripts/gate-jobs.txt scripts/tests/test_gate_jobs.py scripts/check-scope.py
-  if ! git -C "$repo" -c core.quotePath=false diff --name-only "$base"...HEAD -- "$@" >"$namesf" 2>"$errf"; then
+  if ! git -C "$repo" -c core.quotePath=false diff --no-renames --name-only "$base"...HEAD -- "$@" >"$namesf" 2>"$errf"; then
     if [ "$shallow" = true ] && git -C "$repo" remote get-url origin >/dev/null 2>&1; then
       GIT_TERMINAL_PROMPT=0 git -C "$repo" fetch -q --deepen=200 --no-tags origin >&2 \
         || mutate_fail "git diff against ${base} failed"
-      if ! git -C "$repo" -c core.quotePath=false diff --name-only "$base"...HEAD -- "$@" >"$namesf" 2>"$errf"; then
+      if ! git -C "$repo" -c core.quotePath=false diff --no-renames --name-only "$base"...HEAD -- "$@" >"$namesf" 2>"$errf"; then
         mutate_fail "git diff against ${base} failed"
       fi
     else
       mutate_fail "git diff against ${base} failed"
     fi
   fi
-  if ! extra=$(git -C "$repo" -c core.quotePath=false diff --name-only HEAD -- "$@"); then
+  if ! extra=$(git -C "$repo" -c core.quotePath=false diff --no-renames --name-only HEAD -- "$@"); then
     mutate_fail "git diff of the work tree failed"
   fi
-  if ! staged=$(git -C "$repo" -c core.quotePath=false diff --cached --name-only -- "$@"); then
+  if ! staged=$(git -C "$repo" -c core.quotePath=false diff --no-renames --cached --name-only -- "$@"); then
     mutate_fail "git diff of the index failed"
   fi
   names=$(printf '%s\n%s\n%s\n' "$(cat "$namesf")" "$extra" "$staged" | sed '/^$/d' | sort -u)
