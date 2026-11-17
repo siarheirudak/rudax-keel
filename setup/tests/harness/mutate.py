@@ -258,6 +258,9 @@ M = {
  'M284': ('scripts/check-scope.py', 'labels_shape = True  # labels-shape', 'labels_shape = False  # labels-shape', 'malformed labels treated as no labels', ['SC-X1']),
  'M285': ('scripts/check-scope.py', 'workflow_actions = True  # workflow-actions', 'workflow_actions = False  # workflow-actions', '.github/actions is not workflow', ['SC-X1']),
  'M286': ('scripts/check-scope.py', 'bare_names = True  # bare-names', 'bare_names = False  # bare-names', 'bare name guard off', ['SC-X1']),
+ 'M287': ('tests/harness/mutant_files.py', '        if path in DOC_PATHS:  # doc-exact\n', '        if path.endswith(".md"):  # doc-exact\n', 'any Markdown path skips, harness prompts included', ['S-A38']),
+ 'M288': ('tests/harness/mutant_files.py', '        if path in DOC_PATHS:  # doc-exact\n', '        if os.path.basename(path) in ("README.md", "TESTING.md"):  # doc-exact\n', 'a doc file name in any directory skips', ['S-A38']),
+ 'M289': ('tests/harness/mutant_files.py', '    "setup/TESTING.md",  # doc-list\n', '    "setup/TESTING.md",  # doc-list\n    "setup/pi/harness-rules.md",\n', 'a harness prompt listed as a doc', ['S-A38']),
 }
 SUITE_OF = {
     'M01': 'test-attacks.sh',
@@ -510,6 +513,9 @@ SUITE_OF = {
     'M284': 'test-mutant-result.sh',
     'M285': 'test-mutant-result.sh',
     'M286': 'test-mutant-result.sh',
+    'M287': 'test-mutant-select.py',
+    'M288': 'test-mutant-select.py',
+    'M289': 'test-mutant-select.py',
 }
 EXTRA_EDITS = {
     'M15': ['M14'],

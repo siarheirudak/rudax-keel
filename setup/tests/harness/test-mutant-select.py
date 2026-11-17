@@ -2,7 +2,10 @@
 """Mapped files, exact policy paths, and listed oracle scripts select CI mutants.
 
 A selector that returns nothing, or that skips an unknown harness file, is caught.
+The two setup docs in DOC_PATHS select nothing. Other Markdown under setup/ or
+.github/ selects the full set.
 """
+import importlib.util
 import os
 import subprocess
 import sys
@@ -57,6 +60,14 @@ ORACLES = {
 }
 
 
+def scope_module():
+    path = os.path.join(ROOT, "scripts", "check-scope.py")
+    spec = importlib.util.spec_from_file_location("check_scope", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def in_ci_order(ids):
     want = set(ids)
     return [mid for mid in mf.CI_IDS if mid in want]
@@ -98,12 +109,16 @@ def validate():
     step6_ids = ["M%d" % n for n in range(207, 234)]
     gate_step_ids = ["M%d" % n for n in range(240, 247)] + ["M%d" % n for n in range(248, 271)] + ["M272", "M273"]
     p1b_ids = ["M%d" % n for n in range(240, 287)]
-    added = len(legacy_ids) + len(step6_ids) + len(p1b_ids)
+    doc_ids = ["M287", "M288", "M289"]
+    added = len(legacy_ids) + len(step6_ids) + len(p1b_ids) + len(doc_ids)
     if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93 + added:
         fail("CI id set changed")
-    if mf.CI_IDS[-len(p1b_ids):] != p1b_ids:
+    if mf.CI_IDS[-len(doc_ids):] != doc_ids:
+        fail("new CI ids are not M287-M289")
+    tail = len(doc_ids)
+    if mf.CI_IDS[-tail - len(p1b_ids):-tail] != p1b_ids:
         fail("new CI ids are not M240-M286")
-    tail = len(p1b_ids)
+    tail += len(p1b_ids)
     if mf.CI_IDS[-tail - len(step6_ids):-tail] != step6_ids:
         fail("new CI ids are not M207-M233")
     tail += len(step6_ids)
@@ -118,6 +133,9 @@ def validate():
     for mid in ["M%d" % n for n in range(275, 287)]:
         if mf.FILES.get(mid) != ["scripts/check-scope.py"] or mutate.SUITE_OF.get(mid) != "test-mutant-result.sh":
             fail("%s must target check-scope.py with test-mutant-result.sh" % mid)
+    for mid in doc_ids:
+        if mf.FILES.get(mid) != ["setup/tests/harness/mutant_files.py"] or mutate.SUITE_OF.get(mid) != "test-mutant-select.py":
+            fail("%s must target mutant_files.py with test-mutant-select.py" % mid)
     if len(mf.OFFLINE_IDS) != len(set(mf.OFFLINE_IDS)) or len(mf.OFFLINE_IDS) != 5:
         fail("offline id set changed")
     if len(mf.CI_IDS) + len(mf.OFFLINE_IDS) != 98 + added:
@@ -309,6 +327,39 @@ def main():
     if docs_and_keel != ("some", KEEL):
         fail("docs next to a target %s" % (docs_and_keel,))
 
+    if mf.DOC_PATHS != frozenset(("setup/README.md", "setup/TESTING.md")):
+        fail("SEL-D1 doc list changed %s" % (sorted(mf.DOC_PATHS),))
+    scope = scope_module()
+    for path in sorted(mf.DOC_PATHS):
+        exists(path)
+        if scope.kind_of(path) != "code":
+            fail("SEL-D1 doc is not an ordinary doc for the scope check " + path)
+        expect_skip(path, "SEL-D1")
+    doc_and_keel = mf.check_selection(["setup/TESTING.md", "setup/keel.sh"])
+    if doc_and_keel != ("some", KEEL):
+        fail("SEL-D3 doc next to a target %s" % (doc_and_keel,))
+    doc_and_unknown = mf.select_mutants(["setup/TESTING.md", "setup/common.sh"])
+    if doc_and_unknown != ("full", list(mf.CI_IDS)):
+        fail("SEL-D3 doc next to an unknown path %s" % (doc_and_unknown,))
+    for path in (
+        "setup/pi/harness-rules.md",
+        "setup/pi/roles/developer.md",
+        "setup/standards/rules.md",
+        "setup/standards/views/developer/SKILL.md",
+        "setup/tests/harness/fixtures/step6/rules.md",
+        "setup/chrome/README.md",
+    ):
+        exists(path)
+        expect_full(path, "SEL-D2")
+    for path in (
+        "setup/tools/README.md",
+        "setup/a/README.md",
+        "setup/testing.md",
+        ".github/pull_request_template.md",
+        ".github/copilot-instructions.md",
+    ):
+        expect_full(path, "SEL-D2")
+
     full_paths = [
         "setup/tests/harness/test-happy.sh",
         "setup/tests/harness/h3-verdict.sh",
@@ -424,7 +475,7 @@ def main():
     if not mf.ids_accepted(KEEL) or mf.ids_accepted([]) or mf.ids_accepted(["M51", "M03"]):
         fail("id check")
     cli_lists()
-    print("mutant select: SEL-H1 through SEL-M6 and M01-H2 hold")
+    print("mutant select: SEL-H1 through SEL-M6, SEL-D1 through SEL-D3 and M01-H2 hold")
     if speed_rc != 0:
         fail("speed cases")
 
