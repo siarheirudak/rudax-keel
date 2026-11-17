@@ -128,3 +128,5 @@ Short definitions for this repository. The first time a longer page needs a word
 ## Related
 
 [Architecture](architecture.md) · [Working through a chat agent](working-through-chat.md) · [Implementation status](status.md)
+
+<!-- Labeler check: this pull request is closed without merging. -->
