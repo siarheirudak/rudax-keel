@@ -267,6 +267,18 @@ FILES = {
     "M291": ["setup/tests/harness/mutate_shards.py"],
     "M292": ["setup/tests/harness/mutate_shards.py"],
     "M293": ["setup/tests/harness/mutate_shards.py"],
+    "M294": ["setup/tests/harness/mutant-result.py"],
+    "M295": ["setup/tests/harness/mutant-result.py"],
+    "M296": ["setup/tests/harness/mutant-result.py"],
+    "M297": ["setup/tests/harness/mutant-result.py"],
+    "M298": ["setup/tests/harness/mutate_shards.py"],
+    "M299": ["setup/tests/harness/mutate.py"],
+    "M300": ["setup/tests/harness/mutate.py"],
+    "M301": ["setup/tests/harness/mutate.py"],
+    "M302": ["setup/tests/harness/mutate-plan.sh"],
+    "M303": ["setup/tests/harness/mutate-plan.sh"],
+    "M304": ["setup/tests/harness/run-tests.sh"],
+    "M305": ["setup/tests/harness/mutant-result.py"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -483,6 +495,18 @@ CI_IDS = [
     "M291",
     "M292",
     "M293",
+    "M294",
+    "M295",
+    "M296",
+    "M297",
+    "M298",
+    "M299",
+    "M300",
+    "M301",
+    "M302",
+    "M303",
+    "M304",
+    "M305",
 ]
 
 # Docker mount probes, plus M01. Pull-request CI skips these. The daily full run includes them.
@@ -734,6 +758,18 @@ META = {
     "M291": ("diff-plan", "decision"),
     "M292": ("base-is-default", "fail-closed"),
     "M293": ("actions-default-required", "fail-closed"),
+    "M294": ("plan-cover", "decision"),
+    "M295": ("defs-required", "decision"),
+    "M296": ("redirect-guard", "secret"),
+    "M297": ("one-plan", "fail-closed"),
+    "M298": ('raise ShardError("%s missing %s" % (mid, rel))', "fail-closed"),
+    "M299": ("if count != 1:", "mechanism"),
+    "M300": ("if not res:", "mechanism"),
+    "M301": ("set(exp) <= set(red) if exp else True", "mechanism"),
+    "M302": ("scripts/check-scope.py\n  if ! git -C \"$repo\" -c core.quotePath=false diff --no-renames", "fail-closed"),
+    "M303": ('mutate_fail "base ref missing" # missing-base-fails', "fail-closed"),
+    "M304": ('python3 "$HERE/test-mutate-parse.py" || exit 1', "mechanism"),
+    "M305": ("checkout-head", "fail-closed"),
 }
 
 # CI ids, in CI_IDS order. Pull-request selection never includes OFFLINE_IDS.
@@ -913,6 +949,13 @@ def _oracle_scripts():
         scripts["setup/tests/harness/" + suite] = tuple(mid for mid in CI_IDS if mid in set(ids))
     scripts["setup/tests/harness/test-egress.sh"] = EGRESS_CI
     scripts["setup/tests/harness/visibility-suite.sh"] = VISIBILITY_CI
+    select_suites = ("test-mutant-select.py", "test-mutate-shards.sh")
+    scripts["setup/tests/harness/speed_cases.py"] = tuple(
+        mid for mid in CI_IDS if mutate.SUITE_OF[mid] in select_suites
+    )
+    scripts["setup/tests/harness/test-mutate-parse.py"] = tuple(
+        mid for mid in ("M299", "M300", "M301") if mid in CI_IDS
+    )
     return scripts
 
 

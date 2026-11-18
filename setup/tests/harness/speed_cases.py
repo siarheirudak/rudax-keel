@@ -32,6 +32,7 @@ SELECT_CASES = (
     "S-A39",
     "S-A40", "S-A41", "S-A42", "S-A43", "S-A44", "S-A45", "S-A46", "S-A47",
     "S-A48", "S-A49", "S-A50", "S-A51", "S-A52",
+    "S-A53", "S-A54", "S-A55", "S-A56",
 )
 SHARD_CASES = (
     "S-H5", "S-A5", "S-A6", "S-A14", "S-A19", "S-A24", "S-A25", "S-A26",
@@ -906,13 +907,22 @@ def _resolve_fixture():
     """Main defs plus a pull-request id whose suite is on the main list."""
     repo = tempfile.mkdtemp(prefix="resolve-")
     plan_dir = tempfile.mkdtemp(prefix="plan-")
+    guard = (
+        " 'M299': ('keel.sh', 'old-M01', 'new-M299', 'what', ['A1']),\n"
+        " 'M300': ('keel.sh', 'old-M01', 'new-M300', 'what', ['A1']),\n"
+        " 'M301': ('keel.sh', 'old-M01', 'new-M301', 'what', ['A1']),\n"
+    )
+    guard_suite = "'M299': 'test-attacks.sh', 'M300': 'test-attacks.sh', 'M301': 'test-attacks.sh'"
     main_src = (
         "K = 'keel.sh'\n"
-        "M = {'M01': ('keel.sh', 'old-M01', 'new-M01', 'what', ['A1'])}\n"
-        "SUITE_OF = {'M01': 'test-attacks.sh'}\n"
+        "M = {\n"
+        " 'M01': ('keel.sh', 'old-M01', 'new-M01', 'what', ['A1']),\n"
+        + guard +
+        "}\n"
+        "SUITE_OF = {'M01': 'test-attacks.sh', " + guard_suite + "}\n"
         "EXTRA_EDITS = {}\n"
         "COPY_LIST = ['keel.sh']\n"
-        "CI_IDS = ['M01']\n"
+        "CI_IDS = ['M01', 'M299', 'M300', 'M301']\n"
         "OFFLINE_IDS = []\n"
         "FULL_ONLY = []\n"
     )
@@ -921,13 +931,23 @@ def _resolve_fixture():
         "M = {\n"
         " 'M01': ('keel.sh', 'old-M01', 'new-M01-b', 'what', ['A1']),\n"
         " 'M201': ('keel.sh', 'old-M201', 'new-M201', 'what', ['A9']),\n"
+        + guard +
         "}\n"
-        "SUITE_OF = {'M01': 'test-attacks.sh', 'M201': 'test-step6.sh'}\n"
+        "SUITE_OF = {'M01': 'test-attacks.sh', 'M201': 'test-step6.sh', " + guard_suite + "}\n"
         "EXTRA_EDITS = {}\n"
         "COPY_LIST = ['keel.sh']\n"
-        "CI_IDS = ['M01', 'M201']\n"
+        "CI_IDS = ['M01', 'M201', 'M299', 'M300', 'M301']\n"
         "OFFLINE_IDS = []\n"
         "FULL_ONLY = []\n"
+    )
+    files_src = (
+        "FILES = {\n"
+        " 'M01': ['setup/keel.sh'],\n"
+        " 'M201': ['setup/keel.sh'],\n"
+        " 'M299': ['setup/keel.sh'],\n"
+        " 'M300': ['setup/keel.sh'],\n"
+        " 'M301': ['setup/keel.sh'],\n"
+        "}\n"
     )
     try:
         subprocess.check_call(["git", "init", "-q", "-b", "main"], cwd=repo)
@@ -944,6 +964,7 @@ def _resolve_fixture():
             "mutate-full-state.py",
         ):
             open(os.path.join(harness, name), "w", encoding="utf-8").write("\n")
+        open(os.path.join(harness, "mutant_files.py"), "w", encoding="utf-8").write(files_src)
         open(os.path.join(harness, "mutate.py"), "w", encoding="utf-8").write(main_src)
         subprocess.check_call(["git", "-C", repo, "add", "."])
         subprocess.check_call(["git", "-C", repo, "commit", "-qm", "base"])
@@ -3497,6 +3518,27 @@ def _docs_repo():
     return repo, _git_cmd(repo, "rev-parse", "HEAD")
 
 
+def _stable_catalog_repo():
+    """A real catalog with one changed replacement, so the plan can be packed."""
+    repo = _init_plan_repo()
+    harness = os.path.join(repo, "setup", "tests", "harness")
+    os.makedirs(harness)
+    for name in ("mutate.py", "mutant_files.py", "mutant_defs.py", "mutate_shards.py", "mutate-full-state.py"):
+        shutil.copy(os.path.join(HERE, name), os.path.join(harness, name))
+    _git_cmd(repo, "add", "-A")
+    _git_cmd(repo, "commit", "-qm", "base")
+    _git_cmd(repo, "checkout", "-q", "-b", "pr")
+    path = os.path.join(harness, "mutate.py")
+    text = open(path, encoding="utf-8").read().replace("        if count < 1:", "        if count < 2:", 1)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    _git_cmd(repo, "add", "-A")
+    _git_cmd(repo, "commit", "-qm", "pr")
+    head = _git_cmd(repo, "rev-parse", "HEAD")
+    _git_cmd(repo, "checkout", "-q", "main")
+    return repo, head
+
+
 def _catalog_repo():
     repo = _init_plan_repo()
     _seed_selector(repo, _MIN_MUTATE)
@@ -3519,7 +3561,7 @@ def case_s_a40():
         second, _rc = _isolated_plan(repo, head)
         if not first or first != second:
             return False
-        repo2, head2 = _catalog_repo()
+        repo2, head2 = _stable_catalog_repo()
         try:
             left = _logical_plan(_isolated_plan(repo2, head2)[0])
             right = _logical_plan(_isolated_plan(repo2, head2)[0])
@@ -3767,9 +3809,9 @@ def case_s_a46():
         head = _git_cmd(repo, "rev-parse", "HEAD")
         _git_cmd(repo, "checkout", "-q", "main")
         rc, info = _decide(repo, head)
-        if rc != 0 or info["status"] != "skip":
+        if rc != 0:
             return False
-        return info["plan"] == ["M01", "M02", "M201"]
+        return info["plan"] == ["M01", "M02", "M201", "M299", "M300", "M301"]
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 
@@ -3798,6 +3840,52 @@ def _gate_ids(repo, base_sha):
     return set(line[len(prefix):].split())
 
 
+_BINDER = None
+
+
+def _binder():
+    global _BINDER
+    if _BINDER is None:
+        path = os.path.join(HERE, "mutant-result.py")
+        spec = importlib.util.spec_from_file_location("mutant_result_gate", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _BINDER = module
+    return _BINDER
+
+
+def _gate_required(repo, base_sha):
+    return set(_binder().required_at_head(repo, base_sha))
+
+
+def _behind_main():
+    """Main moves after the fork. The gate sees the merge; the plan sees the head."""
+    repo = _init_plan_repo()
+    try:
+        _seed_selector(repo, _MIN_MUTATE)
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "base")
+        _git_cmd(repo, "checkout", "-q", "-b", "pr")
+        _write_rel(repo, "setup/TESTING.md", "pr doc\n")
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "pr")
+        pr = _git_cmd(repo, "rev-parse", "HEAD")
+        _git_cmd(repo, "checkout", "-q", "main")
+        _write_rel(repo, "setup/tests/harness/mutate.py", _MIN_MUTATE.replace("'new-M01'", "'new-M01-b'", 1))
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "main moves")
+        main = _git_cmd(repo, "rev-parse", "HEAD")
+        _git_cmd(repo, "merge", "-q", "--no-ff", "--no-edit", "pr")
+        gate = _gate_required(repo, main)
+        _git_cmd(repo, "checkout", "-q", "main")
+        rc, info = _decide(repo, pr)
+        if rc != 0:
+            return False
+        return set(info["plan"]) >= gate and "M01" in info["plan"] and "M01" not in gate
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
 def _parity(setup, change):
     """setup(repo) writes the base tree. change(repo) edits the pr branch. Returns True when the plan covers the gate."""
     repo = _init_plan_repo()
@@ -3813,7 +3901,7 @@ def _parity(setup, change):
         _git_cmd(repo, "add", "-A")
         _git_cmd(repo, "commit", "-qm", "pr")
         head = _git_cmd(repo, "rev-parse", "HEAD")
-        gate = _gate_ids(repo, base)
+        gate = _gate_required(repo, base)
         _git_cmd(repo, "checkout", "-q", "main")
         rc, info = _decide(repo, head)
         if rc != 0:
@@ -3882,7 +3970,29 @@ def case_s_a47():
         _write_rel(repo, "setup/TESTING.md", "b\n")
         _write_rel(repo, "setup/tests/harness/mutate.py", _PR_MUTATE)
 
-    return _parity(add_doc, change_defs)
+    if not _parity(add_doc, change_defs):
+        return False
+    for rel in (
+        "setup/tests/harness/mutate-plan.sh",
+        "setup/tests/harness/run-tests.sh",
+        "setup/tests/harness/speed_cases.py",
+        "setup/tests/harness/test-mutate-parse.py",
+    ):
+        setup, change = touch(rel, "b\n")
+        if not _parity(setup, change):
+            return False
+
+    def keep_catalog(_repo):
+        return None
+
+    def touch_catalog(repo):
+        path = os.path.join(repo, "setup", "tests", "harness", "mutate.py")
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write("# touched\n")
+
+    if not _parity(keep_catalog, touch_catalog):
+        return False
+    return _behind_main()
 
 
 def case_s_a48():
@@ -4035,12 +4145,249 @@ def case_s_a52():
         shutil.rmtree(repo, ignore_errors=True)
     repo, head = _catalog_repo()
     try:
-        # Catalog-only diff: selector skips mutate.py, plan is the new and modified ids.
+        # Catalog diff plans the changed ids and the ids mapped to mutate.py.
         rc, info = _decide(repo, head)
-        forced = {"M01", "M02", "M201"}
-        return rc == 0 and info["status"] == "skip" and set(info["plan"]) == forced and len(info["plan"]) == len(forced)
+        forced = {"M01", "M02", "M201", "M299", "M300", "M301"}
+        return rc == 0 and info["status"] == "some" and set(info["plan"]) == forced and len(info["plan"]) == len(forced)
     finally:
         shutil.rmtree(repo, ignore_errors=True)
+
+
+def _missing_target_raises():
+    repo = tempfile.mkdtemp(prefix="missing-target-")
+    try:
+        os.makedirs(os.path.join(repo, "setup"))
+        defs = md.load_mutate(open(os.path.join(HERE, "mutate.py"), encoding="utf-8").read())
+        try:
+            ms.apply_def_edits(repo, defs, "M01")
+        except ms.ShardError as err:
+            text = str(err)
+            return "M01" in text and "keel.sh" in text
+        return False
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def _rename_fixture():
+    """A renamed target fails planning until its definition moves with it."""
+    if not os.path.isfile(os.path.join(ROOT, "scripts", "check-scope.py")):
+        return True
+    repo = tempfile.mkdtemp(prefix="rename-target-")
+    plan_dir = tempfile.mkdtemp(prefix="rename-plan-")
+    try:
+        harness = os.path.join(repo, "setup", "tests", "harness")
+        os.makedirs(harness)
+        os.makedirs(os.path.join(repo, "scripts"))
+        for name in (
+            "mutate.py",
+            "mutant_files.py",
+            "mutant_defs.py",
+            "mutate_shards.py",
+            "mutate-full-state.py",
+        ):
+            shutil.copy(os.path.join(HERE, name), os.path.join(harness, name))
+        shutil.copy(os.path.join(ROOT, "scripts", "check-scope.py"), os.path.join(repo, "scripts", "check-scope.py"))
+        _git_cmd(repo, "init", "-q", "-b", "main")
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "base")
+        _git_cmd(repo, "checkout", "-q", "-b", "pr")
+        os.makedirs(os.path.join(repo, "scripts"), exist_ok=True)
+        _git_cmd(repo, "mv", "scripts/check-scope.py", "scripts/check-scope2.py")
+        _git_cmd(repo, "commit", "-qm", "rename")
+        head = _git_cmd(repo, "rev-parse", "HEAD")
+        _git_cmd(repo, "checkout", "-q", "main")
+        env = os.environ.copy()
+        env.update({
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "SHA": head,
+            "BASE_REF": "main",
+            "DEFAULT_BRANCH": "main",
+            "PLAN_DIR": plan_dir,
+            "REPO_ROOT": repo,
+        })
+        env.pop("GITHUB_ACTIONS", None)
+        proc = subprocess.run(
+            [sys.executable, os.path.join(HERE, "mutate_shards.py"), "resolve"],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode == 0 or "M275" not in proc.stderr or "check-scope.py" not in proc.stderr:
+            return False
+        if os.path.isfile(os.path.join(plan_dir, "plan.json")):
+            return False
+        _git_cmd(repo, "checkout", "-q", "pr")
+        gate = _gate_ids(repo, _git_cmd(repo, "rev-parse", "main"))
+        if "M275" not in gate:
+            return False
+        base = _git_cmd(repo, "rev-parse", "main")
+        for name in ("mutate.py", "mutant_files.py"):
+            path = os.path.join(harness, name)
+            text = open(path, encoding="utf-8").read().replace("scripts/check-scope.py", "scripts/check-scope2.py")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "pr definitions")
+        head = _git_cmd(repo, "rev-parse", "HEAD")
+        _git_cmd(repo, "checkout", "-q", "main")
+        rc, info = _decide(repo, head)
+        if rc != 0 or "M275" not in info["plan"]:
+            return False
+        _git_cmd(repo, "checkout", "-q", head)
+        required = _gate_required(repo, base)
+        if "M275" not in required:
+            return False
+        found = md.parse_literals(open(os.path.join(harness, "mutate.py"), encoding="utf-8").read())
+        found.update(md.parse_literals(open(os.path.join(harness, "mutant_files.py"), encoding="utf-8").read()))
+        defs = md.Defs(found)
+        ms.apply_def_edits(repo, defs, "M275")
+        text = open(os.path.join(repo, "scripts", "check-scope2.py"), encoding="utf-8").read()
+        if text.count(defs.M["M275"][2]) != 1:
+            return False
+        _write_rel(repo, "setup/brand-new.txt", "x\n")
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "unmapped")
+        wide = _git_cmd(repo, "rev-parse", "HEAD")
+        _git_cmd(repo, "checkout", "-q", "main")
+        rc, info = _decide(repo, wide)
+        if rc != 0 or set(info["plan"]) != set(mf.CI_IDS) | set(info["plan"]):
+            return False
+        if "M275" not in info["plan"] or info["status"] != "full":
+            return False
+        return True
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        shutil.rmtree(plan_dir, ignore_errors=True)
+
+
+def case_s_a53():
+    """A renamed mutant target is named and blocks planning until the definition moves."""
+    if not _missing_target_raises():
+        return False
+    return _rename_fixture()
+
+
+def _parse_stub_fails():
+    work = tempfile.mkdtemp(prefix="parse-stub-")
+    try:
+        harness = os.path.join(work, "setup", "tests", "harness")
+        os.makedirs(harness)
+        os.makedirs(os.path.join(work, "setup", "lib"))
+        keel = os.path.join(ROOT, "setup", "keel.sh")
+        vis = os.path.join(ROOT, "setup", "lib", "visibility.py")
+        if not os.path.isfile(keel) or not os.path.isfile(vis):
+            return False
+        shutil.copy(keel, os.path.join(work, "setup", "keel.sh"))
+        shutil.copy(vis, os.path.join(work, "setup", "lib", "visibility.py"))
+        src = open(os.path.join(HERE, "mutate.py"), encoding="utf-8").read()
+        src = src.replace("        if count != 1:", "        if count < 1:", 1)
+        src = src.replace("    if not res:", "    if False and not res:", 1)
+        src = src.replace(
+            "    ok = set(exp) <= set(red) if exp else True",
+            "    ok = not set(exp).isdisjoint(red) if exp else True",
+            1,
+        )
+        with open(os.path.join(harness, "mutate.py"), "w", encoding="utf-8") as handle:
+            handle.write(src)
+        shutil.copy(os.path.join(HERE, "test-mutate-parse.py"), os.path.join(harness, "test-mutate-parse.py"))
+        proc = subprocess.run(
+            [sys.executable, os.path.join(harness, "test-mutate-parse.py")],
+            capture_output=True,
+            text=True,
+        )
+        return proc.returncode != 0
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def case_s_a54():
+    """The parse checks reject a second match, an empty result, and a partial kill."""
+    updated, err = mutate.apply_edits("anchor\nanchor\n", [("anchor", "gone")])
+    if updated is not None or not err or "2 matches" not in err:
+        return False
+    red, detail = mutate.judge(["A1"], "noise\n", None, False)
+    if red is not None or detail != mutate.EMPTY_RESULT:
+        return False
+    if mutate.verdict_tag(["A1", "A2"], ["A1"]) != "NO":
+        return False
+    if mutate.verdict_tag(["A1", "A2"], ["A1", "A2"]) != "yes":
+        return False
+    proc = subprocess.run(
+        [sys.executable, os.path.join(HERE, "test-mutate-parse.py")],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return False
+    return _parse_stub_fails()
+
+
+def case_s_a55():
+    """A missing base, a bad explicit base, and a failing diff stay red."""
+    plan = os.path.join(HERE, "mutate-plan.sh")
+    work = tempfile.mkdtemp(prefix="plan-base-")
+    try:
+        def run(env):
+            return subprocess.run(["bash", plan], env=env, capture_output=True, text=True)
+
+        def base_env():
+            env = os.environ.copy()
+            env.pop("GITHUB_BASE_REF", None)
+            env.pop("KEEL_MUTATE_BASE", None)
+            env["KEEL_MUTATE_REPO"] = work
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
+            return env
+
+        subprocess.check_call(["git", "init", "-q", "-b", "main"], cwd=work)
+        missing = run(base_env())
+        if missing.returncode == 0 or "ERROR: mutate:" not in missing.stderr or "RESULT" in missing.stdout:
+            return False
+        env = base_env()
+        env["KEEL_MUTATE_BASE"] = "refs/does-not-exist"
+        bad = run(env)
+        if bad.returncode == 0 or "ERROR: mutate:" not in bad.stderr or "RESULT" in bad.stdout:
+            return False
+        _git_cmd(work, "commit", "-q", "--allow-empty", "-m", "a")
+        _git_cmd(work, "checkout", "-q", "--orphan", "other")
+        _git_cmd(work, "commit", "-q", "--allow-empty", "-m", "b")
+        env = base_env()
+        env["KEEL_MUTATE_BASE"] = "main"
+        diff = run(env)
+        if diff.returncode == 0 or "ERROR: mutate:" not in diff.stderr or "RESULT" in diff.stdout:
+            return False
+        return True
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def case_s_a56():
+    """A failing parse check stops the harness before the next step."""
+    work = tempfile.mkdtemp(prefix="runner-")
+    try:
+        harness = os.path.join(work, "setup", "tests", "harness")
+        os.makedirs(harness)
+        os.makedirs(os.path.join(work, "setup", "lib"))
+        with open(os.path.join(work, "setup", "lib", "portable.sh"), "w", encoding="utf-8") as handle:
+            handle.write("# portable stub\n")
+        with open(os.path.join(work, "setup", "check.sh"), "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/bash\nexit 0\n")
+        shutil.copy(os.path.join(HERE, "run-tests.sh"), os.path.join(harness, "run-tests.sh"))
+        for name in ("test-mutant-select.py", "mutate-full-state.py", "mutate-issue.py"):
+            with open(os.path.join(harness, name), "w", encoding="utf-8") as handle:
+                handle.write("import sys\nsys.exit(0)\n")
+        with open(os.path.join(harness, "test-mutate-shards.sh"), "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/bash\nexit 0\n")
+        with open(os.path.join(harness, "test-mutate-parse.py"), "w", encoding="utf-8") as handle:
+            handle.write("import sys\nsys.exit(1)\n")
+        proc = subprocess.run(
+            ["bash", os.path.join(harness, "run-tests.sh")],
+            capture_output=True,
+            text=True,
+        )
+        out = proc.stdout + proc.stderr
+        return proc.returncode != 0 and "== mutate plan" not in out
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 CASES = {
@@ -4106,6 +4453,10 @@ CASES = {
     "S-A50": case_s_a50,
     "S-A51": case_s_a51,
     "S-A52": case_s_a52,
+    "S-A53": case_s_a53,
+    "S-A54": case_s_a54,
+    "S-A55": case_s_a55,
+    "S-A56": case_s_a56,
     "H1": case_h1,
     "H2": case_h2,
     "H3": case_h3,
