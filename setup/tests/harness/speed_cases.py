@@ -28,8 +28,10 @@ SELECT_CASES = (
     "S-H1", "S-H2", "S-H3", "S-H4", "S-H6", "S-H7", "S-H7b", "S-H8", "S-H9",
     "S-A1", "S-A2", "S-A3", "S-A4", "S-A7", "S-A8", "S-A9", "S-A10", "S-A11",
     "S-A12", "S-A13", "S-A15", "S-A16", "S-A17", "S-A18", "S-A20", "S-A21",
-    "S-A22", "S-A23", "S-A27", "S-A32", "S-A33", "S-A37", "S-A38",
+    "S-A22", "S-A23", "S-A27", "S-A32", "S-A33",     "S-A37", "S-A38",
     "S-A39",
+    "S-A40", "S-A41", "S-A42", "S-A43", "S-A44", "S-A45", "S-A46", "S-A47",
+    "S-A48", "S-A49", "S-A50", "S-A51", "S-A52",
 )
 SHARD_CASES = (
     "S-H5", "S-A5", "S-A6", "S-A14", "S-A19", "S-A24", "S-A25", "S-A26",
@@ -85,7 +87,7 @@ def case_s_h1():
     fresh = ["M201", "M202", "M203", "M204", "M205", "M206"]
     pr = mini(["M01"] + fresh)
     found = md.new_ids(main.ids, pr.ids)
-    plan = md.build_plan([], found, [], False, sorted(pr.ids, key=md.id_key))
+    plan = md.build_plan([], found, [], sorted(pr.ids, key=md.id_key))
     return found == set(fresh) and plan == sorted(fresh, key=md.id_key)
 
 
@@ -124,17 +126,16 @@ def case_s_h6():
 
 
 def case_s_h7():
-    st = state_mod()
-    run = _run()
-    plan = md.build_plan(["M03"], [], [], st.is_red([run], {}, "main"), ["M01", "M03"])
-    return plan == ["M01", "M03"]
+    plan = md.build_plan(["M03"], [], [], ["M01", "M03"])
+    return plan == ["M03"]
 
 
 def case_s_h7b():
     st = state_mod()
-    failure = _run()
-    cancelled = dict(failure, id=2, conclusion="cancelled")
-    return st.is_red([cancelled, failure], {}, "main") is True
+    limit = mf.BOOTSTRAP_FULL_RUNS
+    cancelled = dict(_run(), conclusion="cancelled")
+    runs = [dict(cancelled, id=i + 1) for i in range(limit)]
+    return st.bootstrap_overdue(runs, {}, "main", limit) is False
 
 
 def case_s_h8():
@@ -177,7 +178,7 @@ def case_s_a3():
     pr = mini(["M01"])
     pr.M["M01"] = ("keel.sh", "old-M01", "noop", "what", ["A1"])
     modified = md.modified_ids(main, pr)
-    plan = md.build_plan([], [], modified, False, ["M01"])
+    plan = md.build_plan([], [], modified, ["M01"])
     return modified == {"M01"} and plan == ["M01"]
 
 
@@ -349,10 +350,11 @@ def case_s_a12():
 
 def case_s_a13():
     st = state_mod()
-    failure = _run()
-    skipped = dict(failure, id=3, conclusion="success", head_sha="c" * 40)
-    states = {3: {"mode": "skip"}}
-    return st.is_red([skipped, failure], states, "main") is True
+    limit = mf.BOOTSTRAP_FULL_RUNS
+    quiet = dict(_run(), conclusion="success")
+    runs = [dict(quiet, id=i + 1, head_sha=("c" * 39) + str(i % 10)) for i in range(limit)]
+    states = {run["id"]: {"mode": "skip"} for run in runs}
+    return st.bootstrap_overdue(runs, states, "main", limit) is False
 
 
 def case_s_a14():
@@ -379,7 +381,7 @@ def case_s_a15():
     pr = mini(["M120"])
     pr.extra["M120"] = ["M14"]
     by_extra = md.modified_ids(main, pr) == {"M120"}
-    plan = md.build_plan([], [], {"M120"}, False, ["M120"])
+    plan = md.build_plan([], [], {"M120"}, ["M120"])
     return by_suite and by_extra and plan == ["M120"]
 
 
@@ -392,9 +394,13 @@ def case_s_a16():
 
 def case_s_a17():
     st = state_mod()
-    failure = _run()
-    push = dict(failure, id=4, event="push", conclusion="success", head_sha="d" * 40)
-    return st.is_red([push, failure], {}, "main") is True
+    push = dict(_run(), id=4, event="push", conclusion="success", head_sha="d" * 40)
+    other = dict(push, id=6, event="schedule", head_branch="other", head_sha="e" * 40)
+    push_state = {4: {"mode": "run", "full_plan": True}}
+    other_state = {6: {"mode": "run", "full_plan": True}}
+    push_green = st.latest_green_sha([push], push_state, "main") is None
+    other_green = st.latest_green_sha([other], other_state, "main") is None
+    return push_green and other_green
 
 
 def case_s_a18():
@@ -954,6 +960,7 @@ def _resolve_fixture():
             "PLAN_ALL": None,
             "GH_TOKEN": None,
             "REPO": None,
+            "DEFAULT_BRANCH": "main",
             "GITHUB_OUTPUT": output,
         })
         try:
@@ -1090,7 +1097,7 @@ def case_a1():
     pr = mini(["M01", "M201"])
     pr.suite_of["M201"] = "not-a-suite.sh"
     try:
-        ms.resolve_plan([], main, pr, False, mf.SUITES, lambda _names: ("skip", []))
+        ms.resolve_plan([], main, pr, mf.SUITES, lambda _names: ("skip", []))
     except md.DefsError as err:
         text = str(err)
         return text.startswith("coverage") and "M201" in text
@@ -3352,6 +3359,690 @@ def case_s_p22():
     return True
 
 
+def _git_cmd(repo, *args):
+    proc = subprocess.run(
+        [
+            "git", "-C", repo,
+            "-c", "user.email=dev@example.com",
+            "-c", "user.name=Dev",
+            "-c", "commit.gpgsign=false",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or "git")
+    return proc.stdout.strip()
+
+
+def _write_rel(repo, rel, text):
+    path = os.path.join(repo, rel)
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
+def _init_plan_repo():
+    repo = tempfile.mkdtemp(prefix="plan-")
+    subprocess.check_call(["git", "init", "-q", "-b", "main"], cwd=repo)
+    return repo
+
+
+_MIN_MUTATE = (
+    "M = {'M01': ('keel.sh', 'old-M01', 'new-M01', 'what', ['A1'])}\n"
+    "SUITE_OF = {'M01': 'test-attacks.sh'}\n"
+    "EXTRA_EDITS = {}\n"
+    "COPY_LIST = ['keel.sh']\n"
+    "CI_IDS = ['M01']\n"
+    "OFFLINE_IDS = []\n"
+    "FULL_ONLY = []\n"
+)
+
+_PR_MUTATE = (
+    "M = {\n"
+    " 'M01': ('keel.sh', 'old-M01', 'new-M01-b', 'what', ['A1']),\n"
+    " 'M02': ('keel.sh', 'old-M02', 'new-M02', 'what', ['A1']),\n"
+    " 'M201': ('keel.sh', 'old-M201', 'new-M201', 'what', ['A9']),\n"
+    "}\n"
+    "SUITE_OF = {'M01': 'test-attacks.sh', 'M02': 'test-attacks.sh', 'M201': 'test-attacks.sh'}\n"
+    "EXTRA_EDITS = {}\n"
+    "COPY_LIST = ['keel.sh']\n"
+    "CI_IDS = ['M01', 'M02', 'M201']\n"
+    "OFFLINE_IDS = []\n"
+    "FULL_ONLY = []\n"
+)
+
+
+def _seed_selector(repo, mutate_text=None, keel="old-M01\nold-M02\nold-M201\n"):
+    _write_rel(repo, "setup/keel.sh", keel)
+    _write_rel(repo, "setup/tests/harness/mutate.py", mutate_text if mutate_text is not None else _MIN_MUTATE)
+    for name in ("mutant_files.py", "mutant_defs.py", "mutate_shards.py", "mutate-full-state.py"):
+        rel = "setup/tests/harness/" + name
+        if not os.path.exists(os.path.join(repo, rel)):
+            _write_rel(repo, rel, "\n")
+
+
+def _decide(repo, sha, base_ref="main", env=None):
+    updates = {
+        "PLAN_ALL": None,
+        "GH_TOKEN": None,
+        "GITHUB_TOKEN": None,
+        "REPO": None,
+        "GITHUB_ACTIONS": None,
+        "DEFAULT_BRANCH": "main",
+        "GITHUB_OUTPUT": None,
+        "PLAN_DIR": None,
+    }
+    if env:
+        updates.update(env)
+    old = _push_env(updates)
+    try:
+        return ms.decide_plan(repo, sha, base_ref)
+    finally:
+        _pop_env(old)
+
+
+def _logical_plan(blob):
+    if blob is None:
+        return None
+    payload = json.loads(blob)
+    payload.pop("sha256", None)
+    return payload
+
+
+def _isolated_plan(repo, sha, extra=None, plan_dir=None):
+    own_dir = plan_dir is None
+    if own_dir:
+        plan_dir = tempfile.mkdtemp(prefix="planout-")
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+        "SHA": sha,
+        "BASE_REF": "main",
+        "DEFAULT_BRANCH": "main",
+        "PLAN_DIR": plan_dir,
+        "REPO_ROOT": repo,
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    if extra:
+        env.update(extra)
+    proc = subprocess.run(
+        [sys.executable, os.path.join(HERE, "mutate_shards.py"), "resolve"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    path = os.path.join(plan_dir, "plan.json")
+    blob = None
+    if proc.returncode == 0 and os.path.isfile(path):
+        blob = open(path, encoding="utf-8").read()
+    if own_dir:
+        shutil.rmtree(plan_dir, ignore_errors=True)
+    return blob, proc.returncode
+
+
+def _docs_repo():
+    repo = _init_plan_repo()
+    _seed_selector(repo)
+    _write_rel(repo, "setup/TESTING.md", "doc\n")
+    _git_cmd(repo, "add", "-A")
+    _git_cmd(repo, "commit", "-qm", "base")
+    _git_cmd(repo, "checkout", "-q", "-b", "pr")
+    _write_rel(repo, "setup/TESTING.md", "doc changed\n")
+    head = _git_cmd(repo, "add", "-A") or ""
+    _git_cmd(repo, "commit", "-qm", "pr")
+    return repo, _git_cmd(repo, "rev-parse", "HEAD")
+
+
+def _catalog_repo():
+    repo = _init_plan_repo()
+    _seed_selector(repo, _MIN_MUTATE)
+    _git_cmd(repo, "add", "-A")
+    _git_cmd(repo, "commit", "-qm", "base")
+    _git_cmd(repo, "checkout", "-q", "-b", "pr")
+    _write_rel(repo, "setup/tests/harness/mutate.py", _PR_MUTATE)
+    _git_cmd(repo, "add", "-A")
+    _git_cmd(repo, "commit", "-qm", "pr")
+    head = _git_cmd(repo, "rev-parse", "HEAD")
+    _git_cmd(repo, "checkout", "-q", "main")
+    return repo, head
+
+
+def case_s_a40():
+    """The same base and head produce the same plan."""
+    repo, head = _docs_repo()
+    try:
+        first, _rc = _isolated_plan(repo, head)
+        second, _rc = _isolated_plan(repo, head)
+        if not first or first != second:
+            return False
+        repo2, head2 = _catalog_repo()
+        try:
+            left = _logical_plan(_isolated_plan(repo2, head2)[0])
+            right = _logical_plan(_isolated_plan(repo2, head2)[0])
+            return bool(left) and left == right and bool(left.get("ids"))
+        finally:
+            shutil.rmtree(repo2, ignore_errors=True)
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def case_s_a41():
+    """Plan bytes ignore tokens, the surrounding environment, the network, and stale files."""
+    repo, head = _docs_repo()
+    net_dir = tempfile.mkdtemp(prefix="plan-net-")
+    try:
+        plain, _rc = _isolated_plan(repo, head)
+        junk, _rc = _isolated_plan(repo, head, {
+            "GH_TOKEN": "not-a-token",
+            "GITHUB_TOKEN": "not-a-token",
+            "REPO": "o/r",
+        })
+        present, _rc = _isolated_plan(repo, head, {
+            "GH_TOKEN": "present",
+            "GITHUB_TOKEN": "present",
+            "REPO": "o/r",
+        })
+        if not plain or plain != junk or plain != present:
+            return False
+        full_dir = tempfile.mkdtemp(prefix="planout-")
+        try:
+            full_env = dict(os.environ)
+            full_env.pop("GITHUB_OUTPUT", None)
+            full_env.update({
+                "SHA": head,
+                "BASE_REF": "main",
+                "DEFAULT_BRANCH": "main",
+                "PLAN_DIR": full_dir,
+                "REPO_ROOT": repo,
+                "PLAN_ALL": "",
+                "PYTHONDONTWRITEBYTECODE": "1",
+            })
+            proc = subprocess.run(
+                [sys.executable, os.path.join(HERE, "mutate_shards.py"), "resolve"],
+                env=full_env,
+                capture_output=True,
+                text=True,
+            )
+            full_path = os.path.join(full_dir, "plan.json")
+            if proc.returncode != 0 or not os.path.isfile(full_path):
+                return False
+            full_blob = open(full_path, encoding="utf-8").read()
+        finally:
+            shutil.rmtree(full_dir, ignore_errors=True)
+        if full_blob != plain:
+            return False
+        count_path = os.path.join(net_dir, "count")
+        open(count_path, "w", encoding="utf-8").close()
+        for name in ("gh", "curl"):
+            path = os.path.join(net_dir, name)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("#!/bin/sh\nprintf '%s\\n' \"$0\" >> \"$PLAN_NET_COUNT\"\nexit 1\n")
+            os.chmod(path, 0o755)
+        hook = os.path.join(net_dir, "py")
+        os.makedirs(hook, exist_ok=True)
+        with open(os.path.join(hook, "sitecustomize.py"), "w", encoding="utf-8") as handle:
+            handle.write(
+                "import os\n"
+                "import urllib.request\n"
+                "def _blocked(*_a, **_k):\n"
+                "    handle = open(os.environ['PLAN_NET_COUNT'], 'a', encoding='utf-8')\n"
+                "    handle.write('http\\n')\n"
+                "    handle.close()\n"
+                "    raise RuntimeError('http')\n"
+                "urllib.request.urlopen = _blocked\n"
+            )
+        net_blob, net_rc = _isolated_plan(repo, head, {
+            "PATH": net_dir + os.pathsep + os.environ.get("PATH", ""),
+            "PYTHONPATH": hook,
+            "PLAN_NET_COUNT": count_path,
+        })
+        if net_rc != 0 or net_blob != plain or open(count_path, encoding="utf-8").read() != "":
+            return False
+        stale = tempfile.mkdtemp(prefix="planout-")
+        try:
+            open(os.path.join(stale, "plan.json"), "w", encoding="utf-8").write('{"old": 1}\n')
+            open(os.path.join(stale, "state.json"), "w", encoding="utf-8").write('{"mode": "skip"}\n')
+            dot = os.path.join(repo, ".plan")
+            os.makedirs(dot, exist_ok=True)
+            open(os.path.join(dot, "plan.json"), "w", encoding="utf-8").write('{"old": 1}\n')
+            open(os.path.join(dot, "state.json"), "w", encoding="utf-8").write('{"mode": "skip"}\n')
+            seeded, _rc = _isolated_plan(repo, head, plan_dir=stale)
+            if seeded != plain:
+                return False
+        finally:
+            shutil.rmtree(stale, ignore_errors=True)
+        return True
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        shutil.rmtree(net_dir, ignore_errors=True)
+
+
+def case_s_a42():
+    """A failed full run does not change the plan for one mapped file."""
+    repo = _init_plan_repo()
+    try:
+        _seed_selector(repo)
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "base")
+        _git_cmd(repo, "checkout", "-q", "-b", "pr")
+        _write_rel(repo, "setup/keel.sh", "old-M01\nold-M02\nold-M201\nchanged\n")
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "pr")
+        head = _git_cmd(repo, "rev-parse", "HEAD")
+        seeded = tempfile.mkdtemp(prefix="plan-state-")
+        try:
+            open(os.path.join(seeded, "state.json"), "w", encoding="utf-8").write('{"mode": "run"}\n')
+            rc0, quiet = _decide(repo, head, env={"PLAN_DIR": seeded})
+            hits = {"n": 0}
+
+            def fake_state():
+                hits["n"] += 1
+
+                class State(object):
+                    def normalize_run(self, item):
+                        return item
+
+                    def fetch_runs(self, _repo, _token):
+                        hits["n"] += 1
+                        return [{
+                            "id": 9,
+                            "conclusion": "failure",
+                            "status": "completed",
+                            "event": "schedule",
+                            "head_branch": "main",
+                            "path": ".github/workflows/mutate-full.yml",
+                        }]
+
+                    def is_red(self, _runs, _states, _branch):
+                        hits["n"] += 1
+                        return True
+
+                return State()
+
+            real = ms._load_state
+            ms._load_state = fake_state
+            try:
+                rc1, noisy = _decide(repo, head, env={
+                    "GH_TOKEN": "present",
+                    "GITHUB_TOKEN": "present",
+                    "REPO": "o/r",
+                    "PLAN_DIR": seeded,
+                })
+            finally:
+                ms._load_state = real
+        finally:
+            shutil.rmtree(seeded, ignore_errors=True)
+        if hits["n"] != 0 or rc0 != 0 or rc1 != 0:
+            return False
+        want = list(mf.select_mutants(["setup/keel.sh"])[1])
+        return quiet["plan"] == noisy["plan"] == want
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def case_s_a43():
+    """A setup doc diff is an empty skip plan."""
+    repo, head = _docs_repo()
+    try:
+        rc, info = _decide(repo, head)
+        blob, code = _isolated_plan(repo, head)
+        payload = json.loads(blob) if blob else {}
+        return rc == 0 and code == 0 and info["status"] == "skip" and info["plan"] == [] and payload.get("skip") is True and payload.get("ids") == []
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def case_s_a44():
+    """An unmapped setup file selects the full set. Deleting a mapped target does not skip."""
+    wide = _init_plan_repo()
+    gone = _init_plan_repo()
+    try:
+        _seed_selector(wide)
+        _write_rel(wide, "setup/unmapped-probe.txt", "a\n")
+        _git_cmd(wide, "add", "-A")
+        _git_cmd(wide, "commit", "-qm", "base")
+        _git_cmd(wide, "checkout", "-q", "-b", "pr")
+        _write_rel(wide, "setup/unmapped-probe.txt", "b\n")
+        _git_cmd(wide, "add", "-A")
+        _git_cmd(wide, "commit", "-qm", "pr")
+        head = _git_cmd(wide, "rev-parse", "HEAD")
+        rc, info = _decide(wide, head)
+        if rc != 0 or info["status"] != "full" or info["plan"] != list(mf.CI_IDS):
+            return False
+        _seed_selector(gone)
+        _git_cmd(gone, "add", "-A")
+        _git_cmd(gone, "commit", "-qm", "base")
+        _git_cmd(gone, "checkout", "-q", "-b", "pr")
+        _git_cmd(gone, "rm", "-q", "setup/keel.sh")
+        _git_cmd(gone, "commit", "-qm", "delete")
+        head = _git_cmd(gone, "rev-parse", "HEAD")
+        rc, info = _decide(gone, head)
+        return rc == 0 and info["status"] == "some" and "M03" in info["plan"] and bool(info["plan"])
+    finally:
+        shutil.rmtree(wide, ignore_errors=True)
+        shutil.rmtree(gone, ignore_errors=True)
+
+
+def case_s_a45():
+    """A rename lists the old and new paths, so the old path's ids stay planned."""
+    repo = _init_plan_repo()
+    try:
+        _seed_selector(repo)
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "base")
+        _git_cmd(repo, "checkout", "-q", "-b", "pr")
+        os.makedirs(os.path.join(repo, "docs"), exist_ok=True)
+        _git_cmd(repo, "mv", "setup/keel.sh", "docs/moved-keel.sh")
+        _git_cmd(repo, "commit", "-qm", "move")
+        head = _git_cmd(repo, "rev-parse", "HEAD")
+        rc, info = _decide(repo, head)
+        if rc != 0:
+            return False
+        names = set(info["names"])
+        kept = "setup/keel.sh" in names and "docs/moved-keel.sh" in names
+        still = "M03" in info["plan"]
+        missing = not os.path.isfile(os.path.join(repo, "setup", "keel.sh"))
+        return kept and still and missing
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def case_s_a46():
+    """New and modified definitions are planned when the selector skips."""
+    repo = _init_plan_repo()
+    try:
+        _seed_selector(repo, _MIN_MUTATE)
+        _write_rel(repo, "setup/TESTING.md", "doc\n")
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "base")
+        _git_cmd(repo, "checkout", "-q", "-b", "pr")
+        _write_rel(repo, "setup/tests/harness/mutate.py", _PR_MUTATE)
+        _write_rel(repo, "setup/TESTING.md", "doc changed\n")
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "pr")
+        head = _git_cmd(repo, "rev-parse", "HEAD")
+        _git_cmd(repo, "checkout", "-q", "main")
+        rc, info = _decide(repo, head)
+        if rc != 0 or info["status"] != "skip":
+            return False
+        return info["plan"] == ["M01", "M02", "M201"]
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def _gate_ids(repo, base_sha):
+    env = dict(os.environ)
+    env.pop("GITHUB_BASE_REF", None)
+    env["KEEL_MUTATE_REPO"] = repo
+    env["KEEL_MUTATE_BASE"] = base_sha
+    proc = subprocess.run(
+        ["bash", os.path.join(HERE, "mutate-plan.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or "gate")
+    line = proc.stdout.strip()
+    if line == mf.SKIP_LINE:
+        return set()
+    if line == mf.FULL_LINE:
+        return set(mf.CI_IDS)
+    prefix = "RESULT mutate: run "
+    if not line.startswith(prefix):
+        raise RuntimeError(line)
+    return set(line[len(prefix):].split())
+
+
+def _parity(setup, change):
+    """setup(repo) writes the base tree. change(repo) edits the pr branch. Returns True when the plan covers the gate."""
+    repo = _init_plan_repo()
+    try:
+        _seed_selector(repo)
+        setup(repo)
+        _git_cmd(repo, "add", "-A")
+        base = _git_cmd(repo, "commit", "-qm", "base") or _git_cmd(repo, "rev-parse", "HEAD")
+        # commit -qm prints nothing, so rev-parse after a separate call.
+        base = _git_cmd(repo, "rev-parse", "HEAD")
+        _git_cmd(repo, "checkout", "-q", "-b", "pr")
+        change(repo)
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "pr")
+        head = _git_cmd(repo, "rev-parse", "HEAD")
+        gate = _gate_ids(repo, base)
+        _git_cmd(repo, "checkout", "-q", "main")
+        rc, info = _decide(repo, head)
+        if rc != 0:
+            return False
+        return set(info["plan"]) >= gate
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def case_s_a47():
+    """Planner ids cover the gate decision for the same base and head."""
+    repo = _init_plan_repo()
+    try:
+        _seed_selector(repo)
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "base")
+        sha = _git_cmd(repo, "rev-parse", "HEAD")
+        gate = _gate_ids(repo, sha)
+        rc, info = _decide(repo, sha)
+        if rc != 0 or info["plan"] or gate:
+            return False
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+    def touch(rel, text):
+        def setup(repo):
+            _write_rel(repo, rel, "a\n")
+
+        def change(repo):
+            _write_rel(repo, rel, text)
+
+        return setup, change
+
+    checks = [
+        touch("setup/TESTING.md", "b\n"),
+        touch("setup/unmapped-probe.txt", "b\n"),
+        touch("scripts/check-gate.sh", "b\n"),
+        touch("setup/tests/harness/mutate_shards.py", "b\n"),
+        touch("docs/status.md", "b\n"),
+        touch("README", "b\n"),
+    ]
+    for setup, change in checks:
+        if not _parity(setup, change):
+            return False
+
+    def setup_keel(repo):
+        return None
+
+    def delete_keel(repo):
+        _git_cmd(repo, "rm", "-q", "setup/keel.sh")
+
+    if not _parity(setup_keel, delete_keel):
+        return False
+
+    def rename_keel(repo):
+        os.makedirs(os.path.join(repo, "docs"), exist_ok=True)
+        _git_cmd(repo, "mv", "setup/keel.sh", "docs/moved-keel.sh")
+
+    if not _parity(setup_keel, rename_keel):
+        return False
+
+    def add_doc(repo):
+        _write_rel(repo, "setup/TESTING.md", "a\n")
+
+    def change_defs(repo):
+        _write_rel(repo, "setup/TESTING.md", "b\n")
+        _write_rel(repo, "setup/tests/harness/mutate.py", _PR_MUTATE)
+
+    return _parity(add_doc, change_defs)
+
+
+def case_s_a48():
+    """PLAN_ALL plans every id on main and does not read run history."""
+    repo = _init_plan_repo()
+    try:
+        _seed_selector(repo)
+        for name in ("mutate.py", "mutant_files.py", "mutant_defs.py", "mutate_shards.py", "mutate-full-state.py"):
+            shutil.copy(os.path.join(HERE, name), os.path.join(repo, "setup", "tests", "harness", name))
+        _write_rel(repo, "setup/TESTING.md", "doc\n")
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "base")
+        sha = _git_cmd(repo, "rev-parse", "HEAD")
+        hits = {"n": 0}
+
+        def boom():
+            hits["n"] += 1
+            raise RuntimeError("history")
+
+        real = ms._load_state
+        ms._load_state = boom
+        try:
+            rc, info = _decide(repo, sha, env={"PLAN_ALL": "1", "GH_TOKEN": "present", "REPO": "o/r"})
+            rc_head, info_head = _decide(
+                repo, sha, base_ref="HEAD",
+                env={"PLAN_ALL": "1", "DEFAULT_BRANCH": "main", "GITHUB_ACTIONS": "true"},
+            )
+        finally:
+            ms._load_state = real
+        if rc != 0 or rc_head != 0 or hits["n"] != 0 or info["status"] != "full":
+            return False
+        ordered = sorted(info["main"].ids, key=md.id_key)
+        return info["plan"] == ordered and info_head["plan"] == ordered
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def case_s_a49():
+    """A base that is not the default branch fails closed and writes no plan."""
+    repo = _init_plan_repo()
+    plan_dir = tempfile.mkdtemp(prefix="planout-")
+    try:
+        _seed_selector(repo)
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "base")
+        _git_cmd(repo, "checkout", "-q", "-b", "other")
+        _write_rel(repo, "setup/TESTING.md", "other\n")
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "other")
+        _git_cmd(repo, "checkout", "-q", "main")
+        sha = _git_cmd(repo, "rev-parse", "main")
+        rc, info = _decide(repo, sha, base_ref="other")
+        if rc == 0 or info is not None:
+            return False
+        output = os.path.join(plan_dir, "github_output")
+        open(output, "w", encoding="utf-8").close()
+        old = _push_env({
+            "PLAN_DIR": plan_dir,
+            "DEFAULT_BRANCH": "main",
+            "GITHUB_ACTIONS": None,
+            "GITHUB_OUTPUT": output,
+            "PLAN_ALL": None,
+        })
+        try:
+            try:
+                code = ms.cmd_resolve(repo, sha, "other")
+            except Exception:
+                return False
+        finally:
+            _pop_env(old)
+        if code == 0 or os.path.isfile(os.path.join(plan_dir, "plan.json")):
+            return False
+        _git_cmd(repo, "checkout", "-q", "other")
+        here = _git_cmd(repo, "rev-parse", "HEAD")
+        rc_head, info_head = _decide(repo, here, base_ref="HEAD")
+        return rc_head != 0 and info_head is None
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        shutil.rmtree(plan_dir, ignore_errors=True)
+
+
+def case_s_a50():
+    """Inside Actions a missing or empty default-branch name fails closed."""
+    repo = _init_plan_repo()
+    try:
+        _seed_selector(repo)
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "base")
+        sha = _git_cmd(repo, "rev-parse", "HEAD")
+        for actions in ("true", "1", "TRUE"):
+            for default in (None, ""):
+                rc, info = _decide(repo, sha, env={"GITHUB_ACTIONS": actions, "DEFAULT_BRANCH": default})
+                if rc == 0 or info is not None:
+                    return False
+        return True
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def case_s_a51():
+    """Outside Actions the local default is main, and the default branch plans."""
+    repo = _init_plan_repo()
+    try:
+        _seed_selector(repo)
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "base")
+        sha = _git_cmd(repo, "rev-parse", "HEAD")
+        absent, info = _decide(repo, sha, env={"GITHUB_ACTIONS": None, "DEFAULT_BRANCH": None})
+        if absent != 0 or info is None:
+            return False
+        empty, _info = _decide(repo, sha, env={"GITHUB_ACTIONS": "", "DEFAULT_BRANCH": None})
+        if empty != 0:
+            return False
+        named, _info = _decide(repo, sha, env={"DEFAULT_BRANCH": "main", "GITHUB_ACTIONS": None})
+        if named != 0:
+            return False
+        head_rc, head_info = _decide(repo, sha, base_ref="HEAD", env={"DEFAULT_BRANCH": "main"})
+        return head_rc == 0 and head_info is not None and head_info["plan"] == []
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def case_s_a52():
+    """Plan size is the selector ids plus new and modified ids."""
+    names = [
+        "setup/tests/harness/mutant_files.py",
+        "setup/tests/harness/mutate-plan.sh",
+        "setup/tests/harness/mutate.py",
+        "setup/tests/harness/speed_cases.py",
+        "setup/tests/harness/test-mutant-select.py",
+    ]
+    _status, selected = mf.select_mutants(names)
+    repo = _init_plan_repo()
+    try:
+        _seed_selector(repo)
+        for rel in names:
+            _write_rel(repo, rel, "base\n")
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "base")
+        _git_cmd(repo, "checkout", "-q", "-b", "pr")
+        for rel in names:
+            _write_rel(repo, rel, "head\n")
+        _git_cmd(repo, "add", "-A")
+        _git_cmd(repo, "commit", "-qm", "pr")
+        head = _git_cmd(repo, "rev-parse", "HEAD")
+        rc, info = _decide(repo, head)
+        if rc != 0 or info["plan"] != list(selected) or len(info["plan"]) != len(selected):
+            return False
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+    repo, head = _catalog_repo()
+    try:
+        # Catalog-only diff: selector skips mutate.py, plan is the new and modified ids.
+        rc, info = _decide(repo, head)
+        forced = {"M01", "M02", "M201"}
+        return rc == 0 and info["status"] == "skip" and set(info["plan"]) == forced and len(info["plan"]) == len(forced)
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
 CASES = {
     "S-H1": case_s_h1,
     "S-H2": case_s_h2,
@@ -3402,6 +4093,19 @@ CASES = {
     "S-A37": case_s_a37,
     "S-A38": case_s_a38,
     "S-A39": case_s_a39,
+    "S-A40": case_s_a40,
+    "S-A41": case_s_a41,
+    "S-A42": case_s_a42,
+    "S-A43": case_s_a43,
+    "S-A44": case_s_a44,
+    "S-A45": case_s_a45,
+    "S-A46": case_s_a46,
+    "S-A47": case_s_a47,
+    "S-A48": case_s_a48,
+    "S-A49": case_s_a49,
+    "S-A50": case_s_a50,
+    "S-A51": case_s_a51,
+    "S-A52": case_s_a52,
     "H1": case_h1,
     "H2": case_h2,
     "H3": case_h3,

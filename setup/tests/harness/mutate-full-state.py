@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Full-run freshness and red state. Read from the API by main's code."""
+"""Full-run freshness and the bootstrap notice. Read from the API by main's code."""
 import json
 import os
 import sys
@@ -44,35 +44,6 @@ def is_real_green(run, state, default_branch):
     return True
 
 
-def is_fresh_skip(run, state):
-    if not state:
-        return False
-    return state.get("mode") == "skip"
-
-
-def latest_counted(runs, states, default_branch):
-    """Newest completed full run that is not a cancellation or a freshness skip."""
-    for run in runs:
-        if not run_filters_ok(run, default_branch):
-            continue
-        if run.get("status") != "completed":
-            continue
-        state = states.get(run.get("id"))
-        if skip_noise and run.get("conclusion") in ("cancelled", "skipped"):
-            continue
-        if skip_noise and is_fresh_skip(run, state):
-            continue
-        return run, state
-    return None, None
-
-
-def is_red(runs, states, default_branch):
-    run, _state = latest_counted(runs, states, default_branch)
-    if run is None:
-        return False
-    return run.get("conclusion") in ("failure", "timed_out")
-
-
 def fresh_decision(event, schedule, main_sha, green_sha, api_error):
     if event == "workflow_dispatch" or schedule == WEEKLY_CRON:
         return "run"
@@ -90,10 +61,10 @@ def meaningful_full_runs(runs, states, default_branch):
             continue
         if run.get("status") != "completed":
             continue
-        if run.get("conclusion") in ("cancelled", "skipped"):
+        if skip_noise and run.get("conclusion") in ("cancelled", "skipped"):
             continue
         state = states.get(run.get("id"))
-        if state and state.get("mode") == "skip":
+        if skip_noise and state and state.get("mode") == "skip":
             continue
         counted.append(run)
     return counted
@@ -287,22 +258,10 @@ def self_test():
         "head_branch": branch,
         "head_sha": "a" * 40,
     }
-    cancelled = dict(failure, id=2, conclusion="cancelled", head_sha="b" * 40)
-    skip_run = dict(failure, id=3, conclusion="success", head_sha="c" * 40)
-    push = dict(failure, id=4, event="push", conclusion="success", head_sha="d" * 40)
     green = dict(failure, id=5, conclusion="success", head_sha="e" * 40)
     states = {
-        3: {"mode": "skip"},
         5: {"mode": "run", "full_plan": True, "green_all": True},
     }
-    if not is_red([cancelled, failure], states, branch):
-        return "cancelled did not keep red"
-    if not is_red([skip_run, failure], states, branch):
-        return "skip did not keep red"
-    if is_red([push, failure], states, branch) is False and filter_runs:
-        pass
-    if not is_red([push, failure], {**states}, branch):
-        return "other event cleared red"
     if is_real_green(green, None, branch):
         return "missing state counted as green"
     if is_real_green(green, {"expired": True, "mode": "run", "full_plan": True}, branch):

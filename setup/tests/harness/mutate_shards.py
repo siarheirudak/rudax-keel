@@ -372,7 +372,7 @@ def tag_fails(tag):
     return tag in ("NO", "ERROR")
 
 
-def resolve_plan(changed, main, pr, red, known_suites, select):
+def resolve_plan(changed, main, pr, known_suites, select):
     errors = md.coverage_errors(main, pr, known_suites, main.masked)
     if errors:
         raise md.DefsError("coverage " + ",".join(str(item) for item in errors))
@@ -385,7 +385,7 @@ def resolve_plan(changed, main, pr, red, known_suites, select):
     if isinstance(old, tuple):
         old = old[1]
     ordered = sorted(main.ids | pr.ids, key=md.id_key)
-    plan = md.build_plan(old, fresh, changed_ids, red, ordered)
+    plan = md.build_plan(old, fresh, changed_ids, ordered)  # diff-plan
     print("mutants: total %d, new %d, modified %d" % (len(plan), len(fresh), len(changed_ids)))
     return plan
 
@@ -605,11 +605,70 @@ def git_text(repo, sha, rel):
     return _git(repo, "show", "%s:%s" % (sha, rel)).decode("utf-8")
 
 
-def cmd_resolve(repo, sha, base_ref):
-    import json
+def _in_actions():
+    """True when the process is running inside Actions."""
+    return bool(os.environ.get("GITHUB_ACTIONS"))
+
+
+def _default_branch_name():
+    """Trusted default-branch name.
+
+    Inside Actions only the workflow value is accepted. Outside Actions a
+    missing name uses the local default, main.
+    """
+    name = os.environ.get("DEFAULT_BRANCH")
+    if name:
+        return name
+    if _in_actions():  # actions-default-required
+        raise ShardError("default branch")
+    return "main"  # local-default-branch
+
+
+def _base_is_default(repo, base_ref, default_name):
+    """True when the resolved base ref is the default branch.
+
+    The full run names its checkout HEAD. That matches when HEAD is the
+    default branch tip.
+    """
+    if base_ref == default_name:  # base-is-default
+        return True
+    if base_ref != "HEAD":
+        return False
+    tip = _git(repo, "rev-parse", default_name).decode().strip()
+    here = _git(repo, "rev-parse", "HEAD").decode().strip()
+    return tip == here
+
+
+def _diff_names(repo, base, sha):
+    raw = _git(repo, "-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", base, sha)  # names-without-renames
+    return [line for line in raw.decode("utf-8", "replace").splitlines() if line]
+
+
+def _plan_origin(base, sha, names, status, new_count, modified_count, plan):
+    print(
+        "plan: base %s head %s files %d selector %s new %d modified %d size %d"
+        % (base, sha, len(names), status, new_count, modified_count, len(plan))
+    )
+
+
+def decide_plan(repo, sha, base_ref):
+    """Choose the plan. Returns (0, info) or (1, None). Does not write a plan."""
+    try:
+        default_name = _default_branch_name()
+    except ShardError as err:
+        print("mutants: %s" % err, file=sys.stderr)
+        return 1, None
+    try:
+        accepted = _base_is_default(repo, base_ref, default_name)
+    except ShardError as err:
+        print("mutants: %s" % err, file=sys.stderr)
+        return 1, None
+    if not accepted:
+        print("mutants: base", file=sys.stderr)
+        return 1, None
     main_sha = _git(repo, "rev-parse", base_ref).decode().strip()
     base = _git(repo, "merge-base", main_sha, sha).decode().strip()
-    names = [line for line in _git(repo, "-c", "core.quotePath=false", "diff", "--name-only", base, sha).decode("utf-8", "replace").splitlines() if line]
+    names = _diff_names(repo, base, sha)
     main = combined_defs(
         open(os.path.join(repo, "setup/tests/harness/mutate.py"), encoding="utf-8").read(),
         open(os.path.join(repo, "setup/tests/harness/mutant_files.py"), encoding="utf-8").read(),
@@ -618,26 +677,41 @@ def cmd_resolve(repo, sha, base_ref):
         git_text(repo, sha, "setup/tests/harness/mutate.py"),
         git_text(repo, sha, "setup/tests/harness/mutant_files.py"),
     )
-    red = False
-    token = os.environ.get("GH_TOKEN") or ""
-    gh_repo = os.environ.get("REPO") or ""
-    if token and gh_repo:
-        try:
-            state = _load_state()
-            runs = [state.normalize_run(item) for item in state.fetch_runs(gh_repo, token)]
-            states = {}
-            for run in runs:
-                if run.get("conclusion") == "success":
-                    states[run["id"]] = {"missing": True, "mode": "skip"}
-            red = state.is_red(runs, states, os.environ.get("DEFAULT_BRANCH") or "main")
-        except Exception:
-            red = True
+    status, _selected = mf.select_mutants(list(names))
     if os.environ.get("PLAN_ALL") == "1":
         plan = sorted(main.ids, key=md.id_key)
         print("mutants: total %d, new 0, modified 0" % len(plan))
+        shown = "full"
+        new_count = 0
+        modified_count = 0
+    else:
+        plan = resolve_plan(names, main, pr, mf.SUITES, mf.select_mutants)
+        shown = status
+        new_count = len(md.new_ids(main.ids, pr.ids))
+        modified_count = len(md.modified_ids(main, pr))
+    _plan_origin(base, sha, names, shown, new_count, modified_count, plan)
+    return 0, {
+        "plan": plan,
+        "names": names,
+        "main": main,
+        "pr": pr,
+        "main_sha": main_sha,
+        "status": shown,
+    }
+
+
+def cmd_resolve(repo, sha, base_ref):
+    import json
+    rc, info = decide_plan(repo, sha, base_ref)
+    if rc != 0:
+        return rc
+    plan = info["plan"]
+    main = info["main"]
+    pr = info["pr"]
+    main_sha = info["main_sha"]
+    if os.environ.get("PLAN_ALL") == "1":
         suite_defs = main
     else:
-        plan = resolve_plan(names, main, pr, red, mf.SUITES, mf.select_mutants)
         suite_defs = pr
     shards = assign_shards(plan)
     graded = {}

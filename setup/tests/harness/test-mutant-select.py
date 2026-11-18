@@ -110,12 +110,16 @@ def validate():
     gate_step_ids = ["M%d" % n for n in range(240, 247)] + ["M%d" % n for n in range(248, 271)] + ["M272", "M273"]
     p1b_ids = ["M%d" % n for n in range(240, 287)]
     doc_ids = ["M287", "M288", "M289"]
-    added = len(legacy_ids) + len(step6_ids) + len(p1b_ids) + len(doc_ids)
+    plan_ids = ["M290", "M291", "M292", "M293"]
+    added = len(legacy_ids) + len(step6_ids) + len(p1b_ids) + len(doc_ids) + len(plan_ids)
     if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93 + added:
         fail("CI id set changed")
-    if mf.CI_IDS[-len(doc_ids):] != doc_ids:
+    if mf.CI_IDS[-len(plan_ids):] != plan_ids:
+        fail("new CI ids are not M290-M293")
+    tail = len(plan_ids)
+    if mf.CI_IDS[-tail - len(doc_ids):-tail] != doc_ids:
         fail("new CI ids are not M287-M289")
-    tail = len(doc_ids)
+    tail += len(doc_ids)
     if mf.CI_IDS[-tail - len(p1b_ids):-tail] != p1b_ids:
         fail("new CI ids are not M240-M286")
     tail += len(p1b_ids)
@@ -136,6 +140,9 @@ def validate():
     for mid in doc_ids:
         if mf.FILES.get(mid) != ["setup/tests/harness/mutant_files.py"] or mutate.SUITE_OF.get(mid) != "test-mutant-select.py":
             fail("%s must target mutant_files.py with test-mutant-select.py" % mid)
+    for mid in plan_ids:
+        if mf.FILES.get(mid) != ["setup/tests/harness/mutate_shards.py"] or mutate.SUITE_OF.get(mid) != "test-mutant-select.py":
+            fail("%s must target mutate_shards.py with test-mutant-select.py" % mid)
     if len(mf.OFFLINE_IDS) != len(set(mf.OFFLINE_IDS)) or len(mf.OFFLINE_IDS) != 5:
         fail("offline id set changed")
     if len(mf.CI_IDS) + len(mf.OFFLINE_IDS) != 98 + added:

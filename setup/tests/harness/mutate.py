@@ -163,7 +163,7 @@ M = {
  'M153': ('tests/harness/mutate_shards.py', 'require_all_ids = True  # shard-complete', 'require_all_ids = False  # shard-complete', 'missing shard ids are accepted', ['S-A5']),
  'M154': ('tests/harness/mutate_shards.py', 'reject_foreign = True  # shard-foreign', 'reject_foreign = False  # shard-foreign', 'foreign shard ids are accepted', ['S-A5']),
  'M155': ('tests/harness/mutate_shards.py', 'require_success = True  # shard-success', 'require_success = False  # shard-success', 'shard result is ignored', ['S-A6']),
- 'M156': ('tests/harness/mutate-full-state.py', 'skip_noise = True  # skip-noise', 'skip_noise = False  # skip-noise', 'cancelled and skip runs count as green', ['S-H7b', 'S-A13']),
+ 'M156': ('tests/harness/mutate-full-state.py', 'skip_noise = True  # skip-noise', 'skip_noise = False  # skip-noise', 'bootstrap notice counts cancelled and skip runs', ['S-H7b', 'S-A13']),
  'M157': ('tests/harness/mutate-full-state.py', 'filter_runs = True  # filter-runs', 'filter_runs = False  # filter-runs', 'full-run filter is ignored', ['S-A17']),
  'M158': ('tests/harness/mutant_defs.py', 'check_classification = True  # class-check', 'check_classification = False  # class-check', 'classification check is off', ['S-A18']),
  'M159': ('tests/harness/mutate-full-state.py', 'fail_open = True  # fresh-api-run', 'fail_open = False  # fresh-api-run', 'freshness API error skips', ['S-A11']),
@@ -261,6 +261,10 @@ M = {
  'M287': ('tests/harness/mutant_files.py', '        if path in DOC_PATHS:  # doc-exact\n', '        if path.endswith(".md"):  # doc-exact\n', 'any Markdown path skips, harness prompts included', ['S-A38']),
  'M288': ('tests/harness/mutant_files.py', '        if path in DOC_PATHS:  # doc-exact\n', '        if os.path.basename(path) in ("README.md", "TESTING.md"):  # doc-exact\n', 'a doc file name in any directory skips', ['S-A38']),
  'M289': ('tests/harness/mutant_files.py', '    "setup/TESTING.md",  # doc-list\n', '    "setup/TESTING.md",  # doc-list\n    "setup/pi/harness-rules.md",\n', 'a harness prompt listed as a doc', ['S-A38']),
+ 'M290': ('tests/harness/mutate_shards.py', '"--name-only", "--no-renames", base, sha)  # names-without-renames', '"--name-only", base, sha)  # names-without-renames', 'rename detection hides the old path', ['S-A45']),
+ 'M291': ('tests/harness/mutate_shards.py', '    plan = md.build_plan(old, fresh, changed_ids, ordered)  # diff-plan', '    plan = list(mf.CI_IDS) if os.environ.get("GH_TOKEN") else md.build_plan(old, fresh, changed_ids, ordered)  # diff-plan', 'a token widens the plan to every CI id', ['S-A41']),
+ 'M292': ('tests/harness/mutate_shards.py', '    if base_ref == default_name:  # base-is-default', '    if True:  # base-is-default', 'a foreign base is planned', ['S-A49']),
+ 'M293': ('tests/harness/mutate_shards.py', '    if _in_actions():  # actions-default-required\n        raise ShardError("default branch")\n', '    if False and _in_actions():  # actions-default-required\n        raise ShardError("default branch")\n', 'a missing default branch name is accepted', ['S-A50']),
 }
 SUITE_OF = {
     'M01': 'test-attacks.sh',
@@ -516,6 +520,10 @@ SUITE_OF = {
     'M287': 'test-mutant-select.py',
     'M288': 'test-mutant-select.py',
     'M289': 'test-mutant-select.py',
+    'M290': 'test-mutant-select.py',
+    'M291': 'test-mutant-select.py',
+    'M292': 'test-mutant-select.py',
+    'M293': 'test-mutant-select.py',
 }
 EXTRA_EDITS = {
     'M15': ['M14'],

@@ -271,11 +271,14 @@ def coverage_errors(main, pr, known_suites, masked):
     return errors
 
 
-def build_plan(old_ids, fresh_ids, changed_ids, red, all_ids):
+def build_plan(old_ids, fresh_ids, changed_ids, all_ids):
+    """Selector ids plus new and modified ids. all_ids is the catalog order."""
     forced = set()
     if include_forced:
         forced = set(fresh_ids) | set(changed_ids)
-    chosen = set(all_ids) if red else set(old_ids) | forced
+    chosen = set(old_ids) | forced
+    if not isinstance(all_ids, (list, tuple, set)):
+        raise DefsError("plan")
     return sorted(chosen, key=id_key)
 
 
