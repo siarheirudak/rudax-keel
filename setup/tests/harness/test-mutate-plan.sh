@@ -204,8 +204,8 @@ expect_skip() {
   fi
 }
 
-expect_skip setup/tests/harness/mutate.py
-expect_skip setup/tests/harness/mutate-plan.sh
+expect_exact setup/tests/harness/mutate.py M299 M300 M301
+expect_exact setup/tests/harness/mutate-plan.sh M302 M303
 expect_full setup/docker/keel-git.Dockerfile
 expect_full setup/not-a-mapped-target
 expect_full setup/allow/README.md

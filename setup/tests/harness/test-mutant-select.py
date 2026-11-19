@@ -51,7 +51,7 @@ RESIDUAL = (
 ORACLES = {
     "setup/tests/harness/test-attacks.sh": ATTACK,
     "setup/tests/harness/test-attack-results.sh": ["M78"],
-    "setup/tests/harness/test-mutant-result.sh": ["M92", "M93"] + ["M%d" % n for n in range(240, 275) if n != 247] + ["M%d" % n for n in range(275, 287)],
+    "setup/tests/harness/test-mutant-result.sh": ["M92", "M93"] + ["M%d" % n for n in range(240, 275) if n != 247] + ["M%d" % n for n in range(275, 287)] + ["M294", "M295", "M296", "M297", "M305"],
     "setup/tests/harness/test-runtime.sh": RUNTIME,
     "setup/tests/harness/test-step4.sh": STEP4,
     "setup/tests/harness/test-step5.sh": STEP5,
@@ -111,12 +111,16 @@ def validate():
     p1b_ids = ["M%d" % n for n in range(240, 287)]
     doc_ids = ["M287", "M288", "M289"]
     plan_ids = ["M290", "M291", "M292", "M293"]
-    added = len(legacy_ids) + len(step6_ids) + len(p1b_ids) + len(doc_ids) + len(plan_ids)
+    cover_ids = ["M%d" % n for n in range(294, 306)]
+    added = len(legacy_ids) + len(step6_ids) + len(p1b_ids) + len(doc_ids) + len(plan_ids) + len(cover_ids)
     if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93 + added:
         fail("CI id set changed")
-    if mf.CI_IDS[-len(plan_ids):] != plan_ids:
+    if mf.CI_IDS[-len(cover_ids):] != cover_ids:
+        fail("new CI ids are not M294-M305")
+    tail = len(cover_ids)
+    if mf.CI_IDS[-tail - len(plan_ids):-tail] != plan_ids:
         fail("new CI ids are not M290-M293")
-    tail = len(plan_ids)
+    tail += len(plan_ids)
     if mf.CI_IDS[-tail - len(doc_ids):-tail] != doc_ids:
         fail("new CI ids are not M287-M289")
     tail += len(doc_ids)
@@ -143,6 +147,20 @@ def validate():
     for mid in plan_ids:
         if mf.FILES.get(mid) != ["setup/tests/harness/mutate_shards.py"] or mutate.SUITE_OF.get(mid) != "test-mutant-select.py":
             fail("%s must target mutate_shards.py with test-mutant-select.py" % mid)
+    binder_new = ["M294", "M295", "M296", "M297", "M305"]
+    for mid in binder_new:
+        if mf.FILES.get(mid) != ["setup/tests/harness/mutant-result.py"] or mutate.SUITE_OF.get(mid) != "test-mutant-result.sh":
+            fail("%s must target mutant-result.py with test-mutant-result.sh" % mid)
+    if mf.FILES.get("M298") != ["setup/tests/harness/mutate_shards.py"] or mutate.SUITE_OF.get("M298") != "test-mutant-select.py":
+        fail("M298 must target mutate_shards.py with test-mutant-select.py")
+    for mid in ("M299", "M300", "M301"):
+        if mf.FILES.get(mid) != ["setup/tests/harness/mutate.py"] or mutate.SUITE_OF.get(mid) != "test-mutant-select.py":
+            fail("%s must target mutate.py with test-mutant-select.py" % mid)
+    for mid in ("M302", "M303"):
+        if mf.FILES.get(mid) != ["setup/tests/harness/mutate-plan.sh"] or mutate.SUITE_OF.get(mid) != "test-mutant-select.py":
+            fail("%s must target mutate-plan.sh with test-mutant-select.py" % mid)
+    if mf.FILES.get("M304") != ["setup/tests/harness/run-tests.sh"] or mutate.SUITE_OF.get("M304") != "test-mutant-select.py":
+        fail("M304 must target run-tests.sh with test-mutant-select.py")
     if len(mf.OFFLINE_IDS) != len(set(mf.OFFLINE_IDS)) or len(mf.OFFLINE_IDS) != 5:
         fail("offline id set changed")
     if len(mf.CI_IDS) + len(mf.OFFLINE_IDS) != 98 + added:
@@ -405,12 +423,29 @@ def main():
         got = mf.select_mutants([path])
         if got[0] == "full":
             fail("mechanism file widened to the full set: " + path)
-        if path == "setup/tests/harness/mutate.py" and got != ("skip", []):
+        if path == "setup/tests/harness/mutate.py" and got != ("some", ["M299", "M300", "M301"]):
             fail("SEL-A2 mutate.py selected %s" % (got,))
+    expect_exact(["setup/tests/harness/mutate.py"], ["M299", "M300", "M301"], "mutate.py")
+    expect_exact(["setup/tests/harness/test-mutate-parse.py"], ["M299", "M300", "M301"], "parse")
+    expect_exact(["setup/tests/harness/mutate-plan.sh"], ["M302", "M303"], "plan")
+    expect_exact(["setup/tests/harness/run-tests.sh"], ["M304"], "runner")
+    speed_ids = [
+        mid for mid in mf.CI_IDS
+        if mutate.SUITE_OF[mid] in ("test-mutant-select.py", "test-mutate-shards.sh")
+    ]
+    expect_exact(["setup/tests/harness/speed_cases.py"], speed_ids, "speed")
+    select_ids = [mid for mid in mf.CI_IDS if mutate.SUITE_OF[mid] == "test-mutant-select.py"]
+    expect_exact(["setup/tests/harness/test-mutant-select.py"], select_ids, "select suite")
+    expect_skip("setup/tests/harness/mutate-issue.py", "issue")
     for path in mf.GATE_PATHS:
         exists(path)
         # test_gate_jobs.py also carries M271 and M274 (required check names, P1c).
-        want = ["M92", "M93", "M271", "M274"] if path == "scripts/tests/test_gate_jobs.py" else ["M92", "M93"]
+        if path == "scripts/tests/test_gate_jobs.py":
+            want = ["M92", "M93", "M271", "M274"]
+        elif path == BINDER:
+            want = ["M92", "M93", "M294", "M295", "M296", "M297", "M305"]
+        else:
+            want = ["M92", "M93"]
         expect_exact([path], want, "SEL-A4" if path.endswith("check-gate.sh") else "gate")
     expect_exact(["scripts/check-scope.py"], ["M%d" % n for n in range(275, 287)], "scope")
     mixed = mf.select_mutants(["setup/keel.sh", "setup/tests/harness/test-happy.sh"])

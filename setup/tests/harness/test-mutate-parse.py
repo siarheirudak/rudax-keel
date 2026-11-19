@@ -155,6 +155,18 @@ def main():
     if empty_is_error(empty_as_success):
         fail("PARSE-M2 empty RESULT treated as success was not caught")
 
+    doubled = "left\nleft\n"
+    rejected, err = mutate.apply_edits(doubled, [("left", "right")])
+    if rejected is not None or not err or "2 matches" not in err:
+        fail("a second match was accepted")
+    red, detail = mutate.judge(["A1"], "no result line\n", None, False)
+    if red is not None or detail != mutate.EMPTY_RESULT:
+        fail("an empty RESULT set was graded")
+    if mutate.verdict_tag(["A1", "A2"], ["A1"]) != "NO":
+        fail("one of two expected checks counted as killed")
+    if mutate.verdict_tag(["A1", "A2"], ["A1", "A2"]) != "yes":
+        fail("both expected checks were not killed")
+
     print("mutate parse: PARSE-H1 through PARSE-M2 and M01-H1, M01-A1, M01-M1 hold")
 
 

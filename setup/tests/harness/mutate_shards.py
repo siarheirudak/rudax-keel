@@ -453,7 +453,9 @@ def apply_def_edits(dest_root, defs, mid):
         if len(spec) > 5:
             pairs.extend(spec[5])
         file_edits.setdefault(spec[0], []).extend(pairs)
-    for path in mf.FILES.get(mid, []):
+    # The catalog names the path. A moved target is not also sought at the old path.
+    files = defs.files if mid in (defs.files or {}) else mf.FILES
+    for path in files.get(mid, []):
         rel = path[len("setup/"):] if path.startswith("setup/") else path
         if rel not in file_edits:
             file_edits[rel] = file_edits[defs.M[mid][0]]
