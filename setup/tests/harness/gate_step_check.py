@@ -96,11 +96,17 @@ JOB_KEYS = ["name", "needs", "if", "runs-on", "timeout-minutes", "permissions", 
 JOB_TIMEOUT = "5"
 TOP_KEYS = ("name", "on", "permissions", "concurrency", "jobs")
 CHECKOUT = "actions/checkout@"
-# The exact checkout action and pin keel-gate runs before Gate. Any other
-# action there could write BASH_ENV or PATH into $GITHUB_ENV (Auditor FU-P1).
-# A checkout pin bump updates this line in the same pull request.
-CHECKOUT_USES = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+# The checkout step must be the official action, once, at a full SHA, and every
+# other checkout in the workflow must use that same value.
+checkout_owner = True  # checkout-owner
+checkout_same_pin = True  # checkout-same-pin
+checkout_full_sha = True  # checkout-full-sha
 CHECKOUT_WITH = ("fetch-depth", "persist-credentials")
+# Fixed other SHA for the synthetic pin cases. The live SHA is read from the file.
+_OTHER_SHA = "a2b4c680a2b4c680a2b4c680a2b4c680a2b4c680"
+_OTHER_SHA_ALT = "b4c680a2b4c680a2b4c680a2b4c680a2b4c680a2"
+# Needle used only while deriving the synthetic cases. The live scan stays literal.
+_MATRIX_NEEDLE = "actions/checkout"
 PLAIN_KEY = re.compile(r"^(- )?[A-Za-z0-9_-]+:(\s|$)")
 
 
@@ -233,6 +239,451 @@ def plain_errors(body):
     return problems
 
 
+def _other_sha(live):
+    """A full SHA other than the ref read from the workflow."""
+    if live != _OTHER_SHA:
+        return _OTHER_SHA
+    return _OTHER_SHA_ALT
+
+
+def _run_limit(line):
+    """Indent of a run: block body, 'inline' for a one-line script, else None."""
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    indent = _indent(line)
+    item = stripped.startswith("- ")
+    body = stripped[2:].lstrip() if item else stripped
+    match = re.match(r"run:\s*(.*)$", body)
+    if not match:
+        return None
+    value = match.group(1).strip()
+    logical = indent + 2 if item else indent
+    if value.startswith("|") or value.startswith(">"):
+        return logical
+    if value and not value.startswith("#"):
+        return "inline"
+    return None
+
+
+def _code_lines(text):
+    """Lines that are not comments and not inside a run: script body."""
+    lines = text.splitlines()
+    run_limit = None
+    job = ""
+    rows = []
+    for index, line in enumerate(lines):
+        if run_limit is not None:
+            if line.strip() and _indent(line) <= run_limit:
+                run_limit = None
+            else:
+                continue
+        if _comment(line):
+            continue
+        if re.match(r"^  [A-Za-z0-9_-]+:\s*(?:#.*)?$", line):
+            job = line.strip().split(":", 1)[0]
+        limit = _run_limit(line)
+        if limit == "inline":
+            continue
+        if isinstance(limit, int):
+            run_limit = limit
+            continue
+        rows.append((index, line, job))
+    return rows
+
+
+def _keel_span(lines):
+    """Line range of the keel-gate job, or None."""
+    start = None
+    for index, line in enumerate(lines):
+        if re.match(r"^  keel-gate:\s*(?:#.*)?$", line):
+            start = index
+            break
+    if start is None:
+        return None
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if not line.strip() or _comment(line):
+            continue
+        if _indent(line) <= 2:
+            end = index
+            break
+    return start, end
+
+
+def _quoted_uses_backslash(line):
+    """True when a uses: value is double-quoted and contains a backslash."""
+    idx = 0
+    while idx < len(line):
+        match = re.search(r"(?:^|[\s{,])uses\s*:\s*\"", line[idx:])
+        if not match:
+            return False
+        pos = idx + match.end()
+        while pos < len(line):
+            if line[pos] == "\\":
+                return True
+            if line[pos] == "\"":
+                break
+            pos += 1
+        idx = pos + 1
+    return False
+
+
+def _parse_double(rest):
+    chars = []
+    pos = 1
+    while pos < len(rest):
+        if rest[pos] == "\"":
+            return "".join(chars), True
+        chars.append(rest[pos])
+        pos += 1
+    return None, False
+
+
+def _parse_single(rest):
+    chars = []
+    pos = 1
+    while pos < len(rest):
+        if rest[pos] == "'":
+            if pos + 1 < len(rest) and rest[pos + 1] == "'":
+                chars.append("'")
+                pos += 2
+                continue
+            return "".join(chars), True
+        chars.append(rest[pos])
+        pos += 1
+    return None, False
+
+
+def _uses_value(line):
+    """(value, kind) of the first uses: scalar on the line.
+
+    kind is plain, quoted, unreadable, or missing.
+    """
+    match = re.search(r"(?:^|[\s{,])uses\s*:\s*", line)
+    if not match:
+        return None, "missing"
+    rest = line[match.end():]
+    if rest.startswith("\""):
+        if _quoted_uses_backslash(line):
+            return None, "unreadable"
+        value, ok = _parse_double(rest)
+        if not ok:
+            return None, "unreadable"
+        return value, "quoted"
+    if rest.startswith("'"):
+        value, ok = _parse_single(rest)
+        if not ok:
+            return None, "unreadable"
+        return value, "quoted"
+    if rest.startswith("|") or rest.startswith(">"):
+        return None, "unreadable"
+    token = re.match(r"([^#\s,}]+)", rest)
+    if not token:
+        return None, "unreadable"
+    return token.group(1), "plain"
+
+
+def _split_action(value):
+    """(owner/repo, subpath, ref) or None."""
+    if "@" not in value:
+        return None
+    path, ref = value.split("@", 1)
+    parts = path.split("/")
+    if len(parts) < 2 or parts[0] == "" or parts[1] == "":
+        return None
+    return parts[0] + "/" + parts[1], "/".join(parts[2:]), ref
+
+
+def _scan_uses(text, needle="actions/checkout"):
+    """Checkout reference lines and double-quoted uses lines that contain a backslash."""
+    lines = text.splitlines()
+    span = _keel_span(lines)
+    folded = needle.casefold()
+    refs = []
+    escapes = []
+    for index, line, job in _code_lines(text):
+        keel = bool(span) and span[0] <= index < span[1]
+        if _quoted_uses_backslash(line):
+            escapes.append((job or "workflow", keel))
+        if folded not in line.casefold():
+            continue
+        value, kind = _uses_value(line)
+        refs.append({
+            "index": index,
+            "job": job or "workflow",
+            "keel": keel,
+            "value": value,
+            "kind": kind,
+        })
+    return refs, escapes
+
+
+def checkout_file_problems(text, needle="actions/checkout"):
+    """G-Y4 problems from checkout reference lines and unreadable uses values."""
+    problems = []
+    refs, escapes = _scan_uses(text, needle)
+    for job, _keel in escapes:
+        problems.append("%s unreadable uses value" % job)
+    if not refs:
+        problems.append("no checkout reference line")
+        return problems
+    keel_value = None
+    outside = 0
+    for ref in refs:
+        readable = ref["kind"] in ("plain", "quoted") and ref["value"] is not None
+        if not readable:
+            problems.append("%s unreadable checkout reference" % ref["job"])
+        if ref["keel"] and keel_value is None and readable:
+            keel_value = ref["value"]
+        if not ref["keel"]:
+            outside += 1
+    if outside == 0:
+        problems.append("keel-gate non-empty rule: no checkout reference outside keel-gate")
+    if keel_value is None:
+        return problems
+    parsed = _split_action(keel_value)
+    if checkout_owner:
+        if not parsed or parsed[0] != "actions/checkout" or parsed[1] != "":
+            problems.append(
+                "keel-gate owner rule: owner/repo is not actions/checkout with an empty subpath"
+            )
+    if checkout_full_sha:
+        ref = parsed[2] if parsed else ""
+        if not re.fullmatch(r"[0-9a-f]{40}", ref or ""):
+            problems.append("keel-gate full-SHA rule: ref is not 40 lower-case hex")
+    if checkout_same_pin:
+        for ref in refs:
+            if ref["keel"] or ref["value"] is None:
+                continue
+            if ref["value"] != keel_value:
+                problems.append(
+                    "%s same-pin rule: checkout value differs from keel-gate" % ref["job"]
+                )
+    return problems
+
+
+def mutate_pr_checkout_problems(text):
+    """Empty when every checkout line in the file is official and shares one SHA.
+
+    The caller prints a missing-style line when the result is not empty.
+    """
+    refs, escapes = _scan_uses(text)
+    if escapes:
+        return "readable uses value"
+    if not refs:
+        return "checkout reference"
+    shas = []
+    for ref in refs:
+        value = ref["value"]
+        if ref["kind"] not in ("plain", "quoted") or value is None:
+            return "readable uses value"
+        if not re.fullmatch(r"actions/checkout@[0-9a-f]{40}", value):
+            return "official checkout value"
+        shas.append(value.split("@", 1)[1])
+    if len(set(shas)) != 1:
+        return "one shared checkout sha"
+    return ""
+
+
+def _join_lines(text, lines):
+    body = "\n".join(lines)
+    if text.endswith("\n"):
+        body += "\n"
+    return body
+
+
+def _live_ref(text, needle):
+    refs, _escapes = _scan_uses(text, needle)
+    for ref in refs:
+        if ref["keel"] and ref["value"]:
+            parsed = _split_action(ref["value"])
+            if parsed:
+                return parsed[2]
+    return ""
+
+
+def _replace_values(text, new_value, needle, only_keel=False, only_outside=False, limit_outside=None):
+    refs, _escapes = _scan_uses(text, needle)
+    lines = text.splitlines()
+    replaced = 0
+    outside_done = 0
+    for ref in refs:
+        if not ref["value"]:
+            continue
+        if only_keel and not ref["keel"]:
+            continue
+        if only_outside and ref["keel"]:
+            continue
+        if limit_outside is not None and not ref["keel"]:
+            if outside_done >= limit_outside:
+                continue
+        line = lines[ref["index"]]
+        old = ref["value"]
+        if line.count(old) != 1:
+            continue
+        lines[ref["index"]] = line.replace(old, new_value, 1)
+        replaced += 1
+        if not ref["keel"]:
+            outside_done += 1
+    return _join_lines(text, lines), replaced
+
+
+def _drop_outside(text, needle):
+    refs, _escapes = _scan_uses(text, needle)
+    drop = {ref["index"] for ref in refs if not ref["keel"]}
+    lines = [line for index, line in enumerate(text.splitlines()) if index not in drop]
+    return _join_lines(text, lines), len(drop)
+
+
+def _insert_second_uses(text, needle):
+    refs, _escapes = _scan_uses(text, needle)
+    keel = [ref for ref in refs if ref["keel"] and ref["value"]]
+    if not keel:
+        return text, 0
+    ref = keel[0]
+    lines = text.splitlines()
+    lines.insert(ref["index"] + 1, "        uses: " + ref["value"])
+    return _join_lines(text, lines), 1
+
+
+def _flow_outside(text, other, needle):
+    refs, _escapes = _scan_uses(text, needle)
+    outside = [ref for ref in refs if not ref["keel"] and ref["value"]]
+    if not outside:
+        return text, 0
+    ref = outside[0]
+    lines = text.splitlines()
+    lines[ref["index"]] = "      - {uses: Actions/Checkout@%s}" % other
+    return _join_lines(text, lines), 1
+
+
+def _block_outside(text, live, needle):
+    refs, _escapes = _scan_uses(text, needle)
+    outside = [ref for ref in refs if not ref["keel"]]
+    if not outside:
+        return text, 0
+    ref = outside[0]
+    lines = text.splitlines()
+    lines[ref["index"]] = "      - uses: |"
+    lines.insert(ref["index"] + 1, "          actions/checkout@" + live)
+    return _join_lines(text, lines), 1
+
+
+def _run_canary(text, token):
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if _comment(line):
+            continue
+        if not re.match(r"^\s*(?:- )?run:\s*\|", line):
+            continue
+        indent = "          "
+        if index + 1 < len(lines) and lines[index + 1].strip():
+            indent = re.match(r"^(\s*)", lines[index + 1]).group(1) or indent
+        lines.insert(index + 1, indent + "echo actions/checkout@" + token)
+        return _join_lines(text, lines), 1
+    return text, 0
+
+
+def _row(case_id, derived, replaced, expect, require_replace, touch_ok=True):
+    problems = yaml_errors(derived).get("G-Y4", ["missing"])
+    has = bool(problems)
+    broken = (require_replace and replaced == 0) or not touch_ok
+    return {
+        "id": case_id,
+        "replaced": replaced,
+        "expect": expect,
+        "has": has,
+        "broken": broken,
+        "ok": (not broken) and (has == expect),
+        "problems": problems,
+    }
+
+
+def matrix_rows(text, needle=None):
+    """Synthetic checkout cases derived from the live workflow text."""
+    needle = _MATRIX_NEEDLE if needle is None else needle
+    live = _live_ref(text, needle)
+    other = _other_sha(live)
+    short = live[:-1] if len(live) == 40 else ("a2b4c680" * 4 + "a2b4c68")
+    upper = live.upper() if live else other.upper()
+    rows = []
+    rows.append(_row("S0", text, 0, False, False))
+    derived, count = _replace_values(text, "actions/checkout@" + other, needle)
+    rows.append(_row("S1", derived, count, False, True))
+    derived, count = _replace_values(text, "evil/actions/checkout@" + live, needle)
+    rows.append(_row("S2", derived, count, True, True))
+    derived, count = _replace_values(text, "actions/checkout@" + other, needle, only_keel=True)
+    rows.append(_row("S3", derived, count, True, True))
+    tag, n_tag = _replace_values(text, "actions/checkout@v4", needle)
+    hex39, n_39 = _replace_values(text, "actions/checkout@" + short, needle)
+    up, n_up = _replace_values(text, "actions/checkout@" + upper, needle)
+    p_tag = yaml_errors(tag).get("G-Y4", ["missing"])
+    p_39 = yaml_errors(hex39).get("G-Y4", ["missing"])
+    p_up = yaml_errors(up).get("G-Y4", ["missing"])
+    s4_has = bool(p_tag) and bool(p_39) and bool(p_up)
+    s4_broken = n_tag == 0 or n_39 == 0 or n_up == 0
+    rows.append({
+        "id": "S4",
+        "replaced": n_tag,
+        "expect": True,
+        "has": s4_has,
+        "broken": s4_broken,
+        "ok": (not s4_broken) and s4_has,
+        "problems": p_tag,
+        "variants": {"v4": p_tag, "hex39": p_39, "upper": p_up},
+    })
+    derived, count = _replace_values(
+        text, "actions/checkout@" + other, needle, only_outside=True, limit_outside=1
+    )
+    rows.append(_row("S5", derived, count, True, True))
+    derived, count = _replace_values(text, "Actions/Checkout@" + live, needle, only_keel=True)
+    rows.append(_row("S6", derived, count, True, True))
+    derived, count = _drop_outside(text, needle)
+    rows.append(_row("S7", derived, count, True, True))
+    derived, count = _insert_second_uses(text, needle)
+    rows.append(_row("S8", derived, count, True, True))
+    derived, count = _replace_values(
+        text, '"actions/checkout@%s"' % other, needle, only_outside=True, limit_outside=1
+    )
+    rows.append(_row("S9", derived, count, True, True))
+    derived, count = _replace_values(text, '"actions/checkout@%s"' % live, needle, only_keel=True)
+    rows.append(_row("S10", derived, count, True, True))
+    derived, count = _flow_outside(text, other, needle)
+    rows.append(_row("S11", derived, count, True, True))
+    derived, count = _replace_values(
+        text, "actions/checkout/subdir@" + live, needle, only_outside=True, limit_outside=1
+    )
+    rows.append(_row("S12", derived, count, True, True))
+    derived, count = _block_outside(text, live, needle)
+    rows.append(_row("S13", derived, count, True, True))
+    derived, inserted = _run_canary(text, _OTHER_SHA_ALT)
+    rows.append(_row("S14", derived, 0, False, False, touch_ok=inserted == 1))
+    rows.append(_row("S15", "", 0, True, False))
+    derived, count = _replace_values(
+        text, '"ac\\tions/checkout@%s"' % live, needle, only_outside=True, limit_outside=1
+    )
+    rows.append(_row("S16", derived, count, True, True))
+    return rows
+
+
+def matrix_issues(text):
+    """G-Y4 problems when a synthetic case misses its outcome or replaces nothing."""
+    rows = matrix_rows(text)
+    issues = []
+    if not rows:
+        issues.append("synthetic matrix ran zero cases")
+        return issues
+    for row in rows:
+        if row["broken"]:
+            issues.append("synthetic %s derivation replaced nothing" % row["id"])
+        elif not row["ok"]:
+            want = "a problem" if row["expect"] else "no problem"
+            issues.append("synthetic %s: expected %s" % (row["id"], want))
+    return issues
+
+
 def yaml_errors(text):
     """Return {case: [problems]} for the keel-gate job and Gate step YAML."""
     errors = {name: [] for name in ("G-Y1", "G-Y2", "G-Y3", "G-Y4", "G-Y5", "G-Y6", "G-Y7")}
@@ -241,6 +692,7 @@ def yaml_errors(text):
     if parsed is None:
         for name in errors:
             errors[name].append("keel-gate job not found")
+        errors["G-Y4"].extend(checkout_file_problems(text))
         return errors
     top, body, steps = parsed
     errors["G-Y6"].extend(plain_errors(body))
@@ -262,6 +714,7 @@ def yaml_errors(text):
         if not gates:
             errors["G-Y1"].append("Gate step not found")
             errors["G-Y2"].append("Gate step not found")
+            errors["G-Y4"].extend(checkout_file_problems(text))
             return errors
     gate = gates[0]
     step_keys = [key for key, _ in _keys(gate, 8)]
@@ -303,9 +756,12 @@ def yaml_errors(text):
         errors["G-Y4"].append("first keel-gate step is not actions/checkout")
     else:
         uses = [value for key, value in _keys(checkout, 8) if key == "uses"]
-        pinned = [value.split(" #", 1)[0].strip() for value in uses]
-        if pinned != [CHECKOUT_USES]:
-            errors["G-Y4"].append("checkout uses: is %s, expected exactly %s" % (pinned, CHECKOUT_USES))
+        if len(uses) != 1:
+            errors["G-Y4"].append("keel-gate checkout step must hold exactly one uses")
+        else:
+            value = uses[0].split(" #", 1)[0].strip()
+            if (not value) or value[:1] in ("'", '"', "|", ">", "{", "[", "&", "*", "!") or value.startswith("<<"):
+                errors["G-Y4"].append("keel-gate checkout uses must be one plain unquoted value")
         with_pairs = _keys(checkout, 10)
         with_keys = dict(with_pairs)
         names = sorted(key for key, _ in with_pairs)
@@ -319,6 +775,7 @@ def yaml_errors(text):
         extra = [key for key, _ in _keys(checkout, 8) if key not in ("uses", "with")]
         if extra:
             errors["G-Y4"].append("checkout step has extra keys %s" % extra)
+    errors["G-Y4"].extend(checkout_file_problems(text))
     return errors
 
 
@@ -486,12 +943,14 @@ def main():
         "G-Y1": "Gate env is the exact key set with pinned values",
         "G-Y2": "Gate step has only name, env, run",
         "G-Y3": "keel-gate job runs if: always(), timeout-minutes: 5, no extra keys",
-        "G-Y4": "steps are the pinned checkout (fetch-depth 0, no credentials) then Gate",
+        "G-Y4": "the official checkout, once, at a full SHA, the same as every other checkout in checks.yml, and the synthetic pin cases hold",
         "G-Y5": "workflow top-level keys are only name, on, permissions, concurrency, jobs",
         "G-Y6": "keel-gate job has only plain, unrepeated keys",
         "G-Y7": "Gate run: block has no ${{ }} expressions",
     }
-    for name, problems in yaml_errors(text).items():
+    found = yaml_errors(text)
+    found["G-Y4"].extend(matrix_issues(text))
+    for name, problems in found.items():
         res(name, not problems, labels[name] + (": " + "; ".join(problems) if problems else ""))
 
     root = tempfile.mkdtemp(prefix="gate-step-")

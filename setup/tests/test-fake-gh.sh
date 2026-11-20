@@ -1568,6 +1568,36 @@ need "no other actions/labeler ref"
 assert_methods_get
 ok "verify fails when a second labeler ref is present"
 
+prepare_green
+put_repo_file ".github/labeler.yml" "workflow: []"$'\n'
+put_repo_file ".github/workflows/labeler.yml" "$(printf '%s\n' "name: labeler" "jobs:" "  label:" "    steps:" "      - uses: actions/labeler@${LABELER_SHA} # v7.0.0" "      - uses: Actions/Labeler@${OTHER_LABELER_SHA} # v7.0.0")"
+run "$VERIFY" owner/repo agent
+assert_rc 1
+need "Check labeler config and workflow - FAIL"
+need "no other actions/labeler ref"
+assert_methods_get
+ok "verify fails when another labeler line changes letter case"
+
+prepare_green
+put_repo_file ".github/labeler.yml" "workflow: []"$'\n'
+put_repo_file ".github/workflows/labeler.yml" "$(printf '%s\n' "name: labeler" "jobs:" "  label:" "    steps:" "      - uses: Actions/Labeler@${LABELER_SHA} # v7.0.0")"
+run "$VERIFY" owner/repo agent
+assert_rc 1
+need "Check labeler config and workflow - FAIL"
+need "no other actions/labeler ref"
+assert_methods_get
+ok "verify fails when the only labeler line is capitalised"
+
+prepare_green
+put_repo_file ".github/labeler.yml" "workflow: []"$'\n'
+put_repo_file ".github/workflows/labeler.yml" "$(printf '%s\n' "name: labeler" "jobs:" "  label:" "    steps:" "      - uses: actions/labeler@${LABELER_SHA} # v7.0.0" "      - uses: actions/labeler/sub@${OTHER_LABELER_SHA} # v7.0.0")"
+run "$VERIFY" owner/repo agent
+assert_rc 1
+need "Check labeler config and workflow - FAIL"
+need "no other actions/labeler ref"
+assert_methods_get
+ok "verify fails when a labeler line uses a subpath"
+
 clear_calls
 printf '%s\n' "DELETE repos/owner/repo/labels/x" >>"$GH_MOCK_LOG"
 if [[ $(write_count) -ne 1 ]]; then

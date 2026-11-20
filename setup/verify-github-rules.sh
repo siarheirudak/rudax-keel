@@ -335,7 +335,7 @@ step_check_labels() {
 
 step_labeler_files() {
   local what="Check labeler config and workflow" st_config=0 st_workflow=0
-  local line exact=0 other=0 ver_re needle
+  local line exact=0 other=0 ver_re owner_repo
   if ! mark_empty_repo; then
     log_step FAIL "$what" "cannot read ${DEFAULT_BRANCH} ($(collapse "$GH_API_ERROR"))" "labels"
     return 0
@@ -360,12 +360,17 @@ step_labeler_files() {
   fi
   decode_content_body
   ver_re=${LABELER_ACTION_VERSION//./\\.}
-  needle="${LABELER_ACTION_REF%%@*}@"
+  owner_repo=${LABELER_ACTION_REF%%@*}
   while IFS= read -r line || [[ -n $line ]]; do
     if [[ $line =~ ^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]+${LABELER_ACTION_REF}[[:space:]]+#[[:space:]]+${ver_re}[[:space:]]*$ ]]; then
       exact=$((exact + 1))
-    elif [[ $line == *"$needle"* ]]; then
-      other=$((other + 1))
+    else
+      # Case folding applies only to this comparison.
+      shopt -s nocasematch
+      if [[ $line == *"$owner_repo"[@/]* ]]; then
+        other=$((other + 1))
+      fi
+      shopt -u nocasematch
     fi
   done <<<"$CONTENT_TEXT"
   if [[ $exact -eq 1 && $other -eq 0 ]]; then

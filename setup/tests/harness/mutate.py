@@ -243,8 +243,8 @@ M = {
  'M269': ('.github/workflows/checks.yml', 'if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then', 'if false; then', 'absent base commit is not checked', ['G-A9']),
  'M270': ('.github/workflows/checks.yml', 'push) base=$GITHUB_SHA ;;', 'push) base=$GATE_PR_BASE_SHA ;;', 'push takes its chain from the pull request base variable', ['G-H2']),
  'M271': ('scripts/tests/test_gate_jobs.py', 'names_once = True  # names-once', 'names_once = False  # names-once', 'a decoy job can reuse a required check name', ['GJ-X1']),
- 'M272': ('.github/workflows/checks.yml', '      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n        with:\n          persist-credentials: false\n          fetch-depth: 0\n      - name: Gate\n', '      - uses: evil/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n        with:\n          persist-credentials: false\n          fetch-depth: 0\n      - name: Gate\n', 'keel-gate runs a foreign checkout action before Gate', ['G-Y4']),
- 'M273': ('.github/workflows/checks.yml', '      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n        with:\n          persist-credentials: false\n          fetch-depth: 0\n      - name: Gate\n', '      - uses: actions/checkout@0000000000000000000000000000000000000001 # v4\n        with:\n          persist-credentials: false\n          fetch-depth: 0\n      - name: Gate\n', 'keel-gate checkout pinned to another commit', ['G-Y4']),
+ 'M272': ('tests/harness/gate_step_check.py', 'checkout_owner = True  # checkout-owner', 'checkout_owner = False  # checkout-owner', 'keel-gate checkout owner is not checked', ['G-Y4']),
+ 'M273': ('tests/harness/gate_step_check.py', 'checkout_same_pin = True  # checkout-same-pin', 'checkout_same_pin = False  # checkout-same-pin', 'keel-gate checkout may differ from the other checkouts', ['G-Y4']),
  'M274': ('scripts/tests/test_gate_jobs.py', 'plain_names = True  # plain-names', 'plain_names = False  # plain-names', 'a decoy job name in a block, tag, alias or escape form is not seen', ['GJ-X1']),
  'M275': ('scripts/check-scope.py', 'workflow_kind = True  # workflow-kind', 'workflow_kind = False  # workflow-kind', 'workflow paths classed as process', ['SC-X1']),
  'M276': ('scripts/check-scope.py', 'keel_process = True  # keel-process', 'keel_process = False  # keel-process', '.keel/ directory is not process', ['SC-X1']),
@@ -277,6 +277,8 @@ M = {
  'M303': ('tests/harness/mutate-plan.sh', '    mutate_fail "base ref missing" # missing-base-fails', '    printf \'%s\\n\' "RESULT mutate: skipped (no harness files changed)"; return 0 # missing-base-fails', 'a missing base prints the skip line', ['S-A55']),
  'M304': ('tests/harness/run-tests.sh', 'python3 "$HERE/test-mutate-parse.py" || exit 1', 'python3 "$HERE/test-mutate-parse.py" || true', 'a failing parse check does not stop the harness', ['S-A56']),
  'M305': ('tests/harness/mutant-result.py', 'check_head = 1  # checkout-head', 'check_head = 0  # checkout-head', 'the live head is not compared with the checkout head', ['M-A9']),
+ 'M306': ('scripts/check-scope.py', 'ambiguous_workflow = True  # ambiguous-workflow', 'ambiguous_workflow = False  # ambiguous-workflow', 'an ambiguous workflow path stays process', ['SC-X1']),
+ 'M307': ('tests/harness/gate_step_check.py', 'checkout_full_sha = True  # checkout-full-sha', 'checkout_full_sha = False  # checkout-full-sha', 'keel-gate checkout may use a tag or short ref', ['G-Y4']),
 }
 SUITE_OF = {
     'M01': 'test-attacks.sh',
@@ -548,6 +550,8 @@ SUITE_OF = {
     'M303': 'test-mutant-select.py',
     'M304': 'test-mutant-select.py',
     'M305': 'test-mutant-result.sh',
+    'M306': 'test-mutant-result.sh',
+    'M307': 'test-mutant-result.sh',
 }
 EXTRA_EDITS = {
     'M15': ['M14'],

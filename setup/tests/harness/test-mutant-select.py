@@ -51,7 +51,7 @@ RESIDUAL = (
 ORACLES = {
     "setup/tests/harness/test-attacks.sh": ATTACK,
     "setup/tests/harness/test-attack-results.sh": ["M78"],
-    "setup/tests/harness/test-mutant-result.sh": ["M92", "M93"] + ["M%d" % n for n in range(240, 275) if n != 247] + ["M%d" % n for n in range(275, 287)] + ["M294", "M295", "M296", "M297", "M305"],
+    "setup/tests/harness/test-mutant-result.sh": ["M92", "M93"] + ["M%d" % n for n in range(240, 275) if n != 247] + ["M%d" % n for n in range(275, 287)] + ["M294", "M295", "M296", "M297", "M305", "M306", "M307"],
     "setup/tests/harness/test-runtime.sh": RUNTIME,
     "setup/tests/harness/test-step4.sh": STEP4,
     "setup/tests/harness/test-step5.sh": STEP5,
@@ -107,17 +107,21 @@ def validate():
                 fail("missing " + path)
     legacy_ids = ["M%d" % n for n in range(139, 177)]
     step6_ids = ["M%d" % n for n in range(207, 234)]
-    gate_step_ids = ["M%d" % n for n in range(240, 247)] + ["M%d" % n for n in range(248, 271)] + ["M272", "M273"]
+    gate_step_ids = ["M%d" % n for n in range(240, 247)] + ["M%d" % n for n in range(248, 271)]
     p1b_ids = ["M%d" % n for n in range(240, 287)]
     doc_ids = ["M287", "M288", "M289"]
     plan_ids = ["M290", "M291", "M292", "M293"]
     cover_ids = ["M%d" % n for n in range(294, 306)]
-    added = len(legacy_ids) + len(step6_ids) + len(p1b_ids) + len(doc_ids) + len(plan_ids) + len(cover_ids)
+    pin_ids = ["M306", "M307"]
+    added = len(legacy_ids) + len(step6_ids) + len(p1b_ids) + len(doc_ids) + len(plan_ids) + len(cover_ids) + len(pin_ids)
     if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93 + added:
         fail("CI id set changed")
-    if mf.CI_IDS[-len(cover_ids):] != cover_ids:
+    if mf.CI_IDS[-len(pin_ids):] != pin_ids:
+        fail("new CI ids are not M306-M307")
+    tail = len(pin_ids)
+    if mf.CI_IDS[-tail - len(cover_ids):-tail] != cover_ids:
         fail("new CI ids are not M294-M305")
-    tail = len(cover_ids)
+    tail += len(cover_ids)
     if mf.CI_IDS[-tail - len(plan_ids):-tail] != plan_ids:
         fail("new CI ids are not M290-M293")
     tail += len(plan_ids)
@@ -135,10 +139,13 @@ def validate():
     for mid in gate_step_ids:
         if mf.FILES.get(mid) != [".github/workflows/checks.yml"] or mutate.SUITE_OF.get(mid) != "test-mutant-result.sh":
             fail("gate step mutant %s must target checks.yml with test-mutant-result.sh" % mid)
+    for mid in ("M272", "M273", "M307"):
+        if mf.FILES.get(mid) != ["setup/tests/harness/gate_step_check.py"] or mutate.SUITE_OF.get(mid) != "test-mutant-result.sh":
+            fail("checkout mutant %s must target gate_step_check.py with test-mutant-result.sh" % mid)
     for mid in ("M271", "M274"):
         if mf.FILES.get(mid) != ["scripts/tests/test_gate_jobs.py"] or mutate.SUITE_OF.get(mid) != "test-mutant-result.sh":
             fail("%s must target test_gate_jobs.py with test-mutant-result.sh" % mid)
-    for mid in ["M%d" % n for n in range(275, 287)]:
+    for mid in ["M%d" % n for n in range(275, 287)] + ["M306"]:
         if mf.FILES.get(mid) != ["scripts/check-scope.py"] or mutate.SUITE_OF.get(mid) != "test-mutant-result.sh":
             fail("%s must target check-scope.py with test-mutant-result.sh" % mid)
     for mid in doc_ids:
@@ -447,7 +454,7 @@ def main():
         else:
             want = ["M92", "M93"]
         expect_exact([path], want, "SEL-A4" if path.endswith("check-gate.sh") else "gate")
-    expect_exact(["scripts/check-scope.py"], ["M%d" % n for n in range(275, 287)], "scope")
+    expect_exact(["scripts/check-scope.py"], ["M%d" % n for n in range(275, 287)] + ["M306"], "scope")
     mixed = mf.select_mutants(["setup/keel.sh", "setup/tests/harness/test-happy.sh"])
     if mixed != ("full", list(mf.CI_IDS)):
         fail("SEL-A3 oracle next to a target must select the full set")

@@ -16,7 +16,19 @@ need() {
 need "$wf" 'run-name: mutants ${{ inputs.sha }}'
 need "$wf" 'github.event.repository.default_branch'
 need "$wf" 'setup/tests/harness/resolve-mutant-target.py'
-need "$wf" 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262'
+if ! HERE="$HERE" PYTHONDONTWRITEBYTECODE=1 python3 - "$wf" <<'PY'
+import os
+import sys
+sys.path.insert(0, os.environ["HERE"])
+import gate_step_check as gate
+reason = gate.mutate_pr_checkout_problems(open(sys.argv[1], encoding="utf-8").read())
+if reason:
+    sys.stderr.write("missing %s\n" % reason)
+    raise SystemExit(1)
+PY
+then
+  fail=1
+fi
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
