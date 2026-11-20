@@ -21,7 +21,10 @@ read, when this check runs, to match the kind. A label grants nothing.
 Paths are normalised before classification. Leading and trailing
 whitespace is removed, a leading ./ is stripped, backslashes become
 slashes, duplicate slashes collapse, and the path is Unicode NFC. A path
-that is still ambiguous counts as a process file.
+that is still ambiguous counts as a workflow file when the same
+normalisation, with leading slashes and leading ./ segments removed
+until neither remains, lands in a workflow folder. Any other ambiguous
+path counts as a process file.
 
 A rename counts both the new path and previous_filename. More than one
 kind is a mix, including when the two names of one rename differ in kind.
@@ -95,6 +98,7 @@ file_count = True  # file-count
 labels_shape = True  # labels-shape
 workflow_actions = True  # workflow-actions
 bare_names = True  # bare-names
+ambiguous_workflow = True  # ambiguous-workflow
 
 
 def canonical_path(path):
@@ -135,10 +139,33 @@ def _workflow_match(canonical):
     return False
 
 
+def _ambiguous_workflow_probe(path):
+    """True when light normalisation of an ambiguous path names a workflow file."""
+    text = unicodedata.normalize("NFC", path).strip().replace("\\", "/")
+    while "//" in text:
+        text = text.replace("//", "/")
+    while text.startswith("./") or text.startswith("/"):
+        if text.startswith("./"):
+            text = text[2:]
+        else:
+            text = text[1:]
+    if not text:
+        return False
+    return _workflow_match(text)
+
+
 def kind_of(path):
-    """Return workflow, process, or code. An ambiguous path is process."""
+    """Return workflow, process, or code.
+
+    An ambiguous path is workflow when light normalisation lands in a
+    workflow folder, and process otherwise.
+    """
+    if not isinstance(path, str) or path == "":
+        return "process"
     canonical = canonical_path(path)
     if canonical is None:
+        if ambiguous_workflow and _ambiguous_workflow_probe(path):
+            return "workflow"
         return "process"
     if _workflow_match(canonical):
         return "workflow"
@@ -845,6 +872,79 @@ def self_test():
         "process-files",
     ]:
         return _fail_case("labels-names", "label names were not read")
+    probe_kinds = [
+        (".github/workflows/a:b.yml", "workflow"),
+        (".GitHub/Workflows/a:b.yml", "workflow"),
+        ("./.github/workflows/a:b.yml", "workflow"),
+        (".github\\workflows\\a:b.yml", "workflow"),
+        (".github/actions/a:b/action.yml", "workflow"),
+        (".github/workflows/../x.yml", "workflow"),
+        ("/.github/workflows/x.yml", "workflow"),
+        ("/./.github/workflows/x.yml", "workflow"),
+        (".//./.github/actions/a:b", "workflow"),
+        ("//.github/actions/a", "workflow"),
+        (".github/workflows/", "workflow"),
+        (".github/workflowsx/a:b.yml", "process"),
+        (".github/workflows-evil/a:b.yml", "process"),
+        ("docs/a:b.md", "process"),
+    ]
+    for path, expected in probe_kinds:
+        failed = check_kind(path, expected)
+        if failed:
+            return failed
+    probe_evals = [
+        (
+            "colon-workflow-unlabelled",
+            [entry(".github/workflows/a:b.yml")],
+            1,
+            [],
+            True,
+            "add the workflow label",
+            None,
+        ),
+        (
+            "colon-path-marked",
+            [entry(".github/workflows/a:b.yml")],
+            1,
+            ["workflow"],
+            False,
+            "",
+            "workflow",
+        ),
+        (
+            "colon-workflow-with-script",
+            [entry(".github/workflows/a:b.yml"), entry("scripts/x.sh")],
+            2,
+            [],
+            True,
+            (".github/workflows/a:b.yml", "scripts/x.sh"),
+            None,
+        ),
+        (
+            "colon-workflow-rename-to-docs",
+            [entry("docs/a.yml", ".github/workflows/a:b.yml")],
+            1,
+            [],
+            True,
+            ("docs/a.yml", ".github/workflows/a:b.yml"),
+            None,
+        ),
+        (
+            "slash-workflow-unlabelled",
+            [entry("/.github/workflows/x.yml")],
+            1,
+            [],
+            True,
+            "add the workflow label",
+            None,
+        ),
+    ]
+    for name, entries, changed, labels, should_fail, needles, expect_kind in probe_evals:
+        failed = check_eval(
+            name, entries, changed, "main", "main", labels, should_fail, needles, expect_kind
+        )
+        if failed:
+            return failed
     return 0
 
 

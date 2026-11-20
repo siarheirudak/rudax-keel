@@ -245,8 +245,8 @@ FILES = {
     "M269": [".github/workflows/checks.yml"],
     "M270": [".github/workflows/checks.yml"],
     "M271": ["scripts/tests/test_gate_jobs.py"],
-    "M272": [".github/workflows/checks.yml"],
-    "M273": [".github/workflows/checks.yml"],
+    "M272": ["setup/tests/harness/gate_step_check.py"],
+    "M273": ["setup/tests/harness/gate_step_check.py"],
     "M274": ["scripts/tests/test_gate_jobs.py"],
     "M275": ["scripts/check-scope.py"],
     "M276": ["scripts/check-scope.py"],
@@ -279,6 +279,8 @@ FILES = {
     "M303": ["setup/tests/harness/mutate-plan.sh"],
     "M304": ["setup/tests/harness/run-tests.sh"],
     "M305": ["setup/tests/harness/mutant-result.py"],
+    "M306": ["scripts/check-scope.py"],
+    "M307": ["setup/tests/harness/gate_step_check.py"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -507,6 +509,8 @@ CI_IDS = [
     "M303",
     "M304",
     "M305",
+    "M306",
+    "M307",
 ]
 
 # Docker mount probes, plus M01. Pull-request CI skips these. The daily full run includes them.
@@ -736,8 +740,8 @@ META = {
     "M269": ("is not in the checkout", "fail-closed"),
     "M270": ("push) base=$GITHUB_SHA", "decision"),
     "M271": ("names-once", "fail-closed"),
-    "M272": ("keep fetch-depth: 0", "decision"),
-    "M273": ("keep fetch-depth: 0", "decision"),
+    "M272": ("checkout-owner", "decision"),
+    "M273": ("checkout-same-pin", "decision"),
     "M274": ("plain-names", "fail-closed"),
     "M275": ("workflow-kind", "fail-closed"),
     "M276": ("keel-process", "fail-closed"),
@@ -770,6 +774,8 @@ META = {
     "M303": ('mutate_fail "base ref missing" # missing-base-fails', "fail-closed"),
     "M304": ('python3 "$HERE/test-mutate-parse.py" || exit 1', "mechanism"),
     "M305": ("checkout-head", "fail-closed"),
+    "M306": ("ambiguous-workflow", "decision"),
+    "M307": ("checkout-full-sha", "decision"),
 }
 
 # CI ids, in CI_IDS order. Pull-request selection never includes OFFLINE_IDS.
