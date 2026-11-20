@@ -76,7 +76,7 @@ The verdict is the last line:
 | READY WITH WARNINGS | 0 | No critical failure. Review the warning lines. |
 | NOT READY | 1 | At least one CRITICAL check failed. Do not run agents here. |
 
-In the suites, every attack should say `BLOCKED` or `CONTAINED`. `PARTIAL` is expected only for A10. `N/A` is expected for A2 in env mode and for A11-detect on macOS. Anything else (`NOT BLOCKED`, `WRONG REASON`, `FAIL`, a missing line) is a real problem. Send the logs.
+In the suites, every attack should say `BLOCKED` or `CONTAINED`. `PARTIAL` is expected only for A10. `N/A` is expected for A2 in env mode and for A11-detect on macOS. Anything else (`NOT BLOCKED`, `WRONG REASON`, `FAIL`, a missing line) is a real problem. Send the logs. The harness's own check cases print `RESULT <case>: BLOCKED` when the case holds, sometimes followed by a short note in brackets, and that is a pass, also for cases that are not attacks (for example `S-A62`); `RESULT <case>: NOT BLOCKED` is a failure, and `RESULT <case>: ERROR` is a failure, with the cases not yet run also printing `ERROR` after an error. The attack words above (`CONTAINED`, `PARTIAL` for A10, and `N/A` where stated) still apply to the attacks, and lines that start `RESULT mutate:` (`skipped`, `run`, or `deferred`) report which mutants were selected and are not a pass or a fail; a local `setup/tests/harness/run-tests.sh` prints these lines in the mutant select, mutate shards, and mutant result binding sections.
 
 Exit codes from `setup/tests/harness/run-tests.sh`: 0 means the suites and the doctor passed. 1 means a suite or the doctor failed. 5 means the Docker daemon is not reachable (on macOS: start Docker Desktop).
 

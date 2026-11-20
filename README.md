@@ -87,7 +87,7 @@ On a private repository on GitHub Free, rulesets are not available. Apply prints
 
 The bot must run where the only GitHub token is the bot’s token: a cloud VM, a separate OS user, or a container. It must not run in a login where the owner is already authenticated. [Why](docs/why.md#agent-environment).
 
-A pull request that edits a process file must contain only process files. Process files are `.github/`, `scripts/`, and `setup/` at the root, and `.pi/` and `.agents/` at any depth, such as `pkg/.pi/` and `apps/.agents/`. `setup/README.md` and `setup/TESTING.md` are the only ordinary docs under `setup/`. The match is the whole path and ignores case. `setup/a/README.md` and every other file under `setup/` are process files. These names are process files anywhere, ignoring case: `AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md` (the fallback context file Pi Agent loads), `CODEOWNERS`, and `.shellcheckrc`. [Why](docs/why.md#scope).
+A pull request contains one kind only: workflow, process, or code. The `.github/workflows/` and `.github/actions/` folders at the repository root are their own kind and need the `workflow` label. Process files are any other path under the root `.github/`, `scripts/`, and `setup/` at the root, root `.keel/`, and `.pi/` and `.agents/` at any depth, such as `pkg/.pi/` and `apps/.agents/`. `setup/README.md` and `setup/TESTING.md` are the only ordinary docs under `setup/`. The match is the whole path and ignores case. `setup/a/README.md` and every other file under `setup/` are process files. These names are process files anywhere, ignoring case: `AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md` (the fallback context file Pi Agent loads), `CODEOWNERS`, and `.shellcheckrc`. [Why](docs/why.md#scope).
 
 ### Isolation harness
 

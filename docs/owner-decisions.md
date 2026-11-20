@@ -57,7 +57,7 @@ At grilling, and again after the architect’s estimate, the owner is shown the 
 
 **Split approval.** If the architect’s estimate is over the project’s split threshold, the owner decides immediately, before dependencies and tests. Yes means the parts run one after another, each from grilling. No stops the parts that have not started. The threshold is a configurable default. [Architecture](architecture.md#split).
 
-**Process files.** Changes to the rules of the repository (workflows, setup scripts, agent instruction files, and the other paths listed in [Scope](why.md#scope)) travel in their own pull request. The label in the design is `process-files`. The check that a process-file pull request contains nothing else is implemented today (`keel-process-files-separate`). The pipeline that opens that pull request after a skill approval is not.
+**Process files.** Workflow changes travel in their own pull request with the `workflow` label. Other rule changes travel in their own process pull request, which the labeler normally marks `process-files`. That label is a marker and grants nothing; the check decides from the paths. The paths are listed in [Scope](why.md#scope). The check is implemented (`keel-process-files-separate`). The skill-approval pipeline is not.
 
 ## Merge
 

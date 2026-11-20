@@ -105,7 +105,7 @@ Short definitions for this repository. The first time a longer page needs a word
 
 **Skill.** A file of instructions for a role, under `.agents/skills/`. Changes need the owner’s approval.
 
-**Process file.** A file that defines how the repository is checked or how agents are instructed, such as anything under `.github/` or `setup/`. A pull request that changes one must not change other files in the same pull request.
+**Process file.** A file that defines how the repository is checked or how agents are instructed, outside the workflow folders: for example under `setup/`, `scripts/`, or other `.github/` paths. Files in `.github/workflows/` and `.github/actions/` are workflow files, a kind of their own. A pull request holds one kind only.
 
 **Process-files pull request.** A separate pull request, labelled `process-files`, for those files. Skill approvals land this way.
 
