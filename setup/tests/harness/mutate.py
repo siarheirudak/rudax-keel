@@ -279,6 +279,11 @@ M = {
  'M305': ('tests/harness/mutant-result.py', 'check_head = 1  # checkout-head', 'check_head = 0  # checkout-head', 'the live head is not compared with the checkout head', ['M-A9']),
  'M306': ('scripts/check-scope.py', 'ambiguous_workflow = True  # ambiguous-workflow', 'ambiguous_workflow = False  # ambiguous-workflow', 'an ambiguous workflow path stays process', ['SC-X1']),
  'M307': ('tests/harness/gate_step_check.py', 'checkout_full_sha = True  # checkout-full-sha', 'checkout_full_sha = False  # checkout-full-sha', 'keel-gate checkout may use a tag or short ref', ['G-Y4']),
+ 'M308': ('tests/harness/mutate_shards.py', '    if check_catalog_paths(repo, sha, info) != 0:  # catalog-path-check', '    if False:  # catalog-path-check', 'catalog path check does nothing', ['S-A57', 'S-A58', 'S-A59']),
+ 'M309': ('tests/harness/mutate_shards.py', 'check_catalog_shape = True  # catalog-path-shape', 'check_catalog_shape = False  # catalog-path-shape', 'catalog shape check is off', ['S-A57']),
+ 'M310': ('tests/harness/mutate_shards.py', 'check_catalog_tree = True  # catalog-path-tree', 'check_catalog_tree = False  # catalog-path-tree', 'catalog tree check is off', ['S-A58']),
+ 'M311': ('tests/harness/mutate_shards.py', 'check_edit_containment = True  # edit-containment', 'check_edit_containment = False  # edit-containment', 'edit containment is off', ['S-A60']),
+ 'M312': ('tests/harness/mutate_shards.py', 'check_tree_paths = True  # tree-path-check', 'check_tree_paths = False  # tree-path-check', 'listing path check is off', ['S-A61']),
 }
 SUITE_OF = {
     'M01': 'test-attacks.sh',
@@ -552,6 +557,11 @@ SUITE_OF = {
     'M305': 'test-mutant-result.sh',
     'M306': 'test-mutant-result.sh',
     'M307': 'test-mutant-result.sh',
+    'M308': 'test-mutant-select.py',
+    'M309': 'test-mutant-select.py',
+    'M310': 'test-mutant-select.py',
+    'M311': 'test-mutant-select.py',
+    'M312': 'test-mutate-shards.sh',
 }
 EXTRA_EDITS = {
     'M15': ['M14'],

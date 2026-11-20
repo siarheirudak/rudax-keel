@@ -68,6 +68,10 @@ enforce_line = True  # line-cap
 timeout_is_fail = True  # timeout-not-success
 check_baseline = True  # baseline-check
 check_tree_entries = True  # tree-entry-check
+check_catalog_shape = True  # catalog-path-shape
+check_catalog_tree = True  # catalog-path-tree
+check_edit_containment = True  # edit-containment
+check_tree_paths = True  # tree-path-check
 
 
 class ShardError(Exception):
@@ -286,26 +290,57 @@ def _git(repo, *args):
     return proc.stdout
 
 
+def _listing_path_bad(path_b):
+    """True when a raw listing path is not safe to use. The path is not returned."""
+    if not path_b or len(path_b) > 1024 or path_b.startswith(b"/"):
+        return True
+    for byte in path_b:
+        if byte < 32 or byte == 127 or byte == ord("\\"):
+            return True
+    try:
+        text = path_b.decode("utf-8")
+    except UnicodeDecodeError:
+        return True
+    if len(text.encode("utf-8")) > 1024:
+        return True
+    two_dot = "." + "."
+    git_name = "." + "git"
+    for part in text.split("/"):
+        if part in ("", ".", two_dot) or part.lower() == git_name:
+            return True
+        if len(part.encode("utf-8")) > 255:
+            return True
+    return False
+
+
 def materialize_tree(repo, sha, dest):
     """Build dest from ls-tree and cat-file. No checkout, archive, or filters."""
     raw = _git(repo, "ls-tree", "-r", "-z", sha)
     os.makedirs(dest, exist_ok=True)
+    position = 0
     for item in raw.split(b"\0"):
         if not item:
             continue
+        position += 1
+        if b"\t" not in item:
+            if check_tree_paths:
+                raise ShardError("tree path %d" % position)
+            continue
         meta, path_b = item.split(b"\t", 1)
+        if check_tree_paths and _listing_path_bad(path_b):
+            raise ShardError("tree path %d" % position)
         mode, kind, oid = meta.decode("ascii").split(" ")
         path = path_b.decode("utf-8")
         if kind == "commit" or mode in ("120000", "160000"):
             if not accept_entry(mode, "", oid):
-                raise ShardError("entry " + path)
+                raise ShardError("entry %d" % position)
             continue
         if kind != "blob":
-            raise ShardError("entry " + path)
+            raise ShardError("entry type %d" % position)
         blob = _git(repo, "cat-file", "blob", oid)
         digest = git_blob_digest(blob)
         if not accept_entry(mode, digest, oid):
-            raise ShardError("hash " + path)
+            raise ShardError("hash %d" % position)
         target = os.path.join(dest, path)
         parent = os.path.dirname(target)
         if parent:
@@ -439,12 +474,121 @@ def repo_rel(m_file):
     return "setup/" + m_file
 
 
+def _strip_setup(path):
+    if path.startswith("setup/"):
+        return path[len("setup/"):]
+    return path
+
+
+def catalog_shape_ok(path):
+    """Shape predicate. A rejected value is not safe to print."""
+    if not isinstance(path, str) or path == "":
+        return False
+    raw = path.encode("utf-8")
+    if len(raw) > 1024 or len(raw) == 0:
+        return False
+    if path[0] == "/" or path[-1] == "/" or "//" in path:
+        return False
+    for char in path:
+        if char in "/._-":
+            continue
+        if "0" <= char <= "9" or "A" <= char <= "Z" or "a" <= char <= "z":
+            continue
+        return False
+    two_dot = "." + "."
+    git_name = "." + "git"
+    for part in path.split("/"):
+        if part in ("", ".", two_dot) or part.lower() == git_name or part.startswith("-"):
+            return False
+        if len(part.encode("utf-8")) > 255:
+            return False
+    return True
+
+
+def effective_routes(defs, main_files, mid):
+    """(route, decoded path) pairs the applier would use for this id."""
+    spec = defs.M[mid]
+    routes = []
+    if isinstance(spec, (list, tuple)) and len(spec) >= 1 and isinstance(spec[0], str):
+        routes.append(("target", repo_rel(spec[0])))
+    for other in defs.extras(mid):
+        if other not in defs.M:
+            continue
+        other_spec = defs.M[other]
+        if isinstance(other_spec, (list, tuple)) and len(other_spec) >= 1 and isinstance(other_spec[0], str):
+            routes.append(("extra", repo_rel(other_spec[0])))
+    files = defs.files if mid in (defs.files or {}) else main_files
+    entry = files.get(mid, [])
+    if isinstance(entry, (list, tuple)):
+        for path in entry:
+            if not isinstance(path, str):
+                continue
+            routes.append(("files", repo_rel(_strip_setup(path))))
+    return routes
+
+
+def _within_root(root, path):
+    if path == root:
+        return True
+    return path.startswith(root + os.sep)
+
+
+def require_contained(dest_root, decoded, mid):
+    """Refuse a path that leaves the tree or passes through a symlink."""
+    if not check_edit_containment:
+        return
+    root = os.path.realpath(dest_root)
+    if not isinstance(decoded, str) or decoded == "" or os.path.isabs(decoded) or "\\" in decoded:
+        raise ShardError("%s containment" % mid)
+    parts = decoded.split("/")
+    current = root
+    for index, part in enumerate(parts):
+        if part in ("", ".", ".."):
+            raise ShardError("%s containment" % mid)
+        nxt = os.path.join(current, part)
+        last = index == len(parts) - 1
+        try:
+            info = os.lstat(nxt)
+        except OSError:
+            if last:
+                parent_real = os.path.realpath(current)
+                if not _within_root(root, parent_real):
+                    raise ShardError("%s containment" % mid)
+                return
+            raise ShardError("%s containment" % mid)
+        if stat.S_ISLNK(info.st_mode):
+            raise ShardError("%s containment" % mid)
+        if last:
+            if not stat.S_ISREG(info.st_mode):
+                raise ShardError("%s containment" % mid)
+            if not _within_root(root, os.path.realpath(nxt)):
+                raise ShardError("%s containment" % mid)
+        elif not stat.S_ISDIR(info.st_mode):
+            raise ShardError("%s containment" % mid)
+        current = nxt
+
+
+def _read_text(path):
+    if not check_edit_containment:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, "r", encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _write_text(path, text):
+    if not check_edit_containment:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        return
+    fd = os.open(path, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
 def apply_def_edits(dest_root, defs, mid):
     """Apply one id's literals onto a materialised tree. No suite code runs."""
-    rels = [defs.M[mid][0]]
-    for other in defs.extras(mid):
-        if other in defs.M:
-            rels.append(defs.M[other][0])
     file_edits = {}
     specs = [mid] + [other for other in defs.extras(mid) if other in defs.M]
     for sid in specs:
@@ -459,19 +603,192 @@ def apply_def_edits(dest_root, defs, mid):
         rel = path[len("setup/"):] if path.startswith("setup/") else path
         if rel not in file_edits:
             file_edits[rel] = file_edits[defs.M[mid][0]]
-    for rel, pairs in file_edits.items():
-        path = os.path.join(dest_root, repo_rel(rel))
+    touched = []
+    seen = set()
+    for _route, decoded in effective_routes(defs, mf.FILES, mid):
+        if decoded in seen:
+            continue
+        seen.add(decoded)
+        for key in file_edits:
+            if repo_rel(key) == decoded and key not in touched:
+                touched.append(key)
+                break
+    for rel in file_edits:
+        if rel not in touched:
+            touched.append(rel)
+    for rel in touched:
+        pairs = file_edits[rel]
+        decoded = repo_rel(rel)
+        require_contained(dest_root, decoded, mid)
+        path = os.path.join(dest_root, decoded)
         if not os.path.isfile(path):
             raise ShardError("%s missing %s" % (mid, rel))
-        with open(path, encoding="utf-8") as handle:
-            text = handle.read()
+        text = _read_text(path)
         if rel != defs.M[mid][0] and text.count(pairs[0][0]) != 1:
             continue
         updated, err = mutate.apply_edits(text, pairs)
         if err or updated is None:
             raise ShardError("%s %s" % (mid, err or "apply"))
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(updated)
+        _write_text(path, updated)
+
+
+class _CatalogHit(object):
+    def __init__(self, side, route, mid, rule, path):
+        self.side = side
+        self.route = route
+        self.mid = mid
+        self.rule = rule
+        self.path = path
+
+
+def _shape_routes(defs, main_files, side, counts, hits):
+    for mid in defs.M:
+        spec = defs.M.get(mid)
+        if not isinstance(spec, (list, tuple)) or len(spec) < 1 or not isinstance(spec[0], str):
+            hits.append(_CatalogHit(side, "target", mid, "type", None))
+        else:
+            decoded = repo_rel(spec[0])
+            counts[side]["target"] += 1
+            if check_catalog_shape and not catalog_shape_ok(decoded):
+                hits.append(_CatalogHit(side, "target", mid, "shape", decoded))
+        try:
+            linked = tuple(defs.extras(mid))
+        except (TypeError, AttributeError):
+            hits.append(_CatalogHit(side, "extra", mid, "type", None))
+            linked = ()
+        for other in linked:
+            if other not in defs.M:
+                continue
+            other_spec = defs.M[other]
+            if not isinstance(other_spec, (list, tuple)) or len(other_spec) < 1 or not isinstance(other_spec[0], str):
+                hits.append(_CatalogHit(side, "extra", mid, "type", None))
+                continue
+            decoded = repo_rel(other_spec[0])
+            counts[side]["extra"] += 1
+            if check_catalog_shape and not catalog_shape_ok(decoded):
+                hits.append(_CatalogHit(side, "extra", mid, "shape", decoded))
+        table = defs.files if mid in (defs.files or {}) else main_files
+        entry = table.get(mid, [])
+        if not isinstance(entry, (list, tuple)) or not all(isinstance(item, str) for item in entry):
+            hits.append(_CatalogHit(side, "files", mid, "type", None))
+            continue
+        for path in entry:
+            decoded = repo_rel(_strip_setup(path))
+            counts[side]["files"] += 1
+            if check_catalog_shape and not catalog_shape_ok(decoded):
+                hits.append(_CatalogHit(side, "files", mid, "shape", decoded))
+
+
+def _imported_files(main_files, counts, hits):
+    for mid, entry in main_files.items():
+        if not isinstance(mid, str) or not isinstance(entry, (list, tuple)) or not all(isinstance(item, str) for item in entry):
+            if isinstance(mid, str):
+                hits.append(_CatalogHit("main", "files", mid, "type", None))
+            continue
+        for path in entry:
+            decoded = repo_rel(_strip_setup(path))
+            counts["main"]["files"] += 1
+            if check_catalog_shape and not catalog_shape_ok(decoded):
+                hits.append(_CatalogHit("main", "files", mid, "shape", decoded))
+
+
+def _head_listing(repo, sha):
+    raw = _git(repo, "ls-tree", "-r", "-z", sha)
+    found = {}
+    for item in raw.split(b"\0"):
+        if not item or b"\t" not in item:
+            continue
+        meta, path_b = item.split(b"\t", 1)
+        parts = meta.decode("ascii", "replace").split(" ")
+        if len(parts) != 3:
+            continue
+        found[path_b] = (parts[0], parts[1])
+    return found
+
+
+def _tree_hits(repo, sha, defs, plan, hits):
+    if not plan or not check_catalog_tree:
+        return 0
+    listing = _head_listing(repo, sha)
+    count = 0
+    for mid in plan:
+        if mid not in defs.M:
+            hits.append(_CatalogHit("head", "target", mid, "type", None))
+            continue
+        for route, decoded in effective_routes(defs, mf.FILES, mid):
+            count += 1
+            if not isinstance(decoded, str):
+                hits.append(_CatalogHit("head", route, mid, "type", None))
+                continue
+            mode_kind = listing.get(decoded.encode("utf-8"))
+            ok = (
+                mode_kind is not None
+                and mode_kind[1] == "blob"
+                and mode_kind[0] in ("100644", "100755")
+            )
+            if not ok:
+                hits.append(_CatalogHit("head", route, mid, "tree", decoded))
+    return count
+
+
+def _format_hit(hit):
+    text = "mutants: catalog path %s %s %s %s" % (hit.side, hit.route, hit.mid, hit.rule)
+    if isinstance(hit.path, str) and catalog_shape_ok(hit.path):
+        text += " " + hit.path
+    return text
+
+
+def _emit_catalog_failure(hits):
+    def sort_key(hit):
+        try:
+            number = md.id_key(hit.mid)
+        except (TypeError, ValueError):
+            number = 0
+        return (number, hit.side, hit.route, hit.rule, hit.path or "")
+
+    ordered = sorted(hits, key=sort_key)
+    for hit in ordered[:20]:
+        print(_format_hit(hit), file=sys.stderr)
+    extra = len(ordered) - 20
+    if extra > 0:
+        print("mutants: catalog path %d more" % extra, file=sys.stderr)
+    print("mutants: catalog path check failed and no plan was written", file=sys.stderr)
+
+
+def check_catalog_paths(repo, sha, info):
+    """Reject catalog paths before any plan file is written. 0 means clean."""
+    plan = info["plan"]
+    main = info["main"]
+    pr = info["pr"]
+    counts = {
+        "main": {"target": 0, "extra": 0, "files": 0},
+        "head": {"target": 0, "extra": 0, "files": 0},
+    }
+    hits = []
+    _shape_routes(main, mf.FILES, "main", counts, hits)
+    _shape_routes(pr, mf.FILES, "head", counts, hits)
+    _imported_files(mf.FILES, counts, hits)
+    tree_count = _tree_hits(repo, sha, pr, plan, hits)
+    if hits:
+        _emit_catalog_failure(hits)
+        return 1
+    main_counts = counts["main"]
+    head_counts = counts["head"]
+    print(
+        "mutants: catalog paths ok %d %d %d %d %d %d %d %d"
+        % (
+            len(plan),
+            main_counts["target"],
+            main_counts["extra"],
+            main_counts["files"],
+            head_counts["target"],
+            head_counts["extra"],
+            head_counts["files"],
+            tree_count,
+        ),
+        file=sys.stderr,
+    )
+    return 0
 
 
 def pack_shard(baseline, ids, defs, dest_tar):
@@ -707,6 +1024,8 @@ def cmd_resolve(repo, sha, base_ref):
     rc, info = decide_plan(repo, sha, base_ref)
     if rc != 0:
         return rc
+    if check_catalog_paths(repo, sha, info) != 0:  # catalog-path-check
+        return 1
     plan = info["plan"]
     main = info["main"]
     pr = info["pr"]

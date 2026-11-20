@@ -113,12 +113,16 @@ def validate():
     plan_ids = ["M290", "M291", "M292", "M293"]
     cover_ids = ["M%d" % n for n in range(294, 306)]
     pin_ids = ["M306", "M307"]
-    added = len(legacy_ids) + len(step6_ids) + len(p1b_ids) + len(doc_ids) + len(plan_ids) + len(cover_ids) + len(pin_ids)
+    path_ids = ["M308", "M309", "M310", "M311", "M312"]
+    added = len(legacy_ids) + len(step6_ids) + len(p1b_ids) + len(doc_ids) + len(plan_ids) + len(cover_ids) + len(pin_ids) + len(path_ids)
     if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93 + added:
         fail("CI id set changed")
-    if mf.CI_IDS[-len(pin_ids):] != pin_ids:
+    if mf.CI_IDS[-len(path_ids):] != path_ids:
+        fail("new CI ids are not M308-M312")
+    tail = len(path_ids)
+    if mf.CI_IDS[-tail - len(pin_ids):-tail] != pin_ids:
         fail("new CI ids are not M306-M307")
-    tail = len(pin_ids)
+    tail += len(pin_ids)
     if mf.CI_IDS[-tail - len(cover_ids):-tail] != cover_ids:
         fail("new CI ids are not M294-M305")
     tail += len(cover_ids)
@@ -168,6 +172,20 @@ def validate():
             fail("%s must target mutate-plan.sh with test-mutant-select.py" % mid)
     if mf.FILES.get("M304") != ["setup/tests/harness/run-tests.sh"] or mutate.SUITE_OF.get("M304") != "test-mutant-select.py":
         fail("M304 must target run-tests.sh with test-mutant-select.py")
+    for mid in ("M308", "M309", "M310", "M311"):
+        if mf.FILES.get(mid) != ["setup/tests/harness/mutate_shards.py"] or mutate.SUITE_OF.get(mid) != "test-mutant-select.py":
+            fail("%s must target mutate_shards.py with test-mutant-select.py" % mid)
+    if mf.FILES.get("M312") != ["setup/tests/harness/mutate_shards.py"] or mutate.SUITE_OF.get("M312") != "test-mutate-shards.sh":
+        fail("M312 must target mutate_shards.py with test-mutate-shards.sh")
+    import speed_cases
+    if "S-A62" not in speed_cases.SELECT_CASES:
+        fail("S-A62 is not in the select group")
+    if "S-A62" not in speed_cases.CASES:
+        fail("S-A62 is not in the case table")
+    if speed_cases.S_A62_MIN_IDS < 276:
+        fail("S-A62 id minimum is below 276")
+    if speed_cases.S_A62_MIN_TARGET_PATHS < 31:
+        fail("S-A62 target path minimum is below 31")
     if len(mf.OFFLINE_IDS) != len(set(mf.OFFLINE_IDS)) or len(mf.OFFLINE_IDS) != 5:
         fail("offline id set changed")
     if len(mf.CI_IDS) + len(mf.OFFLINE_IDS) != 98 + added:
