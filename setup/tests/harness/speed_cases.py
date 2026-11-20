@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Happy and attack cases for mutant selection, grading, and full-run state."""
 import base64
+import hashlib
 import importlib.util
 import io
 import json
@@ -33,10 +34,14 @@ SELECT_CASES = (
     "S-A40", "S-A41", "S-A42", "S-A43", "S-A44", "S-A45", "S-A46", "S-A47",
     "S-A48", "S-A49", "S-A50", "S-A51", "S-A52",
     "S-A53", "S-A54", "S-A55", "S-A56",
+    "S-A57", "S-A58", "S-A59", "S-A60", "S-A62",
 )
+S_A62_MIN_IDS = 276
+S_A62_MIN_TARGET_PATHS = 31
 SHARD_CASES = (
     "S-H5", "S-A5", "S-A6", "S-A14", "S-A19", "S-A24", "S-A25", "S-A26",
     "S-A28", "S-A29", "S-A30", "S-A31", "S-A34", "S-A35", "S-A36",
+    "S-A61",
     "H1", "H2", "H3", "H4",
     "A1", "A2", "A3", "A4", "A5", "A6",
     "S-P1", "S-P2", "S-P3", "S-P4", "S-P5", "S-P6", "S-P7", "S-P8", "S-P9",
@@ -242,6 +247,31 @@ def case_s_a38():
     return skip and wide and mixed
 
 
+def _repo_git_names():
+    """Repo-local git variables, from git's own listing."""
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+    }
+    proc = subprocess.run(
+        ["git", "rev-parse", "--local-env-vars"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return []
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def _env_without_repo_git(base=None):
+    env = dict(os.environ if base is None else base)
+    for name in _repo_git_names():
+        env.pop(name, None)
+    return env
+
+
 def case_s_a39():
     """The plan lists both names of a rename, so a file moved onto a doc runs mutants."""
     plan = os.path.join(HERE, "mutate-plan.sh")
@@ -252,6 +282,7 @@ def case_s_a39():
                 ["git", "-C", work, "-c", "user.name=t", "-c", "user.email=t@x",
                  "-c", "commit.gpgsign=false"] + list(args),
                 check=True, capture_output=True, text=True,
+                env=_env_without_repo_git(),
             ).stdout.strip()
 
         def write(rel, text):
@@ -261,7 +292,7 @@ def case_s_a39():
                 handle.write(text)
 
         def decide(base):
-            env = dict(os.environ)
+            env = _env_without_repo_git()
             env.pop("GITHUB_BASE_REF", None)
             env["KEEL_MUTATE_REPO"] = work
             env["KEEL_MUTATE_BASE"] = base
@@ -4390,6 +4421,918 @@ def case_s_a56():
         shutil.rmtree(work, ignore_errors=True)
 
 
+def _plan_git(repo, *args, inp=None):
+    env = _env_without_repo_git()
+    proc = subprocess.run(
+        [
+            "git", "-C", repo,
+            "-c", "user.email=dev@example.com",
+            "-c", "user.name=Dev",
+            "-c", "commit.gpgsign=false",
+            *args,
+        ],
+        input=inp,
+        capture_output=True,
+        env=env,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError("git")
+    return proc.stdout
+
+
+def _clear_repo_git():
+    return _push_env({name: None for name in _repo_git_names()})
+
+
+def _copy_harness(repo):
+    harness = os.path.join(repo, "setup", "tests", "harness")
+    os.makedirs(harness)
+    for name in (
+        "mutate.py",
+        "mutant_files.py",
+        "mutant_defs.py",
+        "mutate_shards.py",
+        "mutate-full-state.py",
+    ):
+        shutil.copy(os.path.join(HERE, name), os.path.join(harness, name))
+
+
+def _add_catalog_id(text, expr, mid="M900"):
+    needle = "\n}\nSUITE_OF = {\n"
+    if needle not in text:
+        raise RuntimeError("catalog")
+    text = text.replace(
+        needle,
+        "\n '%s': (%s, 'OLDQQ', 'NEWQQ', 'what', ['A1']),\n}\nSUITE_OF = {\n" % (mid, expr),
+        1,
+    )
+    suite = "    '%s': 'test-mutate-shards.sh',\n}" % "M312"
+    if suite not in text:
+        raise RuntimeError("catalog")
+    text = text.replace(
+        suite,
+        "    'M312': 'test-mutate-shards.sh',\n    '%s': 'test-attacks.sh',\n}" % mid,
+        1,
+    )
+    return text
+
+
+def _add_ci_id(text, mid="M900"):
+    needle = '    "M312",\n]'
+    if needle not in text:
+        raise RuntimeError("catalog")
+    return text.replace(needle, '    "M312",\n    "%s",\n]' % mid, 1)
+
+
+def _add_files_id(text, files_expr, mid="M900"):
+    needle = '    "M312": ["setup/tests/harness/mutate_shards.py"],\n}'
+    if needle not in text:
+        raise RuntimeError("catalog")
+    return text.replace(
+        needle,
+        '    "M312": ["setup/tests/harness/mutate_shards.py"],\n    "%s": [%s],\n}' % (mid, files_expr),
+        1,
+    )
+
+
+def _two_commit_repo(pr_mutate, pr_files=None, both_files=None, prepare=None):
+    repo = tempfile.mkdtemp(prefix="cat-")
+    _copy_harness(repo)
+    _write_rel(repo, "setup/tests/harness/note.txt", "OLDQQ\n")
+    if both_files:
+        for rel, text in both_files.items():
+            _write_rel(repo, rel, text)
+    if prepare:
+        prepare(repo)
+    _plan_git(repo, "init", "-q", "-b", "main")
+    _plan_git(repo, "add", "-A")
+    _plan_git(repo, "commit", "-qm", "base")
+    _plan_git(repo, "checkout", "-q", "-b", "pr")
+    path = os.path.join(repo, "setup", "tests", "harness", "mutate.py")
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read()
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(pr_mutate(text))
+    if pr_files:
+        files_path = os.path.join(repo, "setup", "tests", "harness", "mutant_files.py")
+        with open(files_path, encoding="utf-8") as handle:
+            files = handle.read()
+        with open(files_path, "w", encoding="utf-8") as handle:
+            handle.write(pr_files(files))
+    _plan_git(repo, "add", "-A")
+    _plan_git(repo, "commit", "-qm", "pr")
+    head = _plan_git(repo, "rev-parse", "HEAD").decode().strip()
+    _plan_git(repo, "checkout", "-q", "main")
+    return repo, head
+
+
+def _resolve_at(repo, sha):
+    plan_dir = tempfile.mkdtemp(prefix="plan-")
+    env = _env_without_repo_git({
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+        "LANG": "C.UTF-8",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "SHA": sha,
+        "BASE_REF": "main",
+        "DEFAULT_BRANCH": "main",
+        "PLAN_DIR": plan_dir,
+        "REPO_ROOT": repo,
+    })
+    proc = subprocess.run(
+        [sys.executable, os.path.join(HERE, "mutate_shards.py"), "resolve"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    return proc, plan_dir
+
+
+def _planned(repo, sha):
+    old = _clear_repo_git()
+    try:
+        try:
+            rc, info = ms.decide_plan(repo, sha, "main")
+        except Exception:
+            return None
+    finally:
+        _pop_env(old)
+    if rc != 0 or not info or not info.get("plan"):
+        return None
+    return info
+
+
+def _closing(stderr):
+    return "mutants: catalog path check failed and no plan was written" in stderr
+
+
+def _no_plan(plan_dir):
+    if os.path.isfile(os.path.join(plan_dir, "plan.json")):
+        return False
+    if os.path.isdir(os.path.join(plan_dir, "tree")):
+        return False
+    return True
+
+
+SA57_STDERR = []
+SA58_STDERR = []
+SA59_STDERR = []
+SA61_STDERR = []
+SA59_DIGESTS = []
+
+
+def _shape_variant(expr, token, both_files=None, prepare=None):
+    repo, head = _two_commit_repo(
+        lambda text: _add_catalog_id(text, expr),
+        _add_ci_id,
+        both_files=both_files,
+        prepare=prepare,
+    )
+    plan_dir = None
+    try:
+        info = _planned(repo, head)
+        if info is None or "M900" not in info["plan"]:
+            return False, ""
+        proc, plan_dir = _resolve_at(repo, head)
+        err = proc.stderr
+        ok = (
+            proc.returncode != 0
+            and "mutants: catalog path" in err
+            and re.search(r"(^|\s)shape(\s|$)", err)
+            and _closing(err)
+            and token not in err
+            and token not in proc.stdout
+            and _no_plan(plan_dir)
+        )
+        return ok, err
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        if plan_dir:
+            shutil.rmtree(plan_dir, ignore_errors=True)
+
+
+def case_s_a57():
+    """A planned path outside the shape rule aborts before a plan is written."""
+    del SA57_STDERR[:]
+    space = "tests/harness/spaced qqpath.txt"
+    both = {"setup/tests/harness/spaced qqpath.txt": "OLDQQ\n"}
+    variants = [
+        (repr(space), "qqpath", both, None),
+        (repr("tests/harness/qqpath/.GiT/note.txt"), "qqpath", None, None),
+        (repr("tests/harness/-qqpath.txt"), "qqpath", None, None),
+        (repr("tests/harness/" + ("qqpath" + ("q" * 250))), "qqpath", None, None),
+        (repr("qqpath" + ("q" * 1100)), "qqpath", None, None),
+    ]
+    first = True
+    for expr, token, files, prepare in variants:
+        ok, err = _shape_variant(expr, token, files, prepare)
+        SA57_STDERR.append(err)
+        if first and not ok:
+            return False
+        first = False
+        if not ok:
+            return False
+    return True
+
+
+def _tree_variant(pr_mutate, token, side_head=False, prepare=None, pr_files=None):
+    repo, head = _two_commit_repo(pr_mutate, pr_files or _add_ci_id, prepare=prepare)
+    plan_dir = None
+    try:
+        info = _planned(repo, head)
+        if info is None or "M900" not in info["plan"]:
+            return False, ""
+        proc, plan_dir = _resolve_at(repo, head)
+        err = proc.stderr
+        ok = (
+            proc.returncode != 0
+            and re.search(r"(^|\s)tree(\s|$)", err)
+            and "M900" in err
+            and _closing(err)
+            and _no_plan(plan_dir)
+        )
+        if side_head and not re.search(r"(^|\s)head(\s|$)", err):
+            ok = False
+        if token and token not in err:
+            ok = False
+        return ok, err
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        if plan_dir:
+            shutil.rmtree(plan_dir, ignore_errors=True)
+
+
+def case_s_a58():
+    """A shape-clean path that is not a regular file at the head aborts."""
+    del SA58_STDERR[:]
+    note = "'tests/harness/note.txt'"
+
+    def base_id(text):
+        return _add_catalog_id(text, note)
+
+    def absent(text):
+        return _add_catalog_id(text, "'tests/harness/absentqq.txt'")
+
+    def directory(text):
+        return _add_catalog_id(text, "'tests/harness'")
+
+    def link(text):
+        return _add_catalog_id(text, "'tests/harness/linkqq.txt'")
+
+    def files_only(text):
+        return _add_catalog_id(text, note)
+
+    def files_table(text):
+        return _add_files_id(_add_ci_id(text), "'setup/tests/harness/absentfileqq.txt'")
+
+    def retarget(text):
+        return text.replace(
+            "('tests/harness/note.txt', 'OLDQQ', 'NEWQQ', 'what', ['A1'])",
+            "('tests/harness/otherqq.txt', 'OLDQQ', 'NEWQQ', 'what', ['A1'])",
+            1,
+        )
+
+    def make_link(repo):
+        os.symlink("note.txt", os.path.join(repo, "setup", "tests", "harness", "linkqq.txt"))
+
+    variants = [
+        (absent, "absentqq", False, None, None),
+        (directory, "setup/tests/harness", False, None, None),
+        (link, "linkqq", False, make_link, None),
+        (files_only, "absentfileqq", False, None, files_table),
+    ]
+    for mutate_fn, token, side, prepare, files_fn in variants:
+        files = files_fn if files_fn else _add_ci_id
+        ok, err = _tree_variant(mutate_fn, token, side, prepare, files)
+        SA58_STDERR.append(err)
+        if not ok:
+            return False
+    repo, head = _two_commit_repo(base_id, _add_ci_id)
+    try:
+        _plan_git(repo, "checkout", "-q", "pr")
+        path = os.path.join(repo, "setup", "tests", "harness", "mutate.py")
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(retarget(text))
+        _plan_git(repo, "add", "-A")
+        _plan_git(repo, "commit", "-qm", "retarget")
+        head = _plan_git(repo, "rev-parse", "HEAD").decode().strip()
+        _plan_git(repo, "checkout", "-q", "main")
+        info = _planned(repo, head)
+        if info is None or "M900" not in info["plan"]:
+            return False
+        proc, plan_dir = _resolve_at(repo, head)
+        err = proc.stderr
+        SA58_STDERR.append(err)
+        ok = (
+            proc.returncode != 0
+            and re.search(r"(^|\s)head(\s|$)", err)
+            and re.search(r"(^|\s)tree(\s|$)", err)
+            and "M900" in err
+            and "otherqq" in err
+            and _closing(err)
+            and _no_plan(plan_dir)
+        )
+        shutil.rmtree(plan_dir, ignore_errors=True)
+        return ok
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def _hostile(expr, token, pr_files=None, prefix_text=None, both_mutate=None):
+    def pr_mutate(text):
+        if prefix_text:
+            text = prefix_text + text
+        if both_mutate:
+            text = both_mutate(text)
+        return _add_catalog_id(text, expr)
+
+    repo, head = _two_commit_repo(pr_mutate, pr_files or _add_ci_id)
+    plan_dir = None
+    folder = tempfile.mkdtemp(prefix="sent-")
+    sentinel = os.path.join(folder, "keep.txt")
+    blob = b"sentinel-bytes-qq\n"
+    with open(sentinel, "wb") as handle:
+        handle.write(blob)
+    before = hashlib.sha256(blob).hexdigest()
+    try:
+        if not os.path.isfile(sentinel):
+            return False, "", before, before
+        info = _planned(repo, head)
+        if info is None or not info["plan"]:
+            return False, "", before, before
+        proc, plan_dir = _resolve_at(repo, head)
+        after = hashlib.sha256(open(sentinel, "rb").read()).hexdigest()
+        err = proc.stderr
+        ok = (
+            proc.returncode != 0
+            and "mutants: catalog path" in err
+            and _closing(err)
+            and token not in err
+            and token not in proc.stdout
+            and before == after
+            and _no_plan(plan_dir)
+        )
+        return ok, err, before, after
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        shutil.rmtree(folder, ignore_errors=True)
+        if plan_dir:
+            shutil.rmtree(plan_dir, ignore_errors=True)
+
+
+def _ok_counts(info):
+    def walk(defs):
+        target = extra = files = 0
+        for mid, spec in defs.M.items():
+            if isinstance(spec, (list, tuple)) and spec and isinstance(spec[0], str):
+                target += 1
+            for other in defs.extras(mid):
+                if other in defs.M:
+                    other_spec = defs.M[other]
+                    if isinstance(other_spec, (list, tuple)) and other_spec and isinstance(other_spec[0], str):
+                        extra += 1
+            table = defs.files if mid in (defs.files or {}) else mf.FILES
+            entry = table.get(mid, [])
+            if isinstance(entry, (list, tuple)) and all(isinstance(item, str) for item in entry):
+                files += len(entry)
+        return target, extra, files
+
+    imported = 0
+    for entry in mf.FILES.values():
+        if isinstance(entry, (list, tuple)):
+            imported += len(entry)
+    mt, me, mf_count = walk(info["main"])
+    ht, he, hf = walk(info["pr"])
+    tree = 0
+    for mid in info["plan"]:
+        if mid in info["pr"].M:
+            tree += len(ms.effective_routes(info["pr"], mf.FILES, mid))
+    return [len(info["plan"]), mt, me, mf_count + imported, ht, he, hf, tree]
+
+
+def case_s_a59():
+    """Hostile catalog routes abort and leave an outside file unchanged."""
+    del SA59_STDERR[:]
+    del SA59_DIGESTS[:]
+    variants = [
+        (repr("../../qqpath"), "qqpath", None, None),
+        ("'\\x2e\\x2e/\\x2e\\x2e/qqpath'", "qqpath", None, None),
+        ("'.' '.' '/' '.' '.' '/' 'qqpath'", "qqpath", None, None),
+        ("K", "qqpath", None, "K = '../../qqpath'\n"),
+        (repr("scripts/../../qqpath"), "qqpath", None, None),
+        (repr(".github/../../qqpath"), "qqpath", None, None),
+        (repr("/abs/qqpath"), "qqpath", None, None),
+        (repr("foo\\qqpath"), "qqpath", None, None),
+    ]
+    # The constant is replaced, not assigned a second time.
+    variants = [item for item in variants if item[0] != "K"]
+    for expr, token, files, prefix in variants:
+        ok, err, before, after = _hostile(expr, token, files, prefix)
+        SA59_STDERR.append(err)
+        SA59_DIGESTS.append((before, after))
+        if not ok:
+            return False
+
+    def use_constant(text):
+        return text.replace("K = 'keel.sh'\n", "K = '../../qqpath'\n", 1)
+
+    repo, head = _two_commit_repo(use_constant, lambda text: text)
+    plan_dir = None
+    folder = tempfile.mkdtemp(prefix="sent-")
+    try:
+        sentinel = os.path.join(folder, "keep.txt")
+        blob = b"sentinel-bytes-qq\n"
+        open(sentinel, "wb").write(blob)
+        before = hashlib.sha256(blob).hexdigest()
+        info = _planned(repo, head)
+        if info is None or not info["plan"]:
+            return False
+        proc, plan_dir = _resolve_at(repo, head)
+        after = hashlib.sha256(open(sentinel, "rb").read()).hexdigest()
+        err = proc.stderr
+        SA59_STDERR.append(err)
+        SA59_DIGESTS.append((before, after))
+        if not (
+            proc.returncode != 0
+            and "mutants: catalog path" in err
+            and _closing(err)
+            and "qqpath" not in err
+            and before == after
+            and _no_plan(plan_dir)
+        ):
+            return False
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        shutil.rmtree(folder, ignore_errors=True)
+        if plan_dir:
+            shutil.rmtree(plan_dir, ignore_errors=True)
+    # Hostile target reached through another id's extra link.
+    def linked(text):
+        text = _add_catalog_id(text, repr("../../qqpath"), "M900")
+        text = text.replace(
+            "\n}\nSUITE_OF = {\n",
+            "\n 'M901': ('tests/harness/note.txt', 'OLDQQ', 'NEWQQ', 'what', ['A1']),\n}\nSUITE_OF = {\n",
+            1,
+        )
+        text = text.replace(
+            "EXTRA_EDITS = {\n    'M15': ['M14'],\n}",
+            "EXTRA_EDITS = {\n    'M15': ['M14'],\n    'M901': ['M900'],\n}",
+            1,
+        )
+        return text
+
+    def both_ids(text):
+        return text.replace(
+            '    "M312",\n]',
+            '    "M312",\n    "M900",\n    "M901",\n]',
+            1,
+        )
+
+    repo, head = _two_commit_repo(linked, both_ids)
+    plan_dir = None
+    folder = tempfile.mkdtemp(prefix="sent-")
+    try:
+        sentinel = os.path.join(folder, "keep.txt")
+        blob = b"sentinel-bytes-qq\n"
+        open(sentinel, "wb").write(blob)
+        before = hashlib.sha256(blob).hexdigest()
+        info = _planned(repo, head)
+        if info is None or "M901" not in info["plan"]:
+            return False
+        proc, plan_dir = _resolve_at(repo, head)
+        after = hashlib.sha256(open(sentinel, "rb").read()).hexdigest()
+        err = proc.stderr
+        SA59_STDERR.append(err)
+        SA59_DIGESTS.append((before, after))
+        if not (
+            proc.returncode != 0
+            and "mutants: catalog path" in err
+            and _closing(err)
+            and "qqpath" not in err
+            and before == after
+            and _no_plan(plan_dir)
+        ):
+            return False
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        shutil.rmtree(folder, ignore_errors=True)
+        if plan_dir:
+            shutil.rmtree(plan_dir, ignore_errors=True)
+    # Hostile files entry.
+    ok, err, before, after = _hostile(
+        "'tests/harness/note.txt'",
+        "qqpath",
+        lambda text: _add_files_id(_add_ci_id(text), repr("setup/../../qqpath")),
+    )
+    SA59_STDERR.append(err)
+    SA59_DIGESTS.append((before, after))
+    if not ok:
+        return False
+    # Hostile value on an id that is not planned, with another id planned.
+    def shared_constant(text):
+        return text.replace("K = 'keel.sh'\n", "K = '../../qqpath'\n", 1)
+
+    def planned_clean(text):
+        return _add_catalog_id(shared_constant(text), "'tests/harness/note.txt'", "M901")
+
+    repo = tempfile.mkdtemp(prefix="cat-")
+    plan_dir = None
+    folder = tempfile.mkdtemp(prefix="sent-")
+    try:
+        _copy_harness(repo)
+        _write_rel(repo, "setup/tests/harness/note.txt", "OLDQQ\n")
+        path = os.path.join(repo, "setup", "tests", "harness", "mutate.py")
+        with open(path, encoding="utf-8") as handle:
+            base = handle.read()
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(shared_constant(base))
+        _plan_git(repo, "init", "-q", "-b", "main")
+        _plan_git(repo, "add", "-A")
+        _plan_git(repo, "commit", "-qm", "base")
+        _plan_git(repo, "checkout", "-q", "-b", "pr")
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(planned_clean(open(os.path.join(HERE, "mutate.py"), encoding="utf-8").read()))
+        files_path = os.path.join(repo, "setup", "tests", "harness", "mutant_files.py")
+        with open(files_path, encoding="utf-8") as handle:
+            files = handle.read()
+        with open(files_path, "w", encoding="utf-8") as handle:
+            handle.write(_add_ci_id(files, "M901"))
+        _plan_git(repo, "add", "-A")
+        _plan_git(repo, "commit", "-qm", "pr")
+        head = _plan_git(repo, "rev-parse", "HEAD").decode().strip()
+        _plan_git(repo, "checkout", "-q", "main")
+        sentinel = os.path.join(folder, "keep.txt")
+        blob = b"sentinel-bytes-qq\n"
+        open(sentinel, "wb").write(blob)
+        before = hashlib.sha256(blob).hexdigest()
+        info = _planned(repo, head)
+        if info is None or "M901" not in info["plan"] or "M30" in info["plan"]:
+            return False
+        proc, plan_dir = _resolve_at(repo, head)
+        after = hashlib.sha256(open(sentinel, "rb").read()).hexdigest()
+        err = proc.stderr
+        SA59_STDERR.append(err)
+        SA59_DIGESTS.append((before, after))
+        if not (
+            proc.returncode != 0
+            and "mutants: catalog path" in err
+            and _closing(err)
+            and "qqpath" not in err
+            and before == after
+            and _no_plan(plan_dir)
+        ):
+            return False
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        shutil.rmtree(folder, ignore_errors=True)
+        if plan_dir:
+            shutil.rmtree(plan_dir, ignore_errors=True)
+    # Clean values plan and pack, with one count line.
+    repo, head = _two_commit_repo(
+        lambda text: _add_catalog_id(text, "'tests/harness/note.txt'"),
+        _add_ci_id,
+    )
+    plan_dir = None
+    try:
+        info = _planned(repo, head)
+        if info is None or "M900" not in info["plan"]:
+            return False
+        proc, plan_dir = _resolve_at(repo, head)
+        lines = [line for line in proc.stderr.splitlines() if line.startswith("mutants: catalog paths ok")]
+        if proc.returncode != 0 or len(lines) != 1 or not os.path.isfile(os.path.join(plan_dir, "plan.json")):
+            return False
+        nums = [int(part) for part in lines[0].split()[4:]]
+        return nums == _ok_counts(info)
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        if plan_dir:
+            shutil.rmtree(plan_dir, ignore_errors=True)
+
+
+def _mini_defs(target):
+    source = (
+        "M = {'M900': (%s, 'OLDQQ', 'NEWQQ', 'what', ['A1'])}\n"
+        "SUITE_OF = {'M900': 'test-attacks.sh'}\n"
+        "EXTRA_EDITS = {}\n"
+        "COPY_LIST = ['keel.sh']\n"
+    ) % repr(target)
+    return md.load_mutate(source)
+
+
+def _contain(target, build):
+    parent = tempfile.mkdtemp(prefix="edit-")
+    try:
+        dest = os.path.join(parent, "tree")
+        os.makedirs(dest)
+        sentinel = build(parent, dest)
+        if not os.path.isfile(sentinel):
+            return False
+        before = open(sentinel, "rb").read()
+        try:
+            ms.apply_def_edits(dest, _mini_defs(target), "M900")
+        except ms.ShardError as err:
+            text = str(err)
+            after = open(sentinel, "rb").read()
+            return "M900" in text and "containment" in text and "qqpath" not in text and after == before
+        return False
+    finally:
+        shutil.rmtree(parent, ignore_errors=True)
+
+
+def case_s_a60():
+    """The edit step stays inside its tree and does not follow a symlink."""
+    def escape(parent, dest):
+        path = os.path.join(parent, "qqpath")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("OLDQQ\n")
+        return path
+
+    def middle(parent, dest):
+        outside = os.path.join(parent, "outside")
+        os.makedirs(outside)
+        path = os.path.join(outside, "keel.sh")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("OLDQQ\n")
+        os.symlink(outside, os.path.join(dest, "setup"))
+        return path
+
+    def final(parent, dest):
+        os.makedirs(os.path.join(dest, "setup"))
+        path = os.path.join(parent, "qqpath")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("OLDQQ\n")
+        os.symlink(path, os.path.join(dest, "setup", "keel.sh"))
+        return path
+
+    if not _contain("../../qqpath", escape):
+        return False
+    if not _contain("keel.sh", middle):
+        return False
+    if not _contain("keel.sh", final):
+        return False
+    parent = tempfile.mkdtemp(prefix="edit-")
+    try:
+        dest = os.path.join(parent, "tree")
+        os.makedirs(os.path.join(dest, "setup"))
+        target = os.path.join(dest, "setup", "keel.sh")
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write("OLDQQ\n")
+        sentinel = os.path.join(parent, "qqpath")
+        with open(sentinel, "w", encoding="utf-8") as handle:
+            handle.write("OLDQQ\n")
+        before = open(sentinel, "rb").read()
+        ms.apply_def_edits(dest, _mini_defs("keel.sh"), "M900")
+        if open(target, encoding="utf-8").read() != "NEWQQ\n" or open(sentinel, "rb").read() != before:
+            return False
+        os.remove(target)
+        try:
+            ms.apply_def_edits(dest, _mini_defs("keel.sh"), "M900")
+        except ms.ShardError as err:
+            text = str(err)
+            return "missing" in text and "M900" in text and "keel.sh" in text
+        return False
+    finally:
+        shutil.rmtree(parent, ignore_errors=True)
+
+
+def _entry_absent(dest, token):
+    for dirpath, _dirs, files in os.walk(dest):
+        for name in files:
+            if token in name:
+                return False
+    return True
+
+
+def _listing_case(build, token):
+    repo = tempfile.mkdtemp(prefix="list-")
+    dest = tempfile.mkdtemp(prefix="listout-")
+    plan_dir = None
+    old = _clear_repo_git()
+    try:
+        _copy_harness(repo)
+        _write_rel(repo, "setup/tests/harness/note.txt", "OLDQQ\n")
+        _plan_git(repo, "init", "-q", "-b", "main")
+        _plan_git(repo, "add", "-A")
+        _plan_git(repo, "commit", "-qm", "base")
+        _plan_git(repo, "checkout", "-q", "-b", "pr")
+        path = os.path.join(repo, "setup", "tests", "harness", "mutate.py")
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write("\n")
+        build(repo)
+        _plan_git(repo, "add", "-A")
+        _plan_git(repo, "commit", "-qm", "pr")
+        head = _plan_git(repo, "rev-parse", "HEAD").decode().strip()
+        _plan_git(repo, "checkout", "-q", "main")
+        raised = False
+        try:
+            ms.materialize_tree(repo, head, dest)
+        except ms.ShardError as err:
+            raised = str(err).startswith("tree path ") and token not in str(err)
+        if not raised or not _entry_absent(dest, token):
+            return False, ""
+        info = _planned(repo, head)
+        if info is None or not info["plan"]:
+            return False, ""
+        proc, plan_dir = _resolve_at(repo, head)
+        err = proc.stderr
+        if token in err or token in proc.stdout:
+            return False, err
+        return True, err
+    finally:
+        _pop_env(old)
+        shutil.rmtree(repo, ignore_errors=True)
+        shutil.rmtree(dest, ignore_errors=True)
+        if plan_dir:
+            shutil.rmtree(plan_dir, ignore_errors=True)
+
+
+def _extra_tree(repo, sha, name):
+    tree = _plan_git(repo, "rev-parse", "%s^{tree}" % sha).decode().strip()
+    listing = _plan_git(repo, "ls-tree", tree)
+    oid = _plan_git(repo, "hash-object", "-w", "--stdin", inp=b"z\n").decode().strip()
+    extra = ("100644 blob %s\t%s\n" % (oid, name)).encode()
+    new_tree = _plan_git(repo, "mktree", inp=listing + extra).decode().strip()
+    return _plan_git(repo, "commit-tree", new_tree, "-p", sha, inp=b"extra\n").decode().strip()
+
+
+def case_s_a61():
+    """A listing path with a control character, break, or dot segment is refused."""
+    del SA61_STDERR[:]
+
+    def backslash(repo):
+        _write_rel(repo, "qqpath\\name.txt", "x\n")
+
+    def newline_link(repo):
+        os.symlink("note.txt", os.path.join(repo, "aa\n::qq"))
+
+    ok, err = _listing_case(backslash, "qqpath")
+    SA61_STDERR.append(err)
+    if not ok:
+        return False
+    ok, err = _listing_case(newline_link, "::qq")
+    SA61_STDERR.append(err)
+    if not ok:
+        return False
+    repo = tempfile.mkdtemp(prefix="list-")
+    old = _clear_repo_git()
+    try:
+        _copy_harness(repo)
+        _write_rel(repo, "setup/tests/harness/note.txt", "plain\n")
+        _plan_git(repo, "init", "-q", "-b", "main")
+        _plan_git(repo, "add", "-A")
+        _plan_git(repo, "commit", "-qm", "base")
+        base = _plan_git(repo, "rev-parse", "HEAD").decode().strip()
+        two = "." + "."
+        for name in (two, "." + "git"):
+            sha = _extra_tree(repo, base, name)
+            dest = tempfile.mkdtemp(prefix="listout-")
+            try:
+                try:
+                    ms.materialize_tree(repo, sha, dest)
+                except ms.ShardError as err:
+                    if not str(err).startswith("tree path ") or name in str(err):
+                        return False
+                else:
+                    return False
+            finally:
+                shutil.rmtree(dest, ignore_errors=True)
+        dest = tempfile.mkdtemp(prefix="clean-")
+        try:
+            ms.materialize_tree(repo, base, dest)
+            got = open(os.path.join(dest, "setup", "tests", "harness", "note.txt"), "rb").read()
+            raw = _plan_git(repo, "show", "%s:setup/tests/harness/note.txt" % base)
+            return got == raw
+        finally:
+            shutil.rmtree(dest, ignore_errors=True)
+    finally:
+        _pop_env(old)
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def case_s_a62():
+    """The real catalog and tree pass, using only tracked files."""
+    started = time.monotonic()
+    root = ROOT
+    entry = os.path.join(root, ".git")
+    try:
+        present = os.path.lexists(entry)
+    except OSError:
+        return False
+    if not present:
+        print("S-A62: skipped; repository root has no .git entry")
+        return True
+    folders = []
+    old = _clear_repo_git()
+    try:
+        top = _plan_git(root, "rev-parse", "--show-toplevel").decode().strip()
+        if os.path.realpath(top) != os.path.realpath(root):
+            return False
+        listed = _plan_git(root, "-c", "core.quotePath=false", "ls-files", "-z")
+        names = [item.decode("utf-8") for item in listed.split(b"\0") if item]
+        archive = _plan_git(root, "archive", "--format=tar", "HEAD")
+        work = tempfile.mkdtemp(prefix="sa62-")
+        folders.append(work)
+        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as tar:
+            safe = []
+            for member in tar.getmembers():
+                if member.issym() or member.islnk() or member.name.startswith("/") or ".." in member.name.split("/"):
+                    return False
+                safe.append(member)
+            tar.extractall(work, members=safe)
+        extracted = []
+        for dirpath, _dirs, files in os.walk(work):
+            for name in files:
+                extracted.append(os.path.relpath(os.path.join(dirpath, name), work))
+        if sorted(extracted) != sorted(names):
+            return False
+        _plan_git(work, "init", "-q", "-b", "main")
+        _plan_git(work, "add", "-A")
+        _plan_git(work, "commit", "-qm", "base")
+        sha = _plan_git(work, "rev-parse", "HEAD").decode().strip()
+        defs = ms.combined_defs(
+            open(os.path.join(work, "setup/tests/harness/mutate.py"), encoding="utf-8").read(),
+            open(os.path.join(work, "setup/tests/harness/mutant_files.py"), encoding="utf-8").read(),
+        )
+        plan = sorted(defs.ids, key=md.id_key)
+        info = {"plan": plan, "main": defs, "pr": defs}
+        buf = io.StringIO()
+        held = sys.stderr
+        sys.stderr = buf
+        try:
+            rc = ms.check_catalog_paths(work, sha, info)
+        finally:
+            sys.stderr = held
+        if rc != 0 or "mutants: catalog paths ok" not in buf.getvalue():
+            return False
+        tree = tempfile.mkdtemp(prefix="sa62-")
+        folders.append(tree)
+        ms.materialize_tree(work, sha, tree)
+        targets = set()
+        files_checked = 0
+        for mid in plan:
+            for route, decoded in ms.effective_routes(defs, mf.FILES, mid):
+                ms.require_contained(tree, decoded, mid)
+                if route == "target":
+                    targets.add(decoded)
+                if route == "files":
+                    files_checked += 1
+        if len(plan) < S_A62_MIN_IDS or len(targets) < S_A62_MIN_TARGET_PATHS:
+            return False
+        _plan_git(work, "checkout", "-q", "-b", "next")
+        seen = set()
+        for mid, spec in defs.M.items():
+            if isinstance(spec, (list, tuple)) and spec and isinstance(spec[0], str):
+                seen.add(ms.repo_rel(spec[0]))
+            table = defs.files if mid in (defs.files or {}) else mf.FILES
+            for path in table.get(mid, []):
+                if isinstance(path, str):
+                    seen.add(ms.repo_rel(ms._strip_setup(path)))
+        for rel in seen:
+            full = os.path.join(work, rel)
+            if os.path.isfile(full) and not os.path.islink(full):
+                with open(full, "a", encoding="utf-8") as handle:
+                    handle.write("\n")
+        _plan_git(work, "add", "-A")
+        _plan_git(work, "commit", "-qm", "append")
+        head = _plan_git(work, "rev-parse", "HEAD").decode().strip()
+        _plan_git(work, "checkout", "-q", "main")
+        rc, decided = ms.decide_plan(work, head, "main")
+        if rc != 0 or not decided or not decided["plan"]:
+            return False
+        buf = io.StringIO()
+        sys.stderr = buf
+        try:
+            rc = ms.check_catalog_paths(work, head, decided)
+        finally:
+            sys.stderr = held
+        if rc != 0:
+            return False
+        link_parent = tempfile.mkdtemp(prefix="sa62-")
+        folders.append(link_parent)
+        via = os.path.join(link_parent, "via")
+        os.symlink(os.path.dirname(tree), via)
+        linked = os.path.join(via, os.path.basename(tree))
+        for mid in plan:
+            for _route, decoded in ms.effective_routes(defs, mf.FILES, mid):
+                ms.require_contained(linked, decoded, mid)
+        elapsed = time.monotonic() - started
+        if elapsed >= 10:
+            return False
+        print("S-A62: %d %d %d %.3f" % (len(plan), len(targets), files_checked, elapsed))
+        return True
+    except Exception:
+        return False
+    finally:
+        sys.stderr = sys.__stderr__
+        _pop_env(old)
+        for folder in folders:
+            shutil.rmtree(folder, ignore_errors=True)
+
+
 CASES = {
     "S-H1": case_s_h1,
     "S-H2": case_s_h2,
@@ -4457,6 +5400,12 @@ CASES = {
     "S-A54": case_s_a54,
     "S-A55": case_s_a55,
     "S-A56": case_s_a56,
+    "S-A57": case_s_a57,
+    "S-A58": case_s_a58,
+    "S-A59": case_s_a59,
+    "S-A60": case_s_a60,
+    "S-A61": case_s_a61,
+    "S-A62": case_s_a62,
     "H1": case_h1,
     "H2": case_h2,
     "H3": case_h3,

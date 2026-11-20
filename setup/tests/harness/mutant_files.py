@@ -281,6 +281,11 @@ FILES = {
     "M305": ["setup/tests/harness/mutant-result.py"],
     "M306": ["scripts/check-scope.py"],
     "M307": ["setup/tests/harness/gate_step_check.py"],
+    "M308": ["setup/tests/harness/mutate_shards.py"],
+    "M309": ["setup/tests/harness/mutate_shards.py"],
+    "M310": ["setup/tests/harness/mutate_shards.py"],
+    "M311": ["setup/tests/harness/mutate_shards.py"],
+    "M312": ["setup/tests/harness/mutate_shards.py"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -511,6 +516,11 @@ CI_IDS = [
     "M305",
     "M306",
     "M307",
+    "M308",
+    "M309",
+    "M310",
+    "M311",
+    "M312",
 ]
 
 # Docker mount probes, plus M01. Pull-request CI skips these. The daily full run includes them.
@@ -776,6 +786,11 @@ META = {
     "M305": ("checkout-head", "fail-closed"),
     "M306": ("ambiguous-workflow", "decision"),
     "M307": ("checkout-full-sha", "decision"),
+    "M308": ("catalog-path-check", "fail-closed"),
+    "M309": ("catalog-path-shape", "fail-closed"),
+    "M310": ("catalog-path-tree", "fail-closed"),
+    "M311": ("edit-containment", "fail-closed"),
+    "M312": ("tree-path-check", "fail-closed"),
 }
 
 # CI ids, in CI_IDS order. Pull-request selection never includes OFFLINE_IDS.
