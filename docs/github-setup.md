@@ -75,6 +75,7 @@ Apply is idempotent. Run it again after each layer is merged. A setting that alr
 | Actions token | Default `GITHUB_TOKEN` is read-only and cannot approve pull requests. |
 | Fork approval | On a public repository, require approval for fork pull request workflows from all outside collaborators. On a private repository the step is OK: `not applicable (private repo)`. |
 | Allowed actions | GitHub-owned actions, plus the exact `uses:` values in workflows on the default branch. |
+| Labels | Create `workflow` and `process-files` when either is missing; existing labels stay as they are. Verify also checks that the labeler config and workflow are on the default branch and use the pinned labeler action. See [why](why.md#labels). |
 
 `require-checks` takes two passes. The first run of `setup/apply-github-rules.sh` stays NOT YET until `checks.yml` and `scope.yml` are on the default branch and GitHub Actions has reported both `keel-gate` and `keel-process-files-separate`. Apply then prints a separate block at the end. The block names what is not ready, why, and says to run `setup/apply-github-rules.sh` again after the first pull request has run the checks. Open that pull request, wait for both checks, and run apply again. The second run creates the ruleset. NOT YET does not by itself make the script fail.
 

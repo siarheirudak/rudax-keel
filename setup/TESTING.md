@@ -557,7 +557,7 @@ Expected: refused; the agent account is not an admin. `why attack-red` is still 
 
 Expected: a commit status posted outside GitHub Actions does not satisfy `require-checks` for `keel-gate`; merge stays `BLOCKED` while the Actions check is red. `BEHIND` does not count.
 
-**(d) Process file and a normal file**
+**(d) Workflow file and a normal file**
 
 The agent token needs the `workflow` scope. Without it, GitHub rejects the push of `checks.yml` and this case does not count.
 
@@ -567,7 +567,7 @@ git switch -c attack-mix origin/main
 printf '\n# always pass\n' >> .github/workflows/checks.yml
 printf '%s\n' 'mix' >> README.md
 git add .github/workflows/checks.yml README.md
-git commit -m "attack: mix process and product"
+git commit -m "attack: mix workflow and product"
 git push -u origin attack-mix
 gh pr create --repo OWNER/SANDBOX_REPO --base main --head attack-mix --title "attack: mix" --body "sandbox test"
 gh pr merge attack-mix --repo OWNER/SANDBOX_REPO --"$method"
@@ -588,7 +588,7 @@ git push -u origin attack-process
 gh pr create --repo OWNER/SANDBOX_REPO --base main --head attack-process --title "attack: process only" --body "sandbox test"
 ```
 
-Expected: `keel-process-files-separate` passes. `setup/README.md` and `setup/TESTING.md` are the only ordinary docs under `setup/`, matched as the whole path, so this step edits a setup script. Every other path under `setup/` is a process file, including other Markdown. An agent-rule name such as `AGENTS.md` is still a process file anywhere. This pull request can still weaken the checks. Owner review of a process-only pull request is the control, by design. Do not merge it unless that review is what you mean to test.
+Expected: `keel-process-files-separate` passes. `setup/README.md` and `setup/TESTING.md` are the only ordinary docs under `setup/`, matched as the whole path, so this step edits a setup script. Every other path under `setup/` is a process file, including other Markdown. An agent-rule name such as `AGENTS.md` is still a process file anywhere outside the workflow folders. This pull request can still weaken the checks. Owner review of a process-only pull request is the control, by design. Do not merge it unless that review is what you mean to test.
 
 **(f) Docs only**
 
