@@ -51,7 +51,7 @@ RESIDUAL = (
 ORACLES = {
     "setup/tests/harness/test-attacks.sh": ATTACK,
     "setup/tests/harness/test-attack-results.sh": ["M78"],
-    "setup/tests/harness/test-mutant-result.sh": ["M92", "M93"] + ["M%d" % n for n in range(240, 275) if n != 247] + ["M%d" % n for n in range(275, 287)] + ["M294", "M295", "M296", "M297", "M305", "M306", "M307"],
+    "setup/tests/harness/test-mutant-result.sh": ["M92", "M93"] + ["M%d" % n for n in range(240, 275) if n != 247] + ["M%d" % n for n in range(275, 287)] + ["M294", "M295", "M296", "M297", "M305", "M306", "M307"] + ["M%d" % n for n in range(313, 333)],
     "setup/tests/harness/test-runtime.sh": RUNTIME,
     "setup/tests/harness/test-step4.sh": STEP4,
     "setup/tests/harness/test-step5.sh": STEP5,
@@ -114,12 +114,16 @@ def validate():
     cover_ids = ["M%d" % n for n in range(294, 306)]
     pin_ids = ["M306", "M307"]
     path_ids = ["M308", "M309", "M310", "M311", "M312"]
-    added = len(legacy_ids) + len(step6_ids) + len(p1b_ids) + len(doc_ids) + len(plan_ids) + len(cover_ids) + len(pin_ids) + len(path_ids)
+    labeler_ids = ["M%d" % n for n in range(313, 333)]
+    added = len(legacy_ids) + len(step6_ids) + len(p1b_ids) + len(doc_ids) + len(plan_ids) + len(cover_ids) + len(pin_ids) + len(path_ids) + len(labeler_ids)
     if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93 + added:
         fail("CI id set changed")
-    if mf.CI_IDS[-len(path_ids):] != path_ids:
+    if mf.CI_IDS[-len(labeler_ids):] != labeler_ids:
+        fail("new CI ids are not M313-M332")
+    tail = len(labeler_ids)
+    if mf.CI_IDS[-tail - len(path_ids):-tail] != path_ids:
         fail("new CI ids are not M308-M312")
-    tail = len(path_ids)
+    tail += len(path_ids)
     if mf.CI_IDS[-tail - len(pin_ids):-tail] != pin_ids:
         fail("new CI ids are not M306-M307")
     tail += len(pin_ids)
@@ -177,6 +181,12 @@ def validate():
             fail("%s must target mutate_shards.py with test-mutant-select.py" % mid)
     if mf.FILES.get("M312") != ["setup/tests/harness/mutate_shards.py"] or mutate.SUITE_OF.get("M312") != "test-mutate-shards.sh":
         fail("M312 must target mutate_shards.py with test-mutate-shards.sh")
+    for mid in ["M%d" % n for n in range(313, 326)] + ["M332"]:
+        if mf.FILES.get(mid) != [".github/workflows/labeler.yml"] or mutate.SUITE_OF.get(mid) != "test-mutant-result.sh":
+            fail("%s must target labeler.yml with test-mutant-result.sh" % mid)
+    for mid in ["M%d" % n for n in range(326, 332)]:
+        if mf.FILES.get(mid) != ["scripts/tests/test_gate_jobs.py"] or mutate.SUITE_OF.get(mid) != "test-mutant-result.sh":
+            fail("%s must target test_gate_jobs.py with test-mutant-result.sh" % mid)
     import speed_cases
     if "S-A62" not in speed_cases.SELECT_CASES:
         fail("S-A62 is not in the select group")
@@ -466,7 +476,7 @@ def main():
         exists(path)
         # test_gate_jobs.py also carries M271 and M274 (required check names, P1c).
         if path == "scripts/tests/test_gate_jobs.py":
-            want = ["M92", "M93", "M271", "M274"]
+            want = ["M92", "M93", "M271", "M274"] + ["M%d" % n for n in range(326, 332)]
         elif path == BINDER:
             want = ["M92", "M93", "M294", "M295", "M296", "M297", "M305"]
         else:

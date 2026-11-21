@@ -4466,31 +4466,31 @@ def _add_catalog_id(text, expr, mid="M900"):
         "\n '%s': (%s, 'OLDQQ', 'NEWQQ', 'what', ['A1']),\n}\nSUITE_OF = {\n" % (mid, expr),
         1,
     )
-    suite = "    '%s': 'test-mutate-shards.sh',\n}" % "M312"
+    suite = "    '%s': 'test-mutant-result.sh',\n}" % "M332"
     if suite not in text:
         raise RuntimeError("catalog")
     text = text.replace(
         suite,
-        "    'M312': 'test-mutate-shards.sh',\n    '%s': 'test-attacks.sh',\n}" % mid,
+        "    'M332': 'test-mutant-result.sh',\n    '%s': 'test-attacks.sh',\n}" % mid,
         1,
     )
     return text
 
 
 def _add_ci_id(text, mid="M900"):
-    needle = '    "M312",\n]'
+    needle = '    "M332",\n]'
     if needle not in text:
         raise RuntimeError("catalog")
-    return text.replace(needle, '    "M312",\n    "%s",\n]' % mid, 1)
+    return text.replace(needle, '    "M332",\n    "%s",\n]' % mid, 1)
 
 
 def _add_files_id(text, files_expr, mid="M900"):
-    needle = '    "M312": ["setup/tests/harness/mutate_shards.py"],\n}'
+    needle = '    "M332": [".github/workflows/labeler.yml"],\n}'
     if needle not in text:
         raise RuntimeError("catalog")
     return text.replace(
         needle,
-        '    "M312": ["setup/tests/harness/mutate_shards.py"],\n    "%s": [%s],\n}' % (mid, files_expr),
+        '    "M332": [".github/workflows/labeler.yml"],\n    "%s": [%s],\n}' % (mid, files_expr),
         1,
     )
 
@@ -4885,8 +4885,8 @@ def case_s_a59():
 
     def both_ids(text):
         return text.replace(
-            '    "M312",\n]',
-            '    "M312",\n    "M900",\n    "M901",\n]',
+            '    "M332",\n]',
+            '    "M332",\n    "M900",\n    "M901",\n]',
             1,
         )
 
