@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # keel-doctor: is this machine ready to run the rudax-keel agent harness (variant 2)? bash 3.2+.
-# Usage: keel-doctor.sh [--attacks | --score-log FILE | --pi | --pi-score FILE | --disc | --disc-score FILE]
+# Usage: keel-doctor.sh [--attacks | --score-log FILE | --pi | --pi-score FILE | --disc | --disc-score FILE | --github]
 # env: KEEL_ROOT (default ~/keel-proto), KEEL_REPO (default $KEEL_ROOT/repo), DOCKER (docker | "sudo docker" | podman)
 # Exit: 0 = READY or READY WITH WARNINGS, 1 = NOT READY (a CRITICAL check failed), 2 = usage.
 # Docs: docs/harness-checks-why.md#<id>
@@ -15,6 +15,7 @@ PI_ONLY=0
 PI_SCORE=
 DISC_ONLY=0
 DISC_SCORE=
+GITHUB_ONLY=0
 while [ $# -gt 0 ]; do
   case $1 in
     --attacks) ATTACKS=1;;
@@ -30,6 +31,7 @@ while [ $# -gt 0 ]; do
       PI_SCORE=$1
       PI_ONLY=1;;
     --disc) DISC_ONLY=1;;
+    --github) GITHUB_ONLY=1;;
     --disc-score)
       shift
       [ $# -ge 1 ] || { echo "missing score path" >&2; exit 2; }
@@ -131,6 +133,133 @@ finish() {
   else printf '%s✅ READY%s (%s)\n' "$G$B" "$N" "$summary"; exit 0; fi
 }
 
+# Read require-checks. The child prints one word. Anything else is no result.
+gh01_read_rule() {
+  local ver ids count id enf
+  cd "$KEEL_REPO" || exit 1
+  SCRIPT_DIR=$HERE
+  # shellcheck source=setup/common.sh
+  . "$HERE/common.sh"
+  if ! command -v jq >/dev/null 2>&1; then printf '%s\n' jq; exit 0; fi
+  if ! command -v gh >/dev/null 2>&1; then printf '%s\n' gh; exit 0; fi
+  if ! ver=$(gh_cli_version); then printf '%s\n' version; exit 0; fi
+  if ! version_at_least "$ver" "$MIN_GH_VERSION"; then printf '%s\n' old; exit 0; fi
+  if ! gh_api_collect "repos/{owner}/{repo}/rulesets?includes_parents=false&per_page=100"; then
+    printf '%s\n' list
+    exit 0
+  fi
+  ids=$(ruleset_ids "require-checks")
+  if ! count=$(jq -r 'length' <<<"$ids" 2>/dev/null); then printf '%s\n' list; exit 0; fi
+  case $count in
+    0) printf '%s\n' missing; exit 0;;
+    ""|*[!0-9]*) printf '%s\n' list; exit 0;;
+  esac
+  if [ "$count" -gt 1 ]; then printf '%s\n' duplicate; exit 0; fi
+  id=$(jq -r '.[0]' <<<"$ids")
+  case $id in
+    ""|*[!0-9]*) printf '%s\n' read; exit 0;;
+  esac
+  if ! gh_api "repos/{owner}/{repo}/rulesets/${id}"; then printf '%s\n' read; exit 0; fi
+  enf=$(jq -r '.enforcement // empty' <<<"$GH_API_BODY")
+  if [ "$enf" != active ]; then printf '%s\n' inactive; exit 0; fi
+  if [ "$gh01_compare" = off ]; then printf '%s\n' match; exit 0; fi
+  capture_ruleset_diff "$HERE/rulesets/require-checks.json" "$GH_API_BODY"
+  case $DIFF_RC in
+    0) printf '%s\n' match;;
+    1) printf '%s\n' differs;;
+    *) printf '%s\n' compare;;
+  esac
+  exit 0
+}
+
+run_github_rules() {
+  local gh01_word gh01_status gh01_det gh01_reason gh01_remotes
+  section "GitHub rules"
+  gh01_remote=on # gh01-remote
+  gh01_compare=on # gh01-compare
+  gh01_off=warn # gh01-off
+  gh01_unreadable=warn # gh01-unreadable
+  gh01_default=warn # gh01-default
+  gh01_word=
+  gh01_reason=
+  if [ "$gh01_remote" != off ]; then
+    if ! git -C "$KEEL_REPO" rev-parse --git-dir >/dev/null 2>&1; then
+      gh01_reason="no git repository at KEEL_REPO"
+    else
+      gh01_remotes=$(git -C "$KEEL_REPO" remote 2>/dev/null || true)
+      if [ -z "$gh01_remotes" ]; then
+        gh01_reason="no git remote"
+      elif [ -n "${GH_REPO+x}" ] || [ -n "${GH_HOST+x}" ] || [ -n "${GH_TOKEN+x}" ] || [ -n "${GITHUB_TOKEN+x}" ] || [ -n "${GH_ENTERPRISE_TOKEN+x}" ] || [ -n "${GITHUB_ENTERPRISE_TOKEN+x}" ]; then
+        gh01_reason="GitHub variables in environment"
+      fi
+    fi
+  fi
+  if [ -n "$gh01_reason" ]; then
+    gh01_word=closed
+  else
+    gh01_word=$(gh01_read_rule </dev/null 2>/dev/null) || true
+  fi
+  case $gh01_word in
+    match)
+      gh01_status=pass
+      gh01_det="on and matches setup/rulesets/require-checks.json"
+      ;;
+    missing)
+      gh01_status=$gh01_off
+      gh01_det="not enabled; owner: run setup/apply-github-rules.sh"
+      ;;
+    duplicate)
+      gh01_status=$gh01_off
+      gh01_det="more than one require-checks ruleset; owner: run setup/verify-github-rules.sh"
+      ;;
+    inactive)
+      gh01_status=$gh01_off
+      gh01_det="not enabled (enforcement is not active); owner: run setup/apply-github-rules.sh"
+      ;;
+    differs)
+      gh01_status=$gh01_off
+      gh01_det="differs from setup/rulesets/require-checks.json; owner: run setup/apply-github-rules.sh"
+      ;;
+    jq)
+      gh01_status=$gh01_unreadable
+      gh01_det="cannot read the rule (jq is not on PATH); owner: run setup/verify-github-rules.sh"
+      ;;
+    gh)
+      gh01_status=$gh01_unreadable
+      gh01_det="cannot read the rule (gh is not on PATH); owner: run setup/verify-github-rules.sh"
+      ;;
+    version)
+      gh01_status=$gh01_unreadable
+      gh01_det="cannot read the rule (gh version unknown); owner: run setup/verify-github-rules.sh"
+      ;;
+    old)
+      gh01_status=$gh01_unreadable
+      gh01_det="cannot read the rule (gh is older than 1.7.0); owner: run setup/verify-github-rules.sh"
+      ;;
+    list)
+      gh01_status=$gh01_unreadable
+      gh01_det="cannot read the rule (gh could not list rulesets); owner: run setup/verify-github-rules.sh"
+      ;;
+    read)
+      gh01_status=$gh01_unreadable
+      gh01_det="cannot read the rule (gh could not read the ruleset); owner: run setup/verify-github-rules.sh"
+      ;;
+    compare)
+      gh01_status=$gh01_unreadable
+      gh01_det="cannot read the rule (could not compare); owner: run setup/verify-github-rules.sh"
+      ;;
+    closed)
+      gh01_status=$gh01_unreadable
+      gh01_det="cannot read the rule (${gh01_reason}); owner: run setup/verify-github-rules.sh"
+      ;;
+    *)
+      gh01_status=$gh01_default
+      gh01_det="cannot read the rule (no result); owner: run setup/verify-github-rules.sh"
+      ;;
+  esac
+  check GH-01 RECOMMENDED "$gh01_status" "required checks rule" "$gh01_det"
+}
+
 if [ -n "$PI_SCORE" ]; then
   section "Pi launch"
   score_pi_file "$PI_SCORE"
@@ -147,6 +276,10 @@ if [ -n "$DISC_SCORE" ]; then
 fi
 if [ "$DISC_ONLY" = 1 ]; then
   run_disc_live
+  finish
+fi
+if [ "$GITHUB_ONLY" = 1 ]; then
+  run_github_rules
   finish
 fi
 
@@ -216,6 +349,8 @@ if git -C "$KEEL_REPO" rev-parse --git-dir >/dev/null 2>&1; then
   rc REPO-01 gc.auto 0; rc REPO-02 maintenance.auto false; rc REPO-03 gc.pruneExpire never
   if br=$(git -C "$KEEL_REPO" symbolic-ref --short HEAD 2>/dev/null); [ "$br" = main ]; then check REPO-04 RECOMMENDED pass "on main"; else check REPO-04 RECOMMENDED warn "branch" "HEAD is '${br:-detached}', expected main"; fi
 else check REPO-01 CRITICAL fail "repository" "no git repo at $KEEL_REPO (set KEEL_REPO, or run: keel.sh init-repo for a throwaway one)"; fi
+
+run_github_rules
 
 section "Visibility"
 if ! command -v python3 >/dev/null 2>&1; then
@@ -288,7 +423,7 @@ run_pi_live
 run_disc_live
 
 # attack id -> human name (bash 3.2: no associative arrays)
-ATK_IDS="N1 N2 A1 A2 A3 A12 A12b A4 A4b A4c A5 A6 A6b A6c A7 A7b A8 A8b A9 A10 A10b A11 A11-detect A13 A14 A15 A16 A17 A17b A17c A18 A18b A19 A19b A20 A21 A22 A22b H1 H2 H3 H4 H5 V-H9 V-H1 V-A2 V-A10-hardlink V-A20 V-H3 V-A1 V-A15 V-A25 V-A24b V-A16 V-H2 V-H5 V-A5 V-H6 V-H7 V-A27 V-H4 V-A6 V-A23 V-A28 V-A25b V-A11 V-A25c V-A17 V-A18 V-H6b V-A12 V-A7 V-A8 V-A24 V-A29 V-A30 V-A31 V-H8 V-LOG V-A13 V-A14 V-A4 V-A21 V-A22 V-A19 V-A3 V-A3b V-A26 V-A32 V-PARSE V-RO V-RUNS E-H1 E-H2 E-H3 E-H4 E-H5 E-H6 E-A1 E-A2 E-A3 E-A4 E-A5 E-A6 E-A7 E-A8 E-A9 E-A10 E-A11 E-A12 E-A13 E-A14 E-A15 E-A16 E-A17 S-H1 S-A1 S-A2 S-A3 S-A4 SEC-H1 SEC-03 SEC-04 SEC-05 MODE-A1 R-H1 R-A1 R-A4 R-A5 R-A7 R-A8 R-A9 M-H1 M-A1 M-A2 M-A3 M-A4 M-H2 M-H3 M-A5 M-A6 M-A7 M-A8 M-A9 M-A10 M-A11"
+ATK_IDS="N1 N2 A1 A2 A3 A12 A12b A4 A4b A4c A5 A6 A6b A6c A7 A7b A8 A8b A9 A10 A10b A11 A11-detect A13 A14 A15 A16 A17 A17b A17c A18 A18b A19 A19b A20 A21 A22 A22b H1 H2 H3 H4 H5 V-H9 V-H1 V-A2 V-A10-hardlink V-A20 V-H3 V-A1 V-A15 V-A25 V-A24b V-A16 V-H2 V-H5 V-A5 V-H6 V-H7 V-A27 V-H4 V-A6 V-A23 V-A28 V-A25b V-A11 V-A25c V-A17 V-A18 V-H6b V-A12 V-A7 V-A8 V-A24 V-A29 V-A30 V-A31 V-H8 V-LOG V-A13 V-A14 V-A4 V-A21 V-A22 V-A19 V-A3 V-A3b V-A26 V-A32 V-PARSE V-RO V-RUNS E-H1 E-H2 E-H3 E-H4 E-H5 E-H6 E-A1 E-A2 E-A3 E-A4 E-A5 E-A6 E-A7 E-A8 E-A9 E-A10 E-A11 E-A12 E-A13 E-A14 E-A15 E-A16 E-A17 S-H1 S-A1 S-A2 S-A3 S-A4 SEC-H1 SEC-03 SEC-04 SEC-05 MODE-A1 R-H1 R-A1 R-A4 R-A5 R-A7 R-A8 R-A9 GH-H1 GH-A1 GH-A2 GH-A3 GH-A4 GH-A5 GH-A6 M-H1 M-A1 M-A2 M-A3 M-A4 M-H2 M-H3 M-A5 M-A6 M-A7 M-A8 M-A9 M-A10 M-A11"
 atk_name(){ case $1 in
   N1) echo "proto and gate containers have no network";; N2) echo "host token not passed to container";; A1) echo "/base/objects is read-only";;
   A2) echo "pointer file can't be rewritten";; A3) echo "shadow hooks/fsmonitor never run on host";; A12) echo "role A's hook doesn't run in role B/export";;
@@ -298,7 +433,7 @@ atk_name(){ case $1 in
   A6c) echo "gate: changed-file count limit";; A13) echo "gate: fsck rejects corrupt objects";; A14) echo "gate: submodule/gitlink rejected";;
   A15) echo "gate: commit identity rejected";; A16) echo "push stub: one gated sha, one branch";; A17|A17b|A17c) echo "gate: NUL-safe path parsing (space, UTF-8, tab/quote)";; A18|A18b) echo "gate: Pi process paths";; A19|A19b) echo "reset_shadow refuses symlinks";; A20) echo "gate: nested .git path";; A21) echo "gate: tests from main's entrypoint";; A22|A22b) echo "gate: no merge/orphan commits";; H5) echo "cpu limit";; A9) echo "reviewer can't commit";; A10) echo "gc guard";; A10b) echo "main can't move backwards";;
   A11) echo "no root-owned files";; A11-detect) echo "gate rejects foreign-owned files";; H1) echo "no mount/chown/caps";; H2) echo "fork bomb contained";;
-  H3) echo "memory limit";; H4) echo "no writes outside mounts";; S-H1) echo "role starts when no secret name is set";; S-A1) echo "role refuses a denylisted secret name";; S-A2) echo "format patterns are redacted";; S-A3) echo "mount error is logged";; S-A4) echo "KEEL_SECRET name refuses the role";; SEC-H1) echo "clean bundle passes the secret scan";; SEC-03) echo "secret shape in the change fails the gate";; SEC-04) echo "inline allow comment still fails the gate";; SEC-05) echo "product ignore file still fails the gate";; MODE-A1) echo "directly executed script is mode 100755";; R-H1) echo "rootless fixture passes the runtime check";; R-A1) echo "rootful fixture refuses launch";; R-A4) echo "low free space refuses launch";; R-A5) echo "chromium sandbox flags are refused";; R-A7) echo "userns remap is not rootless";; R-A8) echo "live doctor scorer stays exact";; R-A9) echo "each launch path refuses rootful and low disk";; M-H1) echo "mutant run matches the head";; M-A1) echo "stale mutant run is rejected";; M-A2) echo "missing mutant run is rejected";; M-A3) echo "spoofed mutant result is rejected";; M-A4) echo "gate calls the mutant binder";; M-H2) echo "covering plan binds the head";; M-H3) echo "saved run plan covers the head";; M-A5) echo "plan missing a required mutant is rejected";; M-A6) echo "new and changed definitions are required";; M-A7) echo "redirect hops stay on https";; M-A8) echo "plan archive shape is rejected";; M-A9) echo "live head must match the checkout head";; M-A10) echo "gate mode ignores saved run files";; M-A11) echo "saved run mismatches are rejected";; *) echo "$1";; esac; }
+  H3) echo "memory limit";; H4) echo "no writes outside mounts";; S-H1) echo "role starts when no secret name is set";; S-A1) echo "role refuses a denylisted secret name";; S-A2) echo "format patterns are redacted";; S-A3) echo "mount error is logged";; S-A4) echo "KEEL_SECRET name refuses the role";; SEC-H1) echo "clean bundle passes the secret scan";; SEC-03) echo "secret shape in the change fails the gate";; SEC-04) echo "inline allow comment still fails the gate";; SEC-05) echo "product ignore file still fails the gate";; MODE-A1) echo "directly executed script is mode 100755";; R-H1) echo "rootless fixture passes the runtime check";; R-A1) echo "rootful fixture refuses launch";; R-A4) echo "low free space refuses launch";; R-A5) echo "chromium sandbox flags are refused";; R-A7) echo "userns remap is not rootless";; R-A8) echo "live doctor scorer stays exact";; R-A9) echo "each launch path refuses rootful and low disk";; GH-H1) echo "doctor shows a matching required-checks rule";; GH-A1) echo "missing required-checks rule warns";; GH-A2) echo "unreadable required-checks rule warns";; GH-A3) echo "changed required-checks rule warns";; GH-A4) echo "repository without a remote warns and does not call gh";; GH-A5) echo "no result warns";; GH-A6) echo "required-checks file stays pinned";; M-H1) echo "mutant run matches the head";; M-A1) echo "stale mutant run is rejected";; M-A2) echo "missing mutant run is rejected";; M-A3) echo "spoofed mutant result is rejected";; M-A4) echo "gate calls the mutant binder";; M-H2) echo "covering plan binds the head";; M-H3) echo "saved run plan covers the head";; M-A5) echo "plan missing a required mutant is rejected";; M-A6) echo "new and changed definitions are required";; M-A7) echo "redirect hops stay on https";; M-A8) echo "plan archive shape is rejected";; M-A9) echo "live head must match the checkout head";; M-A10) echo "gate mode ignores saved run files";; M-A11) echo "saved run mismatches are rejected";; *) echo "$1";; esac; }
 
 if [ $ATTACKS = 1 ]; then
   section "Attacks (test-attacks.sh in a throwaway dir; real containers on this machine)"

@@ -33,7 +33,7 @@ VIS = mids(45, 46) + mids(48, 52) + mids(70, 72) + mids(104, 105)
 VIS_FILE = VIS + ["M128"]
 EGRESS = mids(53, 66) + ["M68", "M76", "M77"]
 ATTACK = ["M03", "M17", "M27"] + mids(45, 77) + ["M79"] + mids(82, 85)
-RUNTIME = ["M80", "M81"] + mids(86, 91)
+RUNTIME = ["M80", "M81"] + mids(86, 91) + ["M%d" % n for n in range(333, 340)]
 STEP4 = mids(94, 98) + ["M101", "M103"] + mids(104, 105) + mids(107, 118)
 KEEL = [
     "M03", "M17", "M27", "M47", "M67", "M69",
@@ -115,12 +115,16 @@ def validate():
     pin_ids = ["M306", "M307"]
     path_ids = ["M308", "M309", "M310", "M311", "M312"]
     labeler_ids = ["M%d" % n for n in range(313, 333)]
-    added = len(legacy_ids) + len(step6_ids) + len(p1b_ids) + len(doc_ids) + len(plan_ids) + len(cover_ids) + len(pin_ids) + len(path_ids) + len(labeler_ids)
+    doctor_ids = ["M%d" % n for n in range(333, 340)]
+    added = len(legacy_ids) + len(step6_ids) + len(p1b_ids) + len(doc_ids) + len(plan_ids) + len(cover_ids) + len(pin_ids) + len(path_ids) + len(labeler_ids) + len(doctor_ids)
     if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93 + added:
         fail("CI id set changed")
-    if mf.CI_IDS[-len(labeler_ids):] != labeler_ids:
+    if mf.CI_IDS[-len(doctor_ids):] != doctor_ids:
+        fail("new CI ids are not M333-M339")
+    tail = len(doctor_ids)
+    if mf.CI_IDS[-tail - len(labeler_ids):-tail] != labeler_ids:
         fail("new CI ids are not M313-M332")
-    tail = len(labeler_ids)
+    tail += len(labeler_ids)
     if mf.CI_IDS[-tail - len(path_ids):-tail] != path_ids:
         fail("new CI ids are not M308-M312")
     tail += len(path_ids)
@@ -187,6 +191,13 @@ def validate():
     for mid in ["M%d" % n for n in range(326, 332)]:
         if mf.FILES.get(mid) != ["scripts/tests/test_gate_jobs.py"] or mutate.SUITE_OF.get(mid) != "test-mutant-result.sh":
             fail("%s must target test_gate_jobs.py with test-mutant-result.sh" % mid)
+    for mid in ("M333", "M334", "M335", "M336", "M339"):
+        if mf.FILES.get(mid) != ["setup/keel-doctor.sh"] or mutate.SUITE_OF.get(mid) != "test-runtime.sh":
+            fail("%s must target keel-doctor.sh with test-runtime.sh" % mid)
+    if mf.FILES.get("M337") != ["setup/common.sh"] or mutate.SUITE_OF.get("M337") != "test-runtime.sh":
+        fail("M337 must target common.sh with test-runtime.sh")
+    if mf.FILES.get("M338") != ["setup/rulesets/require-checks.json"] or mutate.SUITE_OF.get("M338") != "test-runtime.sh":
+        fail("M338 must target require-checks.json with test-runtime.sh")
     import speed_cases
     if "S-A62" not in speed_cases.SELECT_CASES:
         fail("S-A62 is not in the select group")
@@ -244,7 +255,7 @@ def validate():
             fail("%s drifted: %s" % (path, got))
         if any(mid not in mf.CI_IDS for mid in got):
             fail("%s includes a non-CI id" % path)
-    if len(ATTACK) != 41 or len(STEP4) != 21 or len(RUNTIME) != 8:
+    if len(ATTACK) != 41 or len(STEP4) != 21 or len(RUNTIME) != 15:
         fail("oracle list length changed")
     if len(VIS) != 12 or len(EGRESS) != 17:
         fail("policy list length changed")
@@ -346,7 +357,9 @@ def main():
     expect_exact(["setup/tests/harness/attack-results.sh"], ["M78"], "attack-results")
     expect_exact(["setup/check.sh"], ["M79"], "SEL-H6")
     expect_exact(["setup/docker/ancestor-guard.sh"], ["M108"], "ancestor-guard")
-    expect_exact(["setup/keel-doctor.sh"], ["M89", "M110", "M129"], "keel-doctor")
+    expect_exact(["setup/keel-doctor.sh"], ["M89", "M110", "M129", "M333", "M334", "M335", "M336", "M339"], "keel-doctor")
+    expect_full("setup/common.sh", "common rules reader")
+    expect_full("setup/rulesets/require-checks.json", "required checks file")
     expect_exact(["setup/lib/pi_launch.py"], with_dependents("setup/lib/pi_launch.py", PI), "pi_launch")
     if "M99" in PI or "M01" in PI or len(PI) != 21:
         fail("pi_launch CI list includes an offline id")

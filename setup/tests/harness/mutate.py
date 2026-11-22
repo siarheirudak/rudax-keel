@@ -304,6 +304,13 @@ M = {
  'M330': ('scripts/tests/test_gate_jobs.py', 'labeler_sync_labels = True  # labeler-sync-labels', 'labeler_sync_labels = False  # labeler-sync-labels', 'labeler inputs check is off', ['GJ-X1']),
  'M331': ('scripts/tests/test_gate_jobs.py', 'labeler_form = True  # labeler-form', 'labeler_form = False  # labeler-form', 'labeler form check is off', ['GJ-X1']),
  'M332': ('.github/workflows/labeler.yml', 'permissions: {}\n', 'permissions: {}\npermissions: write-all\n', 'a second top level permissions line is present', ['GJ-X1']),
+ 'M333': ('keel-doctor.sh', 'gh01_off=warn # gh01-off', 'gh01_off=pass # gh01-off', 'a missing or different required-checks rule passes', ['GH-A1', 'GH-A3']),
+ 'M334': ('keel-doctor.sh', 'gh01_unreadable=warn # gh01-unreadable', 'gh01_unreadable=pass # gh01-unreadable', 'an unreadable required-checks rule passes', ['GH-A2', 'GH-A4']),
+ 'M335': ('keel-doctor.sh', 'gh01_compare=on # gh01-compare', 'gh01_compare=off # gh01-compare', 'an active required-checks rule skips compare', ['GH-A3']),
+ 'M336': ('keel-doctor.sh', 'gh01_default=warn # gh01-default', 'gh01_default=pass # gh01-default', 'a missing doctor result passes', ['GH-A5']),
+ 'M337': ('common.sh', '(.bypass_actors // [])', '[]', 'the ruleset actor list is always empty', ['GH-A3']),
+ 'M338': ('rulesets/require-checks.json', '"bypass_mode": "pull_request"', '"bypass_mode": "always"', 'the required-checks actor mode is always', ['GH-A6']),
+ 'M339': ('keel-doctor.sh', 'gh01_remote=on # gh01-remote', 'gh01_remote=off # gh01-remote', 'required-checks remote checks are skipped', ['GH-A4']),
 }
 SUITE_OF = {
     'M01': 'test-attacks.sh',
@@ -602,6 +609,13 @@ SUITE_OF = {
     'M330': 'test-mutant-result.sh',
     'M331': 'test-mutant-result.sh',
     'M332': 'test-mutant-result.sh',
+    'M333': 'test-runtime.sh',
+    'M334': 'test-runtime.sh',
+    'M335': 'test-runtime.sh',
+    'M336': 'test-runtime.sh',
+    'M337': 'test-runtime.sh',
+    'M338': 'test-runtime.sh',
+    'M339': 'test-runtime.sh',
 }
 EXTRA_EDITS = {
     'M15': ['M14'],
