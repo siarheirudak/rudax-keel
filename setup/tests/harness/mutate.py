@@ -178,7 +178,7 @@ M = {
  'M168': ('tests/harness/mutate_shards.py', 'enforce_paths = True  # extract-path', 'enforce_paths = False  # extract-path', 'extract paths are not checked', ['S-A25']),
  'M169': ('tests/harness/mutate_shards.py', 'enforce_symlink = True  # extract-symlink', 'enforce_symlink = False  # extract-symlink', 'extract symlinks are allowed', ['S-A25']),
  'M170': ('tests/harness/mutate_shards.py', 'enforce_line = True  # line-cap', 'enforce_line = False  # line-cap', 'result line cap is off', ['S-A25']),
- 'M171': ('.github/workflows/mutate-pr.yml', '    timeout-minutes: 45 # shard-timeout', '    timeout-minutes: 0 # shard-timeout', 'shard timeout removed', ['S-A28']),
+ 'M171': ('.github/workflows/mutate-pr.yml', ' # shard-timeout', '0 # shard-timeout', 'shard limit raised above one hour', ['S-A28']),
  'M172': ('tests/harness/mutate_shards.py', 'timeout_is_fail = True  # timeout-not-success', 'timeout_is_fail = False  # timeout-not-success', 'timed out shard counts as success', ['S-A34', 'S-A6']),
  'M173': ('tests/harness/mutate_shards.py', 'check_baseline = True  # baseline-check', 'check_baseline = False  # baseline-check', 'baseline check is off', ['S-A30', 'S-A31']),
  'M174': ('tests/harness/mutate_shards.py', 'check_tree_entries = True  # tree-entry-check', 'check_tree_entries = False  # tree-entry-check', 'tree entry checks are off', ['S-A29']),

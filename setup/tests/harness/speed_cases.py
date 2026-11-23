@@ -524,14 +524,70 @@ def case_s_a27():
 
 
 def case_s_a28():
-    needle = "    timeout-minutes: 45 # shard-timeout"
-    for rel in (".github/workflows/mutate-pr.yml", ".github/workflows/mutate-full.yml"):
-        text = open(os.path.join(ROOT, rel), encoding="utf-8").read()
-        if text.count(needle) != 1:
+    def minutes(value):
+        # ASCII digits, at most two, before any numeric comparison.
+        if len(value) < 1 or len(value) > 2:
+            return None
+        for ch in value:
+            if ch < "0" or ch > "9":
+                return None
+        if len(value) > 1 and value[0] == "0":
+            return None
+        return int(value)
+
+    def allows(text):
+        marked = [line for line in text.splitlines() if "# shard-timeout" in line]
+        if len(marked) != 1:
             return False
-        if "actions/cache" in text:
+        line = marked[0]
+        prefix = "    timeout-minutes: "
+        suffix = " # shard-timeout"
+        if not line.startswith(prefix) or not line.endswith(suffix):
             return False
-    return True
+        if len(line) <= len(prefix) + len(suffix):
+            return False
+        number = minutes(line[len(prefix):len(line) - len(suffix)])
+        if number is None:
+            return False
+        one_hour = 60
+        return number >= 1 and number <= one_hour
+
+    def marked(value):
+        return "    timeout-minutes: " + value + " # shard-timeout"
+
+    try:
+        for value in ("1", "9", "45", "59", "60"):
+            if not allows(marked(value)):
+                return False
+        for value in (
+            "0",
+            "61",
+            "450",
+            "600",
+            "1" * 20,
+            "\u0661",
+            "01",
+            "-1",
+            "1.5",
+            "1+1",
+        ):
+            if allows(marked(value)):
+                return False
+        if allows("    timeout-minutes: " + "45"):
+            return False
+        if allows(marked("45") + "\n" + marked("60")):
+            return False
+        if allows("timeout-minutes: " + "45" + " # shard-timeout"):
+            return False
+        for rel in (".github/workflows/mutate-pr.yml", ".github/workflows/mutate-full.yml"):
+            text = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+            if not allows(text):
+                return False
+            if "actions/cache" in text:
+                return False
+        return True
+    except Exception:
+        return False
 
 
 def case_s_a29():

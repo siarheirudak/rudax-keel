@@ -20,9 +20,55 @@ fi
 if grep -q 'actions/cache' "$full" || grep -q 'actions/cache' "$pr"; then
   fail "mutate workflows use a cache"
 fi
-if ! grep -q 'timeout-minutes: 45 # shard-timeout' "$full" || ! grep -q 'timeout-minutes: 45 # shard-timeout' "$pr"; then
-  fail "shard timeout is missing"
-fi
+limit_note=$(python3 - "$full" "$pr" << 'PY'
+import sys
+
+prefix = "    timeout-minutes: "
+suffix = " # shard-timeout"
+missing = "shard timeout is missing"
+outside = "shard timeout is not between 1 and 60 minutes"
+
+def classify(path):
+    lines = open(path, encoding="utf-8").read().splitlines()
+    marked = [line for line in lines if "# shard-timeout" in line]
+    if len(marked) != 1:
+        return missing
+    line = marked[0]
+    if not line.startswith(prefix) or not line.endswith(suffix):
+        return missing
+    if len(line) <= len(prefix) + len(suffix):
+        return missing
+    value = line[len(prefix):len(line) - len(suffix)]
+    if len(value) < 1 or len(value) > 2:
+        return outside
+    for ch in value:
+        if ch < "0" or ch > "9":
+            return outside
+    if len(value) > 1 and value[0] == "0":
+        return outside
+    try:
+        number = int(value)
+    except Exception:
+        return outside
+    one_hour = 60
+    if number >= 1 and number <= one_hour:
+        return ""
+    return outside
+
+if len(sys.argv) != 3:
+    sys.stdout.write(missing + "\n")
+    sys.exit(1)
+for path in sys.argv[1:]:
+    try:
+        note = classify(path)
+    except Exception:
+        note = missing
+    if note:
+        sys.stdout.write(note + "\n")
+        sys.exit(1)
+sys.exit(0)
+PY
+) || fail "${limit_note:-shard timeout is missing}"
 if ! grep -q 'fail-fast: false' "$full" || ! grep -q 'fail-fast: false' "$pr"; then
   fail "shard fail-fast is not false"
 fi
