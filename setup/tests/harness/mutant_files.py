@@ -306,6 +306,13 @@ FILES = {
     "M330": ["scripts/tests/test_gate_jobs.py"],
     "M331": ["scripts/tests/test_gate_jobs.py"],
     "M332": [".github/workflows/labeler.yml"],
+    "M333": ["setup/keel-doctor.sh"],
+    "M334": ["setup/keel-doctor.sh"],
+    "M335": ["setup/keel-doctor.sh"],
+    "M336": ["setup/keel-doctor.sh"],
+    "M337": ["setup/common.sh"],
+    "M338": ["setup/rulesets/require-checks.json"],
+    "M339": ["setup/keel-doctor.sh"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -561,6 +568,13 @@ CI_IDS = [
     "M330",
     "M331",
     "M332",
+    "M333",
+    "M334",
+    "M335",
+    "M336",
+    "M337",
+    "M338",
+    "M339",
 ]
 
 # Docker mount probes, plus M01. Pull-request CI skips these. The daily full run includes them.
@@ -657,6 +671,7 @@ KNOWN_DUPLICATES = (
 DEPENDS = {
     "setup/chrome/chromium-argv.sh": ("setup/lib/runtime.sh",),
     "setup/keel-doctor.sh": (
+        "setup/common.sh",
         "setup/lib/egress.sh",
         "setup/lib/portable.sh",
         "setup/lib/runtime.sh",
@@ -851,6 +866,13 @@ META = {
     "M330": ("labeler-sync-labels", "fail-closed"),
     "M331": ("labeler-form", "fail-closed"),
     "M332": ("permissions: {}", "secret"),
+    "M333": ("gh01-off", "fail-closed"),
+    "M334": ("gh01-unreadable", "fail-closed"),
+    "M335": ("gh01-compare", "fail-closed"),
+    "M336": ("gh01-default", "fail-closed"),
+    "M337": ("(.bypass_actors // [])", "fail-closed"),
+    "M338": ('"bypass_mode": "pull_request"', "decision"),
+    "M339": ("gh01-remote", "fail-closed"),
 }
 
 # CI ids, in CI_IDS order. Pull-request selection never includes OFFLINE_IDS.
@@ -939,6 +961,13 @@ RUNTIME_CI = (
     "M89",
     "M90",
     "M91",
+    "M333",
+    "M334",
+    "M335",
+    "M336",
+    "M337",
+    "M338",
+    "M339",
 )
 STEP4_CI = (
     "M94",

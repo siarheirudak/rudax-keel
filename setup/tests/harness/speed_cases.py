@@ -4466,31 +4466,31 @@ def _add_catalog_id(text, expr, mid="M900"):
         "\n '%s': (%s, 'OLDQQ', 'NEWQQ', 'what', ['A1']),\n}\nSUITE_OF = {\n" % (mid, expr),
         1,
     )
-    suite = "    '%s': 'test-mutant-result.sh',\n}" % "M332"
+    suite = "    '%s': 'test-runtime.sh',\n}" % "M339"
     if suite not in text:
         raise RuntimeError("catalog")
     text = text.replace(
         suite,
-        "    'M332': 'test-mutant-result.sh',\n    '%s': 'test-attacks.sh',\n}" % mid,
+        "    'M339': 'test-runtime.sh',\n    '%s': 'test-attacks.sh',\n}" % mid,
         1,
     )
     return text
 
 
 def _add_ci_id(text, mid="M900"):
-    needle = '    "M332",\n]'
+    needle = '    "M339",\n]'
     if needle not in text:
         raise RuntimeError("catalog")
-    return text.replace(needle, '    "M332",\n    "%s",\n]' % mid, 1)
+    return text.replace(needle, '    "M339",\n    "%s",\n]' % mid, 1)
 
 
 def _add_files_id(text, files_expr, mid="M900"):
-    needle = '    "M332": [".github/workflows/labeler.yml"],\n}'
+    needle = '    "M339": ["setup/keel-doctor.sh"],\n}'
     if needle not in text:
         raise RuntimeError("catalog")
     return text.replace(
         needle,
-        '    "M332": [".github/workflows/labeler.yml"],\n    "%s": [%s],\n}' % (mid, files_expr),
+        '    "M339": ["setup/keel-doctor.sh"],\n    "%s": [%s],\n}' % (mid, files_expr),
         1,
     )
 
@@ -4885,8 +4885,8 @@ def case_s_a59():
 
     def both_ids(text):
         return text.replace(
-            '    "M332",\n]',
-            '    "M332",\n    "M900",\n    "M901",\n]',
+            '    "M339",\n]',
+            '    "M339",\n    "M900",\n    "M901",\n]',
             1,
         )
 
