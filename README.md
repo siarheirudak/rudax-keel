@@ -12,7 +12,7 @@
 >
 > 🤝 Open to partnerships and collaboration: [siarhei.rudak@rudax.pro](mailto:siarhei.rudak@rudax.pro)
 
-Rudax Keel is a guarded production line for building software with AI agents.
+Rudax Keel is a guarded production line for building software with AI agents. Agents work in isolated, least-privilege roles; every change passes layered CI checks and is then verified in a running application, with recorded evidence that the feature actually works. Merging stays under human control.
 
 _The keel is laid first; everything else is built on it._
 
