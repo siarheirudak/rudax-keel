@@ -2,7 +2,7 @@
 
 Design for the Step 7 layer. Numbers not yet measured are marked **starting value, measure**. Among AI runtimes, the pipeline names **Pi** only.
 
-**Status.** Planned. The repository today has role isolation and a host-gate prototype. The dispatcher and the orchestrator container are not built yet. Implementation ships as a process-files pull request.
+**Status.** Planned. The repository today has role isolation and a host-gate prototype. Nothing in this layer is built. The orchestrator is stock Pi on the host, started by the user in the root of their own clone. Implementation ships as process-files pull requests.
 
 ---
 
@@ -10,12 +10,12 @@ Design for the Step 7 layer. Numbers not yet measured are marked **starting valu
 
 | Plane | Who | Does | Does not |
 |---|---|---|---|
-| **Reasoning** | Orchestrator (Pi in its own container) and roles (architect, tester, developer, …) | Understand the task, write the brief, choose *where* to request a transition, ask D2, read what is allowed | Launch containers, write product code, bypass gates, message peer agents |
+| **Reasoning** | Orchestrator (stock Pi on the host, in the owner's clone, one `keel` tool) and roles (in containers) | Understand the task, write the brief, choose *where* to request a transition, ask D2, read what is allowed | Launch containers, write product code, skip gates, message peer agents |
 | **Control** | Host dispatcher (a script, not an agent) | Store task state, check transitions, mount, launch roles via `setup/keel.sh role`, run gates, write journals and the status line | “Think” for the model; merge the PR |
 
 Rule: **agents do not talk to each other**. Everything goes through the dispatcher. There is no scribe agent: append-only journals are written only by the dispatcher.
 
-D2 questions go **only** through the chat intermediary (or a direct Pi terminal into the same dispatcher inbox). There is no second “confirm again” layer on top of D2. There is no `/approve` command.
+D2 questions and approvals happen in the owner's Pi session on the host. An intermediary chat agent is optional. There is no second “confirm again” layer on top of D2. There is no `/approve` command.
 
 ---
 
@@ -34,17 +34,14 @@ flowchart TD
  classDef stop fill:#c62828,color:#fff,stroke:#8e0000
  classDef note fill:#eceff1,color:#000,stroke:#90a4ae
 
- U["User: chat message"]:::owner
- I["Intermediary: raw D2 + interpretation<br/>no /approve"]:::mid
- D["Host dispatcher<br/>only writer to rpc stdin<br/>≤1 keel_request per turn after turn-end"]:::disp
- O["Warm orchestrator<br/>pi --mode rpc + session in task folder"]:::orch
- KR["keel_request kind=…<br/>key = hash(task,stage,attempt,kind,payload)"]:::orch
- SL["Status line without LLM<br/>→ intermediary → user"]:::disp
+ U["Owner"]:::owner
+ PI["Pi session on the host<br/>guard, one keel tool"]:::orch
+ REQ["keel request"]:::orch
+ D["Host dispatcher"]:::disp
+ SL["keel status"]:::disp
 
- U --> I --> D
- D -->|"rpc prompt"| O
- O --> KR --> D
- D --> SL --> I --> U
+ U --> PI --> REQ --> D
+ D --> SL --> U
 
  D -->|L0 brief ready| L1["L1 context pack<br/>script"]:::disp
  L1 --> L2["L2 architect + critic"]:::role
@@ -56,14 +53,14 @@ flowchart TD
  L6 --> L7["L7 green + mutation L7T<br/>tree hash"]:::gate
  L7 --> L8["L8 review<br/>checklist: hardcoded to test values"]:::role
  L8 --> L9["L9 QA / skip"]:::role
- L9 --> L9B["L9b rollback rehearsal"]:::gate
+ L9 --> L9B["L9b rollback rehearsal<br/>not in v1"]:::gate
  L9B --> L10["L10 PR envelope<br/>bot opens PR"]:::disp
  L10 --> MERGE{"Owner merges"}:::owner
  MERGE --> L11["L11 after merge<br/>journal + previous-attempt deleted"]:::disp
 
  D2{"D2: question to owner"}:::owner
  WAIT["Waiting for answer<br/>orchestrator may stop"]:::note
- O -.->|keel_request ask_d2| D2
+ PI -.->|keel ask_d2| D2
  D2 -->|raw + interpretation| D
  D2 -->|no answer| WAIT
  WAIT -.-> D2
@@ -84,14 +81,14 @@ flowchart TD
 
 ### In words, step by step
 
-1. The user writes to the intermediary (typical path) or into a direct Pi session (same inbox).
+1. The owner works in a Pi session on the host, in the root of their own clone. An intermediary chat agent is optional and relays into that session. There is no launcher, socket, bridge, or daemon.
 2. Intermediary: for D2, passes the **raw answer text** and its **interpretation**; if unclear or they diverge, the orchestrator re-asks; raw text in the audit log. Relay checklist: critical content is not lost; end with what the user must do (or “nothing”). No `/approve`.
-3. The message lands in the **dispatcher inbox**. Only the dispatcher writes to the warm orchestrator’s stdin (`pi --mode rpc`). The intermediary **never** holds the rpc stdin fd. Mid-turn messages go into a **queue** and are not dropped. Priority interrupt or cancel mid-turn is backlog. Until that exists, messages wait until the turn ends.
-4. The orchestrator reads what is allowed (see §4), thinks, and calls **at most one** `keel_request` per turn. The extension computes a deterministic `idempotency_key`. The tool validates fields and atomically writes the request file (`.tmp` → `rename`).
-5. The dispatcher processes the request **only after** rpc turn-end; a second request in the same turn → refusal + audit `second_request_same_turn`. It checks the allowlist and the YAML FSM; writes WAL `IN_PROGRESS` before the side effect, then `COMMITTED` after; writes the status line; launches a role/gate when needed; journals and audits.
+3. There is no inbox. A message typed during a turn waits until the turn ends. Priority interrupt and mid-turn cancel are later work. `keel status` prints the status line, with no model and no secrets. It is shown at session start and on the owner's next turn.
+4. The orchestrator reads what is allowed (see §4) and calls at most one state-changing `keel` request per turn. The guard counts between Pi's `turn_start` and `turn_end`. A second request is refused as `second_request_same_turn` and audited. The guard computes the idempotency key.
+5. The dispatcher re-validates every request (schema, allowlist, FSM, budget, turn count, and replay) regardless of the guard. It checks the allowlist and the YAML FSM, writes WAL `IN_PROGRESS` before the side effect and `COMMITTED` after, writes the status line, launches a role or gate when needed, and journals and audits.
 6. The L0…L11 chain is as in `docs/architecture.md` / `docs/pipeline.md`; routing goes through the dispatcher FSM.
-7. At task end (PR created, cancel, fail/dossier) the orchestrator container is **removed**; the previous-attempt folder is **deleted**. While waiting on the user — only **stop**, resume from the session file.
-8. Merge and release — owner only. The intermediary does not merge and does not change GitHub rules.
+7. At task end, task files go through `keel cleanup`, which is not a deploy and not a model verb. The previous-attempt folder is **deleted**. Waiting on the user needs no stop.
+8. The owner merges and releases by hand, outside the harness. The intermediary does not merge and does not change GitHub rules.
 
 ---
 
@@ -100,7 +97,7 @@ flowchart TD
 | Decision | Who |
 |---|---|
 | Task meaning, brief text, D1 (confidence high/medium/low), D2 wording, choice of **target** back edge; on `TEST_CONTRADICTS_BRIEF` — verify claim vs brief, reformulate finding for L3 (never forward developer prose) | Orchestrator (request) |
-| Whether to allow a transition / return; whether to execute `keel_request`; launch role/gate; invalidate artifacts; deep archive / shallow keep; status line; journal; circuit breaker (diff-hash); timeout stop; **auto-return on mechanical FAIL**; refuse a second request in the same turn | Dispatcher |
+| Whether to allow a transition / return; whether to execute a `keel` request; launch role/gate; invalidate artifacts; deep archive / shallow keep; status line; journal; circuit breaker (diff-hash); timeout stop; **auto-return on mechanical FAIL**; refuse a second request in the same turn | Dispatcher |
 | D2 answers, split yes/no, new dependency, irreversible ack, skill yes/no, merge, release | Owner / user |
 | Relay: raw D2 + interpretation; show status line; **not** a second confirmation layer; **not** `/approve` | Intermediary |
 | Own work within the role; L5 signals `NEEDS_CONTEXT` / `NEEDS_DEPENDENCY` / `TEST_CONTRADICTS_BRIEF` / … | Role container (developer) |
@@ -142,9 +139,9 @@ The dispatcher puts a structured object into the orchestrator inbox for **routin
 
 In parallel, on gate FAIL the developer receives the **full** output and stacks.
 
-The orchestrator reads everything else **except** secrets and paths from `.keel/deny.local`.
+The orchestrator may read the repository except secrets, `.keel/deny.local`, and the runtime folder `.keel/workspace/`. It reaches task files, logs, and state only through `keel read`, `keel logs`, and `keel status`. `keel read` checks the task id, refuses symlinks, and returns regular files only, with size caps, control characters and ANSI and bidi characters stripped, a random fence, and an audit record. It never returns tokens or `state/`. `keel logs` is redacted and truncated. In v1, content fencing applies to `keel read` and `keel logs` output only. Fencing of `keel status`, role outputs, task summaries, and pull request comments is later work. The primary control stays the guard and the explicit-yes cards.
 
-Control-plane writes: only through `keel_request` → dispatcher. Orchestrator argv is fail-closed: read/search class + `keel_request`; `bash` / `write` / `edit` / `codemode` off; mounts read-only except dispatcher channels.
+Control-plane writes go only through the `keel` tool. The orchestrator has no bash, write, or edit tool.
 
 ---
 
@@ -216,9 +213,9 @@ See the YAML. Short: `start→L0→…→L1→L2→L2C→DEPS→L3→L4→L5→L
 
 ---
 
-## 6. Tool `keel_request`: kinds and fields
+## 6. Tool `keel`: kinds and verbs
 
-One custom Pi tool, enum `kind`. Validation in the extension; atomic write (`.tmp` → `rename`). Raw model `write` is not authoritative and is **unavailable** (argv + mounts fail-closed).
+Planned. The orchestrator has one `keel` tool and no bash, write, or edit tool. The table below is the request kinds. The verbs follow.
 
 Common fields:
 
@@ -227,7 +224,7 @@ Common fields:
 | `schema_version` | Schema version |
 | `task_id` | Task id |
 | `kind` | Enum below |
-| `idempotency_key` | Computed by the **extension** deterministically: `hash(task, stage, attempt, kind, canonical payload)`. WAL: `IN_PROGRESS` before execute, `COMMITTED` after. Replay of `COMMITTED` → no second execution; audit `idempotent_replay`. Restart with `IN_PROGRESS` → reconcile side effect, then complete or safe retry (D-T18 / D-T32) |
+| `idempotency_key` | Computed by the **guard** deterministically: `hash(task, stage, attempt, kind, canonical payload)`. WAL: `IN_PROGRESS` before execute, `COMMITTED` after. Replay of `COMMITTED` → no second execution; audit `idempotent_replay`. Restart with `IN_PROGRESS` → reconcile side effect, then complete or safe retry (D-T18 / D-T32) |
 | `payload` | Kind fields |
 | `created_at` | Timestamp with zone |
 
@@ -246,23 +243,40 @@ Common fields:
 | `dossier` | Stop | `failure_category` enum, `artifact_refs[]` |
 | `record_decision` | ADR / decisions / discovery candidate | `target`, `body_ref` |
 
-`inject_summary_ack` is **not** in the v1 enum (backlog). In v1 the dispatcher pushes the summary through rpc `prompt`.
+### Verbs
+
+The owner runs `keel doctor`. The model does not. Cleanup is not a model verb.
+
+| Verb | Purpose |
+|---|---|
+| `start` | Start a task. Refuses on drift or when the guard marker is missing |
+| `wait` | Return the stage summary |
+| `status` | Print the status line, with no model and no secrets |
+| `cancel` | Cancel a task |
+| `ready` | Refuse on drift or when the guard marker is missing |
+| `read` | Read one task file: task id checked, no symlinks, regular files only, size caps, control characters and ANSI and bidi characters stripped, a random fence, an audit record, never tokens or `state/` |
+| `logs` | Show redacted, truncated logs |
+
+`inject_summary_ack` is **not** in the v1 enum (backlog). The stage summary is returned by `keel wait` and `keel status`. It is not pushed.
 
 The dispatcher rejects an unknown `kind`, a broken schema, a transition outside the YAML, a budget overrun, a second request in the same turn, and a `COMMITTED`-key replay. Every refusal is an **explicit refusal** + **audit entry**.
+The dispatcher re-validates every request (schema, allowlist, FSM, budget, turn count, and replay) regardless of the guard.
 
-**One request per turn:** the dispatcher accepts a request only after the rpc turn-end event; a second → `second_request_same_turn`.
+**One request per turn:** the guard counts state-changing requests between Pi's `turn_start` and `turn_end`. A second is refused as `second_request_same_turn` and audited. The guard computes the idempotency key. The two-phase write-ahead log stays: `IN_PROGRESS` before the side effect, `COMMITTED` after.
 
-Extension: orchestrator image or harness mount (`-e`); **never** only a project `.pi/` as control-plane IPC. Idempotency WAL on disk: `IN_PROGRESS` before side effects, `COMMITTED` after.
+The guard is the project extension `.pi/extensions/keel-guard`. Pi trusts only the exact clone path. No trust entry may cover the harness root. The guard applies that one `keel` tool on every session start, including a resumed session. It compares `.pi/**`, `.agents/**`, `AGENTS.md`, `.keel/config`, and `.keel/deny.local` with the default branch in `.keel/workspace/repo`. On a difference it refreshes that copy once and checks again, then fails closed. `keel start` and `keel ready` refuse on drift or when the guard marker is missing. The marker is per session (a random value, the process id, and the start time) and is deleted at session end. The local model choice file is not part of this check. Pi's `defaultTools: []` setting covers only the case where project settings loaded and the guard then failed.
+
+The guard cannot detect its own absence. Pi started from a subfolder, or with trust declined, is ordinary Pi with bash. Running Pi from the project root is the user's job. There is no warning for a missing guard. Instead the guard shows a short "keel is active" greeting at session start that names the model provider and the data-collection setting. Plain Pi shows nothing, so the absence is visible.
 
 ---
 
 ## 7. Status line
 
-The dispatcher writes a deterministic line (no LLM) into the intermediary inbox.
+The status line is the output of `keel status`. It carries no model output and no secrets. It is pull-based: shown at session start and on the owner's next turn. There is no inbox.
 
 Fields: `task_id`, `stage`, `attempt`, `waiting_reason`, `container_alive`, `last_result` (result name or `timeout` / `rejected_request` / `idempotent_replay` / `second_request_same_turn`), `updated_at` (with zone).
 
-Secrets never appear. Not an rpc side-channel into the model and not a second confirmation UX.
+Secrets never appear. It is not a second confirmation UX.
 
 ---
 
@@ -270,10 +284,10 @@ Secrets never appear. Not an rpc side-channel into the model and not a second co
 
 | | Orchestrator | Role |
 |---|---|---|
-| Lifetime | Warm per task; **rm** on terminal (PR / cancel / fail/dossier) | Ephemeral `--rm` per stage |
-| Pi mode | `--mode rpc` + session on disk | One-shot `--mode json` / print (argv — smoke) |
-| Pause | stop while waiting on the user; resume from session | New container |
-| Rpc stdin | Dispatcher only | — |
+| Lifetime | The owner's Pi session on the host | Ephemeral `--rm` per stage |
+| Pi mode | Ordinary interactive Pi. The guard applies one `keel` tool on every session start, including a resumed session | One-shot `--mode json` / print (argv — smoke) |
+| Pause | Waiting needs no stop | New container |
+| Session file | Private (`0600`) and never exported to HTML | — |
 
 Parallelism: already in `setup/keel.sh` — own `TASK`, `work/$T`, `shadow/$T.git`; objects RO alternates; pointer `.git` RO. Not reopened here.
 
@@ -312,7 +326,7 @@ Each stage: DEFAULT wall timeout + short container-start timeout. Seconds in con
 
 ## 12. Crashes and recovery
 
-Truth is on disk. On start: rehydrate store → last clean SHA → orphan cleanup by name/label `task_id` → orchestrator resume from session if needed; do not resurrect mid-flight roles. The Docker-label graph is not the source of truth (v1). Idempotency WAL survives crash: `COMMITTED` keys → idempotent replay; `IN_PROGRESS` → reconcile side effect then complete or safe retry — never silent skip, never blind re-run (D-T18 / D-T32).
+Truth is on disk. On start: rehydrate store → last clean SHA → orphan cleanup by name/label `task_id` → the owner resumes the Pi session and the guard re-applies its tools; reconcile runs on the next keel call; do not resurrect mid-flight roles. The Docker-label graph is not the source of truth (v1). Idempotency WAL survives crash: `COMMITTED` keys → idempotent replay; `IN_PROGRESS` → reconcile side effect then complete or safe retry — never silent skip, never blind re-run (D-T18 / D-T32).
 
 ---
 
@@ -320,7 +334,7 @@ Truth is on disk. On start: rehydrate store → last clean SHA → orphan cleanu
 
 Stage summaries to the orchestrator (structured), not full logs. Pi compaction is not the only defense. The session path is absent from role mounts.
 
-Monitoring: transition/reject/timeout/circuit-breaker journal; status line; attempt/stale; alert on circuit breaker and `second_request_same_turn`; mid-turn message queue must not be lost (manual check on first tasks + D-T23). Priority interrupt or cancel mid-turn is backlog.
+Monitoring: transition/reject/timeout/circuit-breaker journal; status line; attempt/stale; alert on circuit breaker and `second_request_same_turn`; a message typed during a turn waits until the turn ends (D-T23). Priority interrupt and mid-turn cancel are later work.
 
 Journals are written by the host/dispatcher. Raw D2 text is in the audit log.
 
@@ -350,7 +364,7 @@ Mutation (L7T) does **not** replace this item: mutation does not catch hardcodin
 
 ## 16. Dispatcher tests (stub-model), wiring into `run-tests.sh` / keel-gate
 
-Style: stub model + host fixtures; mutants like `mutate.py` (remove a protection → expected D-T* go red). Step 7 process-files PR: add calls in `run-tests.sh` / keel-gate (mutate wiring is part of Step 7 done-when).
+Style: stub model + host fixtures; mutants like `mutate.py` (remove a protection → expected D-T* go red). Step 7 process-files pull requests: add calls in `run-tests.sh` / keel-gate (mutate wiring is part of Step 7 done-when).
 
 | Id | Checks |
 |---|---|
@@ -366,8 +380,8 @@ Style: stub model + host fixtures; mutants like `mutate.py` (remove a protection
 | D-T10 | Parallel tasks: two TASKs isolated; session A not in mount B |
 | D-T11 | Status-line: required fields; no secrets |
 | D-T12 | Circuit breaker: two identical **diff-hash** in a row → dossier; same gate fail with **different** diff → **not** CB, spends budget |
-| D-T13 | Stdin ownership: second writer to rpc stdin → refuse + audit |
-| D-T14 | Mechanical FAIL auto-return without orchestrator `keel_request` |
+| D-T13 | no longer used: the host design has no rpc input |
+| D-T14 | Mechanical FAIL auto-return without an orchestrator `keel` request |
 | D-T15 | Stale `gated_tree_sha` → refuse PR; audit |
 | D-T16 | Orchestrator rm at end; after D2-wait — stop, not rm |
 | D-T17 | Host product-code gate refuse |
@@ -376,7 +390,7 @@ Style: stub model + host fixtures; mutants like `mutate.py` (remove a protection
 | D-T20 | YAML FSM directly: forbidden/allowed edges; `invalidates`; `initiator`; every `kind:back` has non-null `budget_ref` |
 | D-T21 | Hash-stability: fixed input → stable **diff-hash**; normalizer mutant goes red |
 | D-T22 | DEPS ephemeral: network present; no host secrets / control-plane mounts; cache/vendor RO afterward; `--ignore-scripts` by default |
-| D-T23 | One `keel_request` per turn: second before turn-end → `second_request_same_turn`; mid-turn user message stays queued |
+| D-T23 | A second state-changing `keel` request in the same turn → `second_request_same_turn`; a message typed during the turn waits until the turn ends |
 | D-T24 | Deterministic idempotency key: same `(task, stage, attempt, kind, canonical payload)` → one key; different payload → different |
 | D-T25 | Behavioral stub: stub-developer returns `TEST_CONTRADICTS_BRIEF` (test name + brief clause); orchestrator chooses `return_to` L3 → dispatcher takes `L5_test_contradicts_brief_to_L3`, spends `L5_test_contradict_returns`, deep archive; repeat to exhaustion → dossier |
 | D-T26 | Deep archive previous-attempt: outside work tree/git; not in commit/PR; deleted after task end; shallow L5 keep worktree |
@@ -390,7 +404,7 @@ Style: stub model + host fixtures; mutants like `mutate.py` (remove a protection
 | D-T32 | Two-phase WAL: write `IN_PROGRESS`, kill dispatcher before `COMMITTED`, restart; side effect happens **exactly once** (reconcile then complete or safe retry — never silent skip, never blind double-run). Mutant: skip reconcile / blind re-run → D-T32 red |
 | D-T33 | L6 leftover debug/temp: diff with a leftover breakpoint or temp/scratch/backup file → L6 FAIL (`static_debug_leftover` or configurable pattern hit). Patterns configurable; no invented thresholds. Mutant: disable leftover check → D-T33 red |
 
-**Mutants (examples):** drop YAML check; drop stale; accept any JSON; restore write/bash; let tester write outside test dirs; RW product mount for L3; RW tests for developer; no stop on timeout; no orphan cleanup; shared shadow; no status write; CB on gate-hash (must go red on D-T12); second stdin fd; skip auto-return; PR on stale tree; no orchestrator rm; host gate; ignore idempotency / skip WAL reconcile; null `budget_ref` on back; break normalizer; skip turn-end gate; mount secrets into DEPS; leave previous-attempt in work tree; accept second request same turn; forward developer prose to L3; disable L6 leftover patterns.
+**Mutants (examples):** drop YAML check; drop stale; accept any JSON; restore write/bash; let tester write outside test dirs; RW product mount for L3; RW tests for developer; no stop on timeout; no orphan cleanup; shared shadow; no status write; CB on gate-hash (must go red on D-T12); skip auto-return; PR on stale tree; host gate; ignore idempotency / skip WAL reconcile; null `budget_ref` on back; break normalizer; skip the per-turn count; mount secrets into DEPS; leave previous-attempt in work tree; accept second request same turn; forward developer prose to L3; disable L6 leftover patterns.
 
 Hash-stability (D-T21) and mutants belong in dispatcher attacks / the same `run-tests.sh`.
 
@@ -404,8 +418,8 @@ Hash-stability (D-T21) and mutants belong in dispatcher attacks / the same `run-
 4. Circuit breaker = same consecutive **diff-hash**; hash-stability fixture in CI is done-when.
 5. Tests visible; tester write-scope; developer RO tests + full stacks; L7T+L8 as honesty substitute.
 6. Every `kind:back` — non-null `budget_ref`.
-7. ≤1 `keel_request` per turn after turn-end.
-8. Idempotency key deterministic from the extension; two-phase WAL `IN_PROGRESS`/`COMMITTED` with reconcile on restart.
+7. At most one state-changing `keel` request per turn.
+8. Idempotency key computed by the guard; two-phase write-ahead log `IN_PROGRESS`/`COMMITTED` with reconcile on restart.
 9. Deep → previous-attempt archive outside git; developer keeps RO read of archive; shallow L5 keeps code.
 10. D2: raw + interpretation; no `/approve`.
 11. L3: product RO + RW test dirs at mounts; `git diff` defense in depth.
@@ -416,9 +430,43 @@ Hash-stability (D-T21) and mutants belong in dispatcher attacks / the same `run-
 
 ## 18. Link to the plan and the repo
 
-Main implementation is **Step 7**. Step 7 (dispatcher, extension, FSM YAML, tests, `run-tests.sh` edits, visibility mounts, DEPS ephemeral, archive previous-attempt) is a **process-files PR** (touches `setup/`, and if needed wiring under `.github/`); **do not** mix with product code.
+Main implementation is **Step 7**. Step 7 lands as process-files pull requests: the dispatcher core first, then the Pi upgrade, the gateway, the guard and `keel` tool, push, and lifecycle. Each has its own tests and mutants. `keel start` refuses until the lifecycle part lands. **Do not** mix these with product code.
 
-Design docs for this layer live under `docs/harness/` in this repository. The machine YAML in this directory is the design source. The process-files pull request will place the runtime copy under `setup/dispatcher/`.
+Design docs for this layer live under `docs/harness/` in this repository. The machine YAML in this directory is the design source. The dispatcher pull request will place the runtime copy under `setup/dispatcher/`.
+
+## 19. Host keys, secrets and model access
+
+Planned. The provider keys that keel holds live only in a gateway container, one key per provider. Roles reach models only through that gateway, and keel points the host orchestrator's model calls at it. Each caller has its own revocable token, tied to that caller and its allowed models. Anything else is refused. This covers only the keys keel holds. A provider key or `GH_TOKEN` that the owner exports in the terminal where Pi starts stays visible to the host orchestrator. That is an accepted risk. The owner should not export them there. keel does not create a separate OS user for secrets.
+
+Today the discoveries judge is a host-started broker and calls OpenRouter directly. Planned: the discoveries judge goes through the gateway like every other caller, the proxy holds no key, and no keel process on the host calls the provider directly with a key keel holds.
+
+Today, launching a role refuses when a secret-named variable is set. Planned: keel does not strip or refuse environment variables in the owner's terminal. It resets the environment at its own boundaries. Role containers start from an empty environment plus an allowlist (the gateway token and address, and the image's `PATH` and `HOME`). keel's helpers start with `env -i`. All harness git runs through the hardened helper. If a clean environment cannot be built, the launch fails closed. The host orchestrator itself is not scrubbed. Prompt-injection exfiltration through the host orchestrator is an accepted v1 risk. One shared list of secret names drives log and pull request redaction. All harness-held secrets (the bot token and the provider keys keel holds) are `0600` files outside the clone. keel never puts those secrets into the orchestrator's environment or into role containers. That does not cover what the owner exports in the terminal where Pi starts: those values stay visible to the host orchestrator, and the owner should not export provider keys or `GH_TOKEN` there.
+
+Planned. The gateway keeps per-caller and per-provider accounting, budgets, and an orchestrator reserve (default 20 percent). It starts with the orchestrator. The guard checks it at session start and starts it if it is absent. The guard points host Pi at the gateway through Pi's provider registration, on `127.0.0.1` only, without editing files under `~/.pi`.
+
+Planned. The gateway goes out through the existing egress proxy. Each caller has its own allow list. The gateway's list allows only the model API host. The developer's list and the dependency install's list do not include the model API. The proxy tells callers apart by a separate internal network per caller. That network is internal, fail-closed, and has IPv6 off. The proxy holds no secrets. The gateway's profile only tunnels to the model API host on port 443. The gateway refuses non-https upstreams, and it is never on the outbound network. Roles other than the developer get a network that reaches only the gateway.
+
+Planned. The repository ships a default model set, for example through OpenRouter, so the harness works after a clone with one provider key. The owner's own model choice is a local, uncommitted file under `~/.config/keel`. Changing a model needs no pull request. Roles never pick their own model. Only provider API keys that stock Pi supports are used, under Pi's own variable names. There are no subscription logins. Task code and prompts are sent to the configured provider. Planned: the default model config that the gateway step ships will set `data_collection: deny` for OpenRouter. No such setting is sent today. The judge's requests today carry no such setting.
+
+## 20. Workspace layout and the default branch
+
+Planned. The root is the owner's ordinary clone. The harness never switches or moves the owner's branches and does not fetch in the clone. `.keel/` holds committed project files. Runtime data lives only in `.keel/workspace/`, the one excluded path: `repo/` (an independent bare copy of the default branch, fetched from GitHub and mounted read-only), `tasks/<ID>/`, `logs/`, and `state/`. Today, logs are under `$KEEL_ROOT/.keel/logs/`. The gate refuses role commits under `.keel/`. A nested `.git` in role output is quarantined and logged.
+
+Planned. Refresh of the default branch is lazy. Before every task start, and on `keel status`, one `ls-remote` runs against the GitHub default branch, then a fetch if it moved, as a fast-forward with a SHA check. If GitHub is unreachable, the task does not start and the message says so. A public repository is fetched anonymously. A private one is fetched with the bot token, read-only, through a helper that reads the token file and never puts the token on the command line. A new default branch only ever comes from GitHub. The model can never set it.
+
+Roles commit into the task's shadow `.git`. Bundle export and the host gate stay as they are.
+
+## 21. Push, cleanup and where the harness ends
+
+Planned. Only `keel push` pushes. Today, `push-stub` prints a push command and does not push. The bot token is a `0600` file under `~/.config/keel/`, outside the clone, never mounted and never on a command line. It exists only in the push and `gh` child, with an empty `gh` config directory and no inherited `GH_TOKEN`. Before pushing, the harness checks that `gh api user` equals the configured bot login, ignoring case, and it refuses if that login is the owner's or the token has admin on the repository. A change under `.github/workflows/` stops for the owner's yes before the push.
+
+Planned. `keel cleanup` removes finished task files. It is not a deploy and not a model verb. It runs by itself through a WAL-checked reconcile on any `keel` call: a merged task immediately; a cancelled task, a dossier, or a merge recognised only by patch id after a 7-day hold. It is idempotent and deletes only marked folders inside `.keel/workspace/tasks/`. The owner may run it in a terminal.
+
+Planned. The harness ends at a pull request into the default branch. The owner merges and releases by hand. Deploys, including dev, staging, and production, are outside the harness. In v1 there is no staging step, no release tags step, no rollback rehearsal, and no red team. The owner may merge with any method the repository allows. The design does not require a squash. A task counts as merged when its pull request is merged. Detection compares trees, then ancestry, then patch ids.
+
+Planned. A separate install container reaches the internet only through the proxy, with `--ignore-scripts`, a 7-day quarantine, and installs only from the lockfile. Until that step lands, a task that needs packages stops with "dependency install not available yet".
+
+Planned. Host and roles move to one current Pi version from `@earendil-works/pi-coding-agent`, 1.5.2 or newer, with a supported-version list in the repository. The guard and the doctor refuse an unknown version. Today the harness pins Pi 0.73.1.
 
 ## Known residual risk: fitting code to tests
 
@@ -431,4 +479,4 @@ Helps: tests RO for the developer; L3 product RO + write-scope (D-T7 and D-T30).
 
 ## Test status
 
-Tests D-T1…D-T28 plus D-T30…D-T33 are planned (behavioral only; no instruction-file line-checks; D-T29 reserved unused). Today `run-tests.sh` runs only happy, attacks, and doctor; `mutate.py` runs only offline; `setup/dispatcher` does not exist yet. Wiring those tests into `run-tests.sh` / keel-gate is part of the Step 7 process-files PR. Until then, claiming they are a mandatory CI check would be wrong.
+Tests D-T1…D-T28 plus D-T30…D-T33 are planned (behavioral only; no instruction-file line-checks; D-T29 reserved unused). Today `run-tests.sh` runs only happy, attacks, and doctor; `mutate.py` runs only offline; `setup/dispatcher` does not exist yet. Wiring those tests into `run-tests.sh` / keel-gate is part of the Step 7 process-files pull requests. Until then, claiming they are a mandatory CI check would be wrong.

@@ -10,7 +10,7 @@ Three layers carry that idea. The first two exist in the repository. The third i
 
 1. **GitHub.** The bot can open a pull request. The owner merges. Tag rules stop the bot from publishing a release. This is implemented. [GitHub setup](github-setup.md).
 2. **The harness doctor and the host gate.** `setup/keel-doctor.sh` reports whether this machine can run the harness. `setup/keel.sh gate` rejects an exported bundle that breaks a path, history, or test rule. This is implemented.
-3. **The v1 pipeline guards.** Per-role folder mounts and the developer egress proxy are implemented in the harness. A startup check that refuses a rootful daemon, fenced data, and the gates L4, L6, and L7 are specified and not built.
+3. **The v1 pipeline guards.** Per-role folder mounts and the developer egress proxy are implemented in the harness. A startup check that refuses a rootful daemon is implemented: ENV-05 fails a rootful Linux daemon, and the container commands refuse. Fencing of what the orchestrator reads through `keel read` and `keel logs`, and the gates L4, L6, and L7, are specified and not built.
 
 ## What a role can see
 
@@ -50,6 +50,7 @@ The RECOMMENDED checks today are:
 | REPO-04 | The base repo is on `main` | The gate compares the bundle with `main`. A warning, not a stop |
 | DISK-01 | Free space under the harness root | Under 10 GiB warns. Under 2 GiB fails this line. The level is still RECOMMENDED, so the verdict can remain READY WITH WARNINGS. Writable mounts have no quota |
 | ATK-A10 | Garbage collection while a task is active | A partial result is expected. The other attack checks are CRITICAL |
+| GH-01 | The `require-checks` ruleset on GitHub | A warning. Re-run setup or verify. [GH-01](harness-checks-why.md#gh-01) |
 
 ENV-05 is CRITICAL. A rootful Linux daemon fails it, and the verdict is not ready. Every other ENV, SEC, REPO, and attack check is CRITICAL when it fails. The full list, including what to do when a line fails, is [harness-checks-why.md](harness-checks-why.md).
 
@@ -78,7 +79,7 @@ The table compares the v1 requirement with `setup/keel.sh`, which applies one ha
 | Memory, CPU, and process-count limits | Applied. Defaults are 512m, 1 CPU, and 128 processes, overridable with `MEM`, `CPUS`, and `PIDS`. `--memory-swap` is set equal to `--memory`. A cgroup `memory.swap.max` of `max` is not proof that pin held |
 | A quota on the work directory | Soft free-space check only (`DISK-02`, critical). Below the configured minimum, startup is not ready and `setup` / `role` refuse. Hard filesystem quotas (XFS project quotas, ZFS datasets) are optional host operations, not required here |
 | Developer network off, model API only through a proxy | The developer joins the internal network `keel-egress` and uses the forward proxy. Every other role, `proto`, setup, export, and the test re-run stay on `--network none`. The shipped allowlist names the CI mock, not a vendor model API |
-| Secrets live under a separate user | Not a separate account in this step. Roles still do not hold secret values. The discoveries judge is a oneshot broker: it alone reads the key file and calls the Decisions API. A broker for the push step is still later work |
+| Secrets live in private files outside the clone, never in role containers | Not a separate account in this step. Roles still do not hold secret values. The discoveries judge is a oneshot broker: it alone reads the key file and calls the Decisions API. By default the key file is `$KEEL_ROOT/.keel/keys/openrouter.key`, or the file `KEEL_JUDGE_KEY_FILE` names, and that path is outside the default repository folder `$KEEL_ROOT/repo`. The doctor checks that it is a private regular file. It is mounted read-only into the judge broker container. A broker for the push step is still later work |
 | Chromium’s sandbox stays on. No `--no-sandbox`. A seccomp profile for Chrome. Playwright is checked on the host before a container runs it | The helper refuses `--no-sandbox` and `--disable-setuid-sandbox`. No browser is started. Playwright absent is not a failed startup. A Chromium run under rootless belongs to the QA step |
 
 ENV-07 is the CRITICAL check that a throwaway container actually starts with the flags in the second through fifth rows. If those flags are rejected, the verdict is NOT READY.
@@ -104,7 +105,13 @@ Each rule’s failure mode is in [why.md](why.md). On a personal repository, Git
 
 Roles do not hold secret values, and the harness does not pass the host environment into a role container. A key for the discoveries judge lives only in the oneshot broker in `setup/lib/discovery_judge.py`. That process reads the key file, adds `Authorization` on its own request, and calls `POST https://openrouter.ai/api/alpha/decisions` on `openrouter.ai`. It does not accept another path on that host. Role containers, the filter, and the promote command do not read the file. The doctor checks that the path is present and private outside CI, and it does not print or read the value. In CI the judge is a stub, and a live key is not required. The stub is refused when the CI marker is absent. The push step still has no broker and does not push.
 
+Planned: the judge will call the model through the gateway like every other caller, so no keel process on the host will call the provider directly with a key keel holds, and the proxy will hold no key. A provider key or `GH_TOKEN` that the owner exports in the terminal where Pi starts stays visible to the host orchestrator. That is an accepted risk, and the owner should not export them there.
+
 `role` and `role-env` refuse to start, with a non-zero exit and a refuse line that names the variable and not its value, when the launching environment contains any exact name on `LAUNCH_DENY_ENV` in `setup/lib/visibility.py`. That list is the existing `SECRET_ENV` names plus `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, and `OPENROUTER_API_KEY`. It is not a prefix match. The judge does not receive the key through that environment. A role cannot open a connection to the judge. The judge is not attached to `keel-egress`.
+
+Planned: this refusal goes away; instead every role container starts from an empty environment plus an allowlist, keel's helpers start with `env -i`, the launch fails closed when a clean environment cannot be built, and the owner's terminal is not scrubbed (accepted risk).
+
+Planned: once the gateway exists, task code and prompts go to the configured provider, and the default model config that step ships will set `data_collection: deny` for OpenRouter. The judge's requests today carry no such setting.
 
 A renamed variable is not on that list. Format-pattern redaction in the launch log is the backstop for token prefixes, `sk-` and `sk-ant-` keys, PEM private key blocks, and `password=`, `api_key=`, and `token=` assignments. The host gate scans the files added or edited in the change with gitleaks 8.30.1 and fails the bundle when one of those shapes is present. The binary is pinned by version and checksum and is installed before the gate runs; the gate itself does not download it. `GL-01` is critical: the binary must be present and report `8.30.1`.
 
@@ -118,7 +125,7 @@ Today, `push-stub` has no token and does not push. SEC-01 fails the doctor when 
 
 ## Fenced data
 
-Fencing is a v1 requirement on the reasoning plane. Every role receives repository files, ADRs, discoveries, and skills as data, not as instructions. The same fence wraps diffs at review. This is specified so that text inside the project cannot redirect an agent. The current harness does not wrap file contents. It relies on mounts, the read-only git pointer, and the host gate.
+In v1, fencing is planned for `keel read` and `keel logs` output: a random fence, with control, ANSI, and bidi characters stripped, and a size cap. Other channels are later. It is a second layer behind the guard and the explicit-yes cards. The current harness does not wrap file contents. It relies on mounts, the read-only git pointer, and the host gate.
 
 ## Related
 

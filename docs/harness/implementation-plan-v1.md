@@ -12,14 +12,14 @@ Depends on the existing base: agent isolation and the host-gate prototype. The h
 
 This is the control-plane wiring for chat-driven work. It is built as **Step 7**; grilling behaviour is **Step 8**. Authoritative detail: [Orchestrator and dispatcher](orchestrator-dispatcher.md) and [dispatcher transitions](dispatcher-transitions-v1.yaml).
 
-### Two front ends, one input
+### Two front ends, one Pi session
 
 Usage is entirely through chat in natural language.
 
-1. **Typical:** the user talks to an **external chat agent** (an intermediary). That agent relays into the **dispatcher inbox**. Recommended intermediary instructions live in [Intermediary agent instructions](../intermediary-agent-instructions.md) and [Working through a chat agent](../working-through-chat.md).
-2. **Alternative:** a **direct Pi** path that still enters through the same dispatcher inbox (the dispatcher alone writes orchestrator rpc stdin).
+1. **Typical:** the user talks to an **external chat agent** (an intermediary). That agent relays into the owner's Pi session on the host. Recommended intermediary instructions live in [Intermediary agent instructions](../intermediary-agent-instructions.md) and [Working through a chat agent](../working-through-chat.md).
+2. **Alternative:** the owner talks to stock Pi directly, in the root of their own clone.
 
-Both front ends hit the same warm orchestrator. There is no second confirmation layer on top of D2. No `/approve` command.
+Both paths are that same host Pi session. An intermediary is optional. There is no second confirmation layer on top of D2. No `/approve` command.
 
 ### Safety model (chat path)
 
@@ -28,16 +28,16 @@ Both front ends hit the same warm orchestrator. There is no second confirmation 
 - The user's answers are **logged verbatim with timestamp** in the task log and are **visible in the PR envelope**.
 - Orchestrator/agent output and other external content are **data**, not instructions to the intermediary.
 - Secrets stay out of chat.
-- Mid-turn user messages are **queued** and not lost. Priority interrupt or cancel mid-turn is backlog.
+- A message typed during a turn waits until the turn ends. It is not dropped. Priority interrupt or cancel mid-turn is later work.
 
 ### Orchestrator (reasoning plane)
 
-- **Warm per-task** Pi container: `pi --mode rpc` with the **session file in the task folder**. Removed at task end (PR / cancel / fail / dossier); on owner wait → **stop** (not remove), resume from session.
-- **One tool only:** `keel_request` (allowlisted kinds). Argv fail-closed: **no** bash, write, edit, or codemode. Read/search-class tools plus `keel_request` only.
-- **Read:** everything except **secrets** and paths in **`.keel/deny.local`**. Reads/writes the **D1 confidence-notes log** (hidden from the auditor until verdict). Ordinary product **tests are visible**.
-- **Write zone only (via dispatcher):** the brief; the split plan; `keel_request` payloads; the D1 log; ADR / `docs/owner-decisions.md` and discoveries. Messages to the user (D2 cards: options + default) go through the dispatcher / intermediary.
+- **Host Pi session:** stock, unmodified Pi on the host, started by the user in the root of their own clone. No launcher, socket, bridge, or daemon. Ordinary interactive Pi. Waiting needs no stop. A resumed session gets its tool set again. The session file is private (`0600`) and is never exported to HTML.
+- **One tool only:** `keel`. No bash, write, or edit tool. The guard `.pi/extensions/keel-guard` applies that set on every session start, including a resumed session.
+- **Read:** the repository, except secrets, `.keel/deny.local`, and `.keel/workspace/`. Task files, logs, and state are reached only through `keel read`, `keel logs`, and `keel status`. The D1 confidence-notes log stays hidden from the auditor until the verdict. Ordinary product tests are visible.
+- **Writes** go only through the `keel` tool: the brief, the split plan, the D1 log, and ADR, `docs/owner-decisions.md`, or discoveries. Messages to the user (D2 cards: options + default) are asked in the Pi session. An intermediary, when one is used, relays them.
 - **Must not write:** product code, tests, process files, or gates.
-- **Does not launch containers** and does not talk to other agents. Extension computes a deterministic `idempotency_key`; dispatcher applies a two-phase WAL.
+- **Does not launch containers** and does not talk to other agents. The guard computes the idempotency key. At most one state-changing request per turn. The dispatcher keeps the two-phase write-ahead log.
 - **D1** = orchestrator **confidence** (high / medium / low), not an owner decision. Low confidence always raises a D2. **D2** is always an owner decision.
 - On `TEST_CONTRADICTS_BRIEF`, the orchestrator **checks the claim against the brief** and decides; developer prose is **never** forwarded to L3 — only the orchestrator's reformulated finding.
 
@@ -47,7 +47,7 @@ A host script (not an agent) that:
 
 - Owns **task state** and the machine FSM from [dispatcher-transitions-v1.yaml](dispatcher-transitions-v1.yaml) (repo path after Step 7: `setup/dispatcher/transitions.v1.yaml`). Prose is not a second truth.
 - Runs **gates**, journals, status line (no LLM), and role launches via `setup/keel.sh role` (**ephemeral** `--rm` role containers).
-- Accepts at most **one** `keel_request` per orchestrator turn, only after rpc **turn-end**; second request → refuse + audit.
+- Accepts at most **one** state-changing `keel` request per orchestrator turn. The guard counts between `turn_start` and `turn_end`; a second request is refused and audited.
 - Idempotency WAL: write **`IN_PROGRESS`** before the side effect, then **`COMMITTED`** after; on restart reconcile `IN_PROGRESS` (never silent skip, never blind re-run).
 - Circuit breaker: identical **diff-hash** on consecutive attempts only. Every `kind: back` edge has non-null `budget_ref`.
 - Deep back to L2/L3: RO **previous-attempt** archive outside the work tree/git; developer **keeps read access**; shallow gate→L5 keeps the worktree.
@@ -56,7 +56,7 @@ A host script (not an agent) that:
 - **Logs** every transition, rejection, gate result, timeout, circuit-breaker, and owner answer (raw D2 in audit).
 - Is the only path from one role to the next: agents never message each other.
 
-**Pi smoke (before implementation):** a short rpc and tool-lock smoke on the orchestrator image. It proves a `pi --mode rpc` session can start and stop, and that bash, write, and edit are unavailable.
+**Pi smoke (before implementation):** on the target Pi version, check that the guard leaves only the `keel` tool, re-applies it on resume, and counts requests per turn.
 
 The owner's answers (a D2 question, a skill, a split, an irreversible change, a merge, or a release) are recorded in an ADR, in `docs/owner-decisions.md`, or as a discovery. A new dependency still waits on a D2 question (`WAITING_DEP_D2`).
 
@@ -100,21 +100,21 @@ The owner's answers (a D2 question, a skill, a split, an irreversible change, a 
 - **Effort:** M
 - **Done when:** Generator produces views from one source; role mounts get only their subset; SEC-08 absent from emit-able ids; flag/do-not-flag examples present for judgment rules.
 
-### Step 7 — Host dispatcher + warm orchestrator (process-files PR)
-- **Pre-impl smoke (required first):** short Pi smoke on the target image — `pi --mode rpc` session start/stop, and **tool lock** proving bash / write / edit / codemode are unavailable while `keel_request` is present. Fail closed if smoke fails. Step 7 uses **rpc**.
+### Step 7 — Host dispatcher + host orchestrator guard (process-files pull requests)
+- **Pre-impl smoke (required first):** on the target Pi version, check that the guard leaves only the `keel` tool, re-applies it on resume, and counts requests per turn. Fail closed if the check fails.
 - **Does:**
-  - **Warm per-task orchestrator:** Pi in its own container with `pi --mode rpc` and the **session file under the task folder**; **rm** container at task end; **stop** (keep session) while waiting on the owner. Mounts per Step 1 (secrets + `.keel/deny.local` denied; D1 confidence-notes log readable/writable by orchestrator; tests visible). Skills/argv forbid writing product code, tests, process files, or gates.
-  - **Single tool `keel_request`:** allowlisted kinds only (`ask_d2`, `brief_upsert`, `record_d1`, `propose_split`, `advance`, `return_to`, `run_role`, `wait_user`, `dossier`, `record_decision`, …). Extension computes deterministic `idempotency_key = hash(task, stage, attempt, kind, canonical payload)`. Atomic request write (`.tmp` → `rename`).
+  - **Host Pi session:** stock Pi on the host, in the owner's clone, started by the user. No launcher, socket, bridge, or daemon. Ordinary interactive Pi. Waiting needs no stop. The guard `.pi/extensions/keel-guard` applies one `keel` tool on every session start, including a resumed session. The session file is private (`0600`) and is never exported to HTML. The orchestrator does not write product code, tests, process files, or gates. Secrets and `.keel/deny.local` stay unreadable. The D1 confidence-notes log stays hidden from the auditor until the verdict. Tests are visible.
+  - **One `keel` tool:** kinds `ask_d2`, `brief_upsert`, `record_d1`, `propose_split`, `advance`, `return_to`, `run_role`, `wait_user`, `dossier`, and `record_decision`, plus the verbs `start`, `wait`, `status`, `cancel`, `ready`, `read`, and `logs`. The owner runs `keel doctor`. The model does not. The guard computes the idempotency key. The two-phase write-ahead log stays.
   - **Host dispatcher FSM:** load `dispatcher-transitions-v1.yaml` → install as `setup/dispatcher/transitions.v1.yaml`; task state store; gate runners; `setup/keel.sh role` for **ephemeral** roles; journals and status line (no LLM); allowlist reject + audit; agents never peer-message. Mechanical FAIL uses `dispatcher_only` edges.
-  - **Rules in this step:** the circuit breaker fires only on an identical diff-hash; dependency install uses an ephemeral networked container without host secrets or control-plane mounts (the install policy is Step 12); every back edge has a non-null `budget_ref`; at most one `keel_request` per turn, after rpc turn-end, and mid-turn user messages are queued; a two-phase write-ahead log (`IN_PROGRESS`, then `COMMITTED`) with restart reconcile; a deep return archives the previous attempt outside git and the developer keeps read access; the intermediary passes the raw D2 answer and an interpretation, re-asks when they disagree, and has no `/approve` command; L3 mounts the product tree read-only and writes only in test directories, with `git diff --name-only` as a second check; on `TEST_CONTRADICTS_BRIEF` the orchestrator checks the brief and does not forward developer prose to L3; L6 checks leftover debug, temp, scratch, and backup files, with configurable patterns and no invented thresholds.
+  - **Rules in this step:** the circuit breaker fires only on an identical diff-hash; dependency install uses an ephemeral networked container without host secrets or control-plane mounts (the install policy is Step 12); every back edge has a non-null `budget_ref`; at most one state-changing `keel` request per turn, counted by the guard, and a message typed during a turn waits until the turn ends; a two-phase write-ahead log (`IN_PROGRESS`, then `COMMITTED`) with restart reconcile; a deep return archives the previous attempt outside git and the developer keeps read access; the intermediary passes the raw D2 answer and an interpretation, re-asks when they disagree, and has no `/approve` command; L3 mounts the product tree read-only and writes only in test directories, with `git diff --name-only` as a second check; on `TEST_CONTRADICTS_BRIEF` the orchestrator checks the brief and does not forward developer prose to L3; L6 checks leftover debug, temp, scratch, and backup files, with configurable patterns and no invented thresholds.
   - **Timeouts:** per-stage DEFAULT wall timeout + short **container-start** timeout; values are **starting values, measure later**. Owner D2 wait is not killed by these timeouts.
-  - **Recovery & monitoring:** rehydrate store → last clean SHA → orphan cleanup by `task_id`; resume orchestrator from session; do not resurrect mid-flight roles; WAL reconcile on `IN_PROGRESS`; journals for transitions / reject / timeout / circuit-breaker / `second_request_same_turn`; status-line fields without secrets.
-  - **Tests:** implement behavioral stub-model suite **D-T1…D-T28** and **D-T30…D-T33** (D-T29 unused — no instruction-file line-checks). Happy / attacks / mutate style as in [Orchestrator and dispatcher](orchestrator-dispatcher.md) §16. **Wire D-T tests and mutants into `run-tests.sh` / keel-gate in this same process-files PR** (done-when for Step 7).
-  - Front ends: chat intermediary and direct Pi both enter the **dispatcher inbox**; only the dispatcher writes rpc stdin.
-- **Depends on:** Step 1, isolation green; Step 2 when model API egress is required for the orchestrator container
+  - **Recovery & monitoring:** rehydrate store → last clean SHA → orphan cleanup by `task_id`; the owner resumes the Pi session and the guard re-applies its tools; do not resurrect mid-flight roles; WAL reconcile on `IN_PROGRESS`; journals for transitions / reject / timeout / circuit-breaker / `second_request_same_turn`; status-line fields without secrets.
+  - **Tests:** implement behavioral stub-model suite **D-T1…D-T28** and **D-T30…D-T33** (D-T29 unused — no instruction-file line-checks). Happy / attacks / mutate style as in [Orchestrator and dispatcher](orchestrator-dispatcher.md) §16. **Wire D-T tests and mutants into `run-tests.sh` / keel-gate in these process-files pull requests** (done-when for Step 7).
+  - Front ends: an optional chat intermediary relays into the owner's Pi session on the host, and the owner may also talk to Pi directly in the clone. There is no agent-to-agent channel.
+- **Depends on:** Step 1, isolation green; the model gateway for model access (see [§19](orchestrator-dispatcher.md#19-host-keys-secrets-and-model-access))
 - **Effort:** L
 - **Acceptance / done when:**
-  - Pi rpc + tool-lock smoke green before merge of the implementation.
+  - On the target Pi version, the guard leaves only the `keel` tool, re-applies it on resume, and counts requests per turn, before merge of the implementation.
   - Fixture task advances only through YAML dispatcher transitions; illegal / second-same-turn / bad-schema requests refused and audited.
   - Orchestrator has no bash/write/edit; cannot write product code; can read D1 log; cannot read secrets/`deny.local`.
   - Developer tests are RO; L3 product write fails at mount (D-T30) and host write-scope still refuses out-of-scope paths (D-T7).
@@ -123,7 +123,7 @@ The owner's answers (a D2 question, a skill, a split, an irreversible change, a 
   - L6 fails leftover breakpoint/temp artifact fixtures (D-T33).
   - CB only on identical diff-hash (D-T12); hash-stability fixture (D-T21); every back edge has `budget_ref` (D-T19).
   - `run-tests.sh` / keel-gate invoke the new D-T suite and mutate wiring.
-  - No agent-to-agent channel; both front-end shapes documented against one inbox.
+  - No agent-to-agent channel.
 
 ### Step 8 — L0 Orchestrator grilling (minimal)
 - **Does:** First message = task understanding, D0, **D1 confidence** (not an owner decision), **D2** options+default for the owner, out-of-scope; hard D2 triggers (incl. irreversible); unanswered D2 waits (via chat or direct Pi — no extra confirmation layer); wrong brief → stop for brief v2 diff; bugfix lighter path; show size and estimated cost (the owner may raise the depth). Dispatcher persists wait state; intermediary path requires verbatim D2 surface then paraphrase (documented, not enforced inside this PR alone).
@@ -198,6 +198,9 @@ The owner's answers (a D2 question, a skill, a split, an irreversible change, a 
 - **Done when:** Agent/gate paths have no token; envelope fields present and fail closed on missing D0/D1/D2/oos; D2 verbatim answers visible; CI rejects tree mismatch; rebase-conflict re-enters L6–L7; process-files PRs labeled and separate.
 
 ### Step 20 — L9 QA/e2e + L9b rollback rehearsal
+
+L9b, staging, release tags, and production deploys are not in v1. The v1 release is a manual merge to the default branch. The text below about those stages is the later design.
+
 - **Does:** L9: isolated rootless container; Chrome DevTools MCP; Chromium sandbox ON; network only to local app; Playwright for brief scenarios; affected + smoke per PR; full run daily/pre-release; bugs → tester → developer → L6 → L7 → diff re-review → QA (max 2); visual diffs shown not blocking; synthetic data; externals stubbed. L9b: after L9/QA_SKIP, script picks rollback type from diff — plain (skip); feature flag (old tests+smoke flag off); migration (up→down→old tests→up); API change (previous version over new data + smoke); irreversible → D2. Failure → developer, costs attempt. Envelope records `rollback_mode` + evidence.
 - **Depends on:** Step 3, Step 19, Step 13
 - **Effort:** L
@@ -216,6 +219,9 @@ The owner's answers (a D2 question, a skill, a split, an irreversible change, a 
 - **Done when:** Export includes glossary; scrub rejects secret/code fixtures; offline LLM explanation fixture passes rubric; links expand to human names.
 
 ### Step 23 — Release path + L11 after-merge
+
+L9b, staging, release tags, and production deploys are not in v1. The v1 release is a manual merge to the default branch. The text below about those stages is the later design.
+
 - **Does:** Merge → staging; the owner takes prod via tag/`workflow_dispatch` (bot blocked by tag rules); pre-release list + full e2e; rollback = redeploy previous tag manually + envelope rollback_mode; feature flags optional per architect. L11: JSONL metrics; discoveries via script filter; abort discoveries via dossier script; journal delete; retrospective offer counter every 3–5 tasks (never auto-run).
 - **Depends on:** Step 19, Step 20, Step 21, Step 22
 - **Effort:** M
@@ -267,12 +273,12 @@ Track D needs isolation, context, and the dispatcher. Track C needs context for 
 7. **Feature flags:** default off until architect opts in, or project-level default?
 8. **Push step vs Step 10:** can skills process-files PRs ship before real push (manual owner path), or must Step 19 precede Step 10?
 9. **Trivial depth N (LOC):** exact script allowlist thresholds — set after first measured tasks.
-10. **Egress proxy:** single shared proxy image vs per-role profiles; how are allowlist updates reviewed?
+10. **Egress proxy:** one proxy, and a profile per caller network. The gateway's profile allows only the model API host. The developer's profile and the dependency install's profile do not include the model API. The proxy tells callers apart by a separate internal network per caller.
 11. **Budget calibration:** when to flip from warn-only to hard ≈2× median + iteration limit after 5–10 tasks.
 12. **A/B for major stack skills:** metrics and traffic split without a UI?
 13. **macOS:** still untested for isolation — Step 3/docs wording beyond "untested"?
 14. **Red Team trigger UX:** envelope recommend only vs owner checklist item when auth/payments/user data touched.
-15. **Dispatcher request-file / `keel_request` schema:** on-disk layout under the task service dir for requests and WAL; kinds already enum'd in [Orchestrator and dispatcher](orchestrator-dispatcher.md) — confirm final paths in the process-files PR.
+15. **`keel` tool request and WAL layout:** the on-disk request and WAL layout under `.keel/workspace/` is confirmed in the dispatcher pull request. Kinds are listed in [Orchestrator and dispatcher](orchestrator-dispatcher.md).
 16. **D1 confidence-notes log path:** the on-disk path is still open. The orchestrator writes and reads it. The auditor does not see it until the verdict.
 17. **Mid-turn cancel:** how cancel interrupts an in-flight role or gate without losing the audit record. Today, mid-turn messages wait until the turn ends.
 18. **L6 leftover pattern list location:** harness base path + project extend-only wiring in Step 16 (no numeric thresholds).

@@ -2,19 +2,19 @@
 
 You can drive rudax-keel **entirely through chat** in natural language. You describe the task, answer questions, and read status in a conversation. You do not have to sit inside a special IDE panel for day-to-day use.
 
-Two front ends reach the same place:
+The owner talks to the orchestrator in a Pi session on the host, in the root of their own clone.
 
-1. **External chat agent (typical).** You talk to a chat bot or other assistant. That assistant acts as an **intermediary**: a bridge whose primary job is high-quality two-way transfer between you and the harness **orchestrator**, without losing meaning.
-2. **Direct Pi Agent terminal (alternative).** You talk to Pi Agent in a terminal session that is wired to the same orchestrator input.
+1. **External chat agent (optional).** You talk to a chat bot or other assistant. That assistant acts as an **intermediary** and relays into that Pi session. Its primary job is high-quality two-way transfer, without losing meaning. How the intermediary reaches the Pi session is still to verify.
+2. **Direct Pi session.** You talk to stock Pi Agent in a terminal, in your clone.
 
-In both cases the **orchestrator** is a Pi Agent role inside the harness. It writes the brief, asks you decision questions when needed, and proposes splits. It does not write product code or tests. A host **dispatcher** script — not the chat agent — owns task state, runs gates, checks request files, and starts the other role containers.
+The **orchestrator** is that Pi session on the host. It uses one `keel` tool. It writes the brief, asks you decision questions when needed, and proposes splits. It does not write product code or tests. A host **dispatcher** script, not the chat agent, owns task state, runs gates, and starts the other role containers.
 
 **Status.** The chat path and the dispatcher are part of the v1 design. The repository does not run them yet. [Implementation status](status.md).
 
 ## Where the intermediary fits
 
 ```
-You → intermediary chat agent → orchestrator → (request files) → host dispatcher → role containers / gates
+You → Pi session on the host (one `keel` tool; an intermediary is optional) → host dispatcher → role containers / gates
  ↑ |
  └──────── status, D2 questions, briefs ──┘
 ```

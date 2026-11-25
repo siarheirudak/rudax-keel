@@ -219,6 +219,48 @@ Docker Desktop differences the harness handles:
 
 **How to fix.** `git -C <repo> switch main`.
 
+<a id="gh-01"></a>
+
+### GH-01 Required checks rule
+
+**Level.** RECOMMENDED
+
+**Check.** Passes only when exactly one `require-checks` ruleset is active and it matches `setup/rulesets/require-checks.json`. The check reads that ruleset and changes nothing. A default doctor run prints it after the Repository section. `bash setup/keel-doctor.sh --github` runs only this check. It is meant for the owner's own machine and `gh` login. The repository it reads is the one `gh` resolves from `KEEL_REPO`'s remote, so `bash setup/verify-github-rules.sh OWNER/REPO AGENT_LOGIN` stays the authoritative check. It needs `jq`, and `gh` 1.7.0 or newer.
+
+**Why.** This line is how the doctor shows the required-checks rule on the repository behind the clone. It does not apply the rule and it does not change it. The setup verify script remains the check that names the owner and the repository.
+
+**If it fails.** Warning. The verdict can stay READY WITH WARNINGS. This line never makes the doctor NOT READY. The warning cases are: the ruleset is missing, inactive, duplicated, or different from `setup/rulesets/require-checks.json`; the ruleset is unreadable; `jq` is missing; `gh` is missing or older than 1.7.0; `KEEL_REPO` is not a git repository or has no remote; or any of `GH_REPO`, `GH_HOST`, `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, and `GITHUB_ENTERPRISE_TOKEN` is set, even when the value is empty. When one of those six is set, or there is no repository or no remote, `gh` is not called.
+
+**How to fix.** Run the hint the doctor prints: `bash setup/apply-github-rules.sh`, or `bash setup/verify-github-rules.sh`.
+
+<a id="vis-01"></a>
+
+### VIS-01 Allow and deny loader
+
+**Level.** CRITICAL
+
+**Check.** The folder allowlists (`setup/allow/<role>.paths` for each launchable role) and the deny base (`setup/deny/base`) parse. The loader reports each error as a code, a file, and a line. A pass says that the folder allowlists and the deny base parse. A failure prints the first error line, cut to 140 characters, or `python3 is missing`.
+
+**Why.** `role` and `role-env` mount only the folder roots in `setup/allow/<role>.paths`, and `setup/deny/base` withholds secret basenames and harness paths ([Security](security.md)). The doctor confirms those files load before any role starts.
+
+**If it fails.** FAIL. The verdict is NOT READY. The detail is the first error line (code, file, and line), or `python3 is missing`.
+
+**How to fix.** Install `python3`, or correct the named file and line, then rerun the doctor.
+
+<a id="gl-01"></a>
+
+### GL-01 gitleaks 8.30.1
+
+**Level.** CRITICAL
+
+**Check.** The gitleaks binary (`KEEL_GITLEAKS`, or `$HOME/.cache/keel/gitleaks-8.30.1/gitleaks`) is executable and `gitleaks version` prints `8.30.1`. A pass says `8.30.1 present`. Anything else fails with `need executable 8.30.1`.
+
+**Why.** The host gate scans the added and edited files with that exact version and does not download it ([Security](security.md#tokens)).
+
+**If it fails.** FAIL. The verdict is NOT READY. When the binary is absent, the gate also refuses with `secret scan: gitleaks missing`.
+
+**How to fix.** `bash setup/gitleaks-install.sh` installs the pinned version into the user cache and checks its sha256. Or point `KEEL_GITLEAKS` at an executable 8.30.1 binary.
+
 <a id="disk-01"></a>
 
 ### DISK-01 Free disk

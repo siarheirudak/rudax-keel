@@ -88,5 +88,5 @@ Rules for this checklist:
 ## Notes for harness maintainers
 
 - Safety still rests on: the **owner merges on GitHub**; verbatim D2 relay + verbatim answer logging in the task log and PR envelope; the intermediary cannot change GitHub rules; the per-relay checklist so critical items are not dropped.
-- Both the intermediary path and a direct Pi Agent terminal hit the **same orchestrator input**.
-- Pi programmatic message input remains **to verify**; until then, document the concrete relay channel the deployment uses (file drop, session bridge, etc.) next to these instructions when the dispatcher is wired.
+- The owner talks to the orchestrator in a Pi session on the host. An intermediary is optional and relays into that session. The orchestrator uses one `keel` tool. The dispatcher starts role containers.
+- How the intermediary reaches the Pi session is still to verify.

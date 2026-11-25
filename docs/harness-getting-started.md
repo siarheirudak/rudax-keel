@@ -49,6 +49,7 @@ Useful extra commands:
 ```bash
 bash setup/keel-doctor.sh             # readiness checks only
 bash setup/keel-doctor.sh --attacks   # readiness + the attack suite, mapped to ATK-* lines
+bash setup/keel-doctor.sh --github    # only the required checks rule (GH-01)
 bash setup/keel.sh init-repo && bash setup/keel.sh setup && bash setup/keel.sh mode
 ```
 
