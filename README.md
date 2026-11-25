@@ -24,7 +24,7 @@ That split is what **zero-trust** means here. “Zero” is about the agent’s 
 
 Two planes do the work:
 
-- The **reasoning plane** is the agents. In the v1 design they run as **Pi Agent** (the program that hosts the model roles) inside a container. Pi Agent is not in this repository, and those roles are not wired up yet.
+- The **reasoning plane** is the agents. The orchestrator runs as stock Pi Agent on the host in the user's clone. The other roles run in containers. Neither is wired up yet. Pi Agent is not in this repository.
 - The **control plane** is the host scripts. They own the guarantees: what a role is allowed to see, whether tests really failed for the right reason, whether the files that were reviewed are the files being merged, and who is allowed to push.
 
 GitHub is the last gate on the control plane that already exists. The bot (or any program holding only the bot’s token) can open a pull request. The owner merges it. [GitHub setup](docs/github-setup.md) is that gate. [Why these rules exist](docs/why.md) explains each one.
@@ -45,7 +45,7 @@ The full chain, including who acts at each link and what stops it, is in [Archit
 |---|---|---|
 | Owner | Human | Answers questions, approves skills and splits, merges, releases |
 | Bot account | GitHub account | Opens pull requests. Does not merge and does not release |
-| Orchestrator, architect, critic, tester, developer, auditor, design reviewer, verifier, QA, researcher | Agents (planned) | Reason about one part of the task, inside a container |
+| Orchestrator, architect, critic, tester, developer, auditor, design reviewer, verifier, QA, researcher | Agents (planned) | The orchestrator runs as stock Pi Agent on the host in the user's clone. The other roles run in containers. Neither is wired up yet |
 | Host scripts (including the planned **dispatcher**) | Programs | Own task state and transitions, package context, run gates, install dependencies, open the pull request, write the log |
 
 What each role is allowed to see is a **folder allowlist**, minus a unified deny that always wins. A path that is not mounted is invisible. Details: [Roles and visibility](docs/roles.md).

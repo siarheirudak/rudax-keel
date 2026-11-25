@@ -91,7 +91,7 @@ A suspicious skill is one that contains install commands, network use, secret ac
 
 ## The owner and the bot
 
-The owner is not a container role. The owner reads the envelope, answers D2 questions, and merges. The owner may work through an external chat **intermediary** or a direct Pi Agent terminal; both hit the same orchestrator input. [Working through a chat agent](working-through-chat.md).
+The owner is not a container role. The owner reads the envelope, answers D2 questions, and merges. The owner talks to the orchestrator in a Pi session on the host, in their own clone. An intermediary is optional and relays into that session. How the intermediary reaches the Pi session is still to verify. The orchestrator uses one `keel` tool. The dispatcher starts role containers. [Working through a chat agent](working-through-chat.md).
 
 The bot is not a container role either. It is the GitHub **bot account** that opens the pull request at L10. In the design, a GitHub token exists only in that push step. The prototype’s push command is `setup/keel.sh push-stub`. It prints the command and does not push. The doctor fails if `GH_*`, `GITHUB_*`, or `BOT_GH_TOKEN` is set in the environment it runs from. [Security](security.md#tokens).
 

@@ -61,7 +61,7 @@ At grilling, and again after the architect’s estimate, the owner is shown the 
 
 ## Merge
 
-The owner merges. The design’s merge is a squash: the link-by-link commits become one commit on the default branch.
+The owner merges, with any merge method the repository allows. The design does not require a squash.
 
 The owner is meant to merge from the envelope, without reading the code. The envelope is ready only when it can show all of the following.
 
@@ -70,7 +70,7 @@ The owner is meant to merge from the envelope, without reading the code. The env
 3. The red gate saw an honest failure on the stubs, not an import or build error.
 4. Existing tests still pass.
 5. The auditor’s rules, including security, passed.
-6. Rollback was rehearsed, or the change is plain code and the rehearsal was skipped, or the owner accepted an irreversible change.
+6. Rollback was rehearsed, or the change is plain code and the rehearsal was skipped, or the owner accepted an irreversible change. The rollback rehearsal is not in v1.
 7. D0, D1, D2, and the out-of-scope line are present.
 8. The static gate left no blocking complexity or duplication problem. Warnings are listed in the envelope.
 9. The envelope is bound to the tree hash of the files that passed the gates. CI blocks a merge when the branch’s tree is different.
@@ -84,6 +84,8 @@ The bot does not merge. The owner does not merge a pull request whose required c
 ## Release
 
 <a id="release"></a>
+
+In v1 the harness ends at the pull request into the default branch. The owner merges and releases by hand, outside the harness. Staging, a release workflow, and the pre-release run are not in v1. The rest of this section describes the later design.
 
 Merge puts the change on the default branch, which the design treats as staging. Production is a second act.
 

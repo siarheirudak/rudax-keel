@@ -27,16 +27,16 @@ If the brief is missing its required sections, the script does not open the enve
 
 ## How chat reaches the chain
 
-Usage is natural-language chat. Two front ends share one orchestrator input. That input is planned for Step 7 and is not built yet.
+Usage is natural-language chat. The owner works in a Pi session on the host, in the root of their own clone. That session is planned for Step 7 and is not built yet. An intermediary is optional.
 
-1. An **external chat intermediary** (typical): a chat agent that bridges the owner and the orchestrator in both directions. Primary job: high-quality transfer of meaning. Recommended paste-block: [Intermediary agent instructions](intermediary-agent-instructions.md). Newcomer page: [Working through a chat agent](working-through-chat.md).
-2. A **direct Pi Agent terminal** session wired to the same input.
+1. An **external chat intermediary** (optional): a chat agent that relays into the owner's Pi session on the host. Primary job: high-quality transfer of meaning. Recommended paste-block: [Intermediary agent instructions](intermediary-agent-instructions.md). Newcomer page: [Working through a chat agent](working-through-chat.md).
+2. A **direct Pi session** on the host, in the clone.
 
 There is no extra confirmation layer on top of D2. The owner merges on GitHub; the intermediary cannot merge or change GitHub rules.
 
 ### Orchestrator and host dispatcher (planned, Step 7)
 
-Neither is built yet. In the Step 7 design, the **orchestrator** is the main Pi Agent role. It writes the brief, split proposals, messages to the owner, **request files**, and the D1 confidence-notes log. It does not write product code or tests. It may read everything except secrets and paths in `.keel/deny.local` (including the D1 log). The **dispatcher** is a host script. It owns task state, a fixed transition table for L0 through L11, gate runs, allowlist checks on request files, and launches of roles via `setup/keel.sh role`. Agents do not talk to each other; they go through the dispatcher. Design detail: [Harness design](harness/README.md).
+Neither is built yet. In the Step 7 design, the **orchestrator** is stock Pi on the host, in the owner's clone. It uses one `keel` tool, not request files. It writes the brief, split proposals, messages to the owner, and the D1 confidence-notes log. It does not write product code or tests. It may read the repository except secrets, `.keel/deny.local`, and `.keel/workspace/`. The **dispatcher** is a host script. It owns task state, a fixed transition table for L0 through L11, gate runs, checks on `keel` requests, and launches of roles via `setup/keel.sh role`. Agents do not talk to each other; they go through the dispatcher. Design detail: [Harness design](harness/README.md).
 
 ## The chain
 
@@ -180,7 +180,7 @@ flowchart TD
  L9 -->|retries used up| DOS7
  L9 -->|passed| L9B
 
- L9B["L9b Rollback rehearsal"]:::script
+ L9B["L9b Rollback rehearsal<br/>not in v1"]:::script
  IRR{"Owner: irreversible change"}:::owner
  IRRW["Waits until acknowledged"]:::note
  L9B -->|cannot be rehearsed| IRR
@@ -192,16 +192,16 @@ flowchart TD
 
  L10["L10 Pull request<br/>bot opens it"]:::script
  MERGE{"Owner merges"}:::owner
- REL{"Owner releases"}:::owner
+ REL{"Owner releases by hand<br/>outside the harness"}:::owner
  PROC["Separate process-files pull request"]:::script
  REBASE["Rebase conflict<br/>developer, then L6 and L7"]:::agent
- DONE["Released"]:::script
+ DONE["Deploys outside the harness"]:::script
 
  L10 -->|conflict| REBASE
  REBASE --> L6
  L10 --> PROC
  L10 --> MERGE
- MERGE -->|"on the default branch, then staging"| REL
+ MERGE -->|"merge to the default branch"| REL
  REL --> DONE
 
  L11["L11 After the merge<br/>log, then delete the journal"]:::script
@@ -245,7 +245,7 @@ The paragraphs below are the short form. Inputs, outputs, blocks, and retry limi
 
 **L9 QA.** Only when the depth is full and the diff touches a user interface or an API. The QA agent drives the local app with Playwright and keeps the browser sandbox on. Otherwise the link is skipped.
 
-**L9b Rollback rehearsal.** A script classifies the diff. Plain code skips the rehearsal. A feature flag, a migration, or an API change is rehearsed. A change that cannot be undone waits for the owner.
+Not in v1. Kept as the later design. **L9b Rollback rehearsal.** A script classifies the diff. Plain code skips the rehearsal. A feature flag, a migration, or an API change is rehearsed. A change that cannot be undone waits for the owner.
 
 **L10 Pull request.** A script pushes the branch and the bot opens the pull request with an envelope bound to the tree hash. CI runs the script gates again and blocks when the tree hash does not match. The owner merges.
 

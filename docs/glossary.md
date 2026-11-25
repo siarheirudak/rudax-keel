@@ -10,20 +10,20 @@ Short definitions for this repository. The first time a longer page needs a word
 
 **Agent.** A program that uses a language model to propose part of a task. Its own report is not evidence.
 
-**Pi Agent.** The runtime the v1 design uses to host agent roles inside a container. It is not part of this repository.
+**Pi Agent.** The runtime the v1 design uses. It runs the orchestrator on the host and the other roles in containers. It is not part of this repository.
 
 **Role.** One agent job: orchestrator, researcher, critic, architect, tester, developer, auditor, design reviewer, verifier, or QA.
 
 **Host script.** An ordinary program on the machine that runs the pipeline. It checks files and commands. It does not accept an agent’s summary as proof.
 
-**Orchestrator (planned, Step 7).** The main Pi Agent role in the design. Not built yet. It writes the brief, split proposals, messages to the owner, request files, and the D1 confidence-notes log. It does not write product code or tests. Design: [Harness design](harness/README.md).
+**Orchestrator (planned, Step 7).** Stock Pi on the host, in the owner's clone, with one `keel` tool. Not built yet. It writes the brief, split proposals, messages to the owner, and the D1 confidence-notes log. It does not write product code or tests. Design: [Harness design](harness/README.md).
 
-**Dispatcher (planned, Step 7).** A host script (control plane), not built yet, that owns task state, a fixed transition table for links L0 through L11, gate runs, allowlisted request files (`keel_request`), logging, and launches of role containers via `setup/keel.sh role`. Agents do not message each other; they drop request files for the dispatcher. Design: [Harness design](harness/README.md).
+**Dispatcher (planned, Step 7).** A host script (control plane), not built yet, that owns task state, a fixed transition table for links L0 through L11, gate runs, requests from the orchestrator's `keel` tool, logging, and launches of role containers via `setup/keel.sh role`. Agents do not message each other. Design: [Harness design](harness/README.md).
 
 
 **Intermediary.** An external chat agent that bridges the owner and the orchestrator in both directions. Its primary job is high-quality two-way transfer of meaning. It is not part of the harness trust boundary. Recommended instructions: [Intermediary agent instructions](intermediary-agent-instructions.md).
 
-**Request file (planned, Step 7).** An allowlisted file the orchestrator (or another role) drops for the dispatcher. The dispatcher rejects kinds that are not on the allowlist.
+**Keel request (planned, Step 7).** One call of the `keel` tool, checked by the dispatcher against the allowlist and the FSM. At most one state-changing request per turn.
 
 **D1 confidence-notes log.** The detailed notes behind the brief’s D1 confidence rating. Written and readable by the orchestrator. Denied to the auditor until the auditor’s verdict. Not an owner-decision store. Exact path still open.
 
@@ -81,7 +81,7 @@ Short definitions for this repository. The first time a longer page needs a word
 
 **Blocking finding.** A review note that returns the task to the developer. It needs a file and line, a rule id, and a behavioural effect.
 
-**Fence.** A wrapping that marks repository text as data, so the model does not treat it as instructions. Content fencing (M5) is specified and deferred to the backlog; containers today receive ordinary files.
+**Fence.** A wrapping that marks repository text as data, so the model does not treat it as instructions. In v1, fencing is planned for `keel read` and `keel logs` output. Packaged context and other channels are later. Containers today receive ordinary files.
 
 **Deny-list.** The paths a role must not see. The path is not mounted. Extra denies may be added. Harness denies may not be removed.
 
@@ -111,7 +111,7 @@ Short definitions for this repository. The first time a longer page needs a word
 
 **Rollback mode.** How the change would be undone: plain code, feature flag, migration, API change, or irreversible. Recorded on the envelope.
 
-**Staging.** The default branch after the owner merges. Production is a later tag or a manually dispatched workflow.
+**Staging.** Not part of v1. The harness ends at the pull request. The owner merges and releases by hand.
 
 **Red team.** A later, explicitly triggered check against a staging environment. Not part of the v1 build. The envelope may recommend it when a change touches authentication, payments, or user data.
 

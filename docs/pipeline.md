@@ -263,6 +263,7 @@ The target size of a slice is a configurable band of about 50 to 150 lines. That
 **Visibility.** Network only to the local app. No secrets. No production data.
 
 ## L9b. Rollback rehearsal
+Not in v1. This section is kept as the later design.
 
 **Purpose.** Show that the change can be undone, or make the owner accept that it cannot.
 
@@ -290,15 +291,15 @@ The target size of a slice is a configurable band of about 50 to 150 lines. That
 
 **Purpose.** Open a pull request whose evidence matches the tree that passed the gates, and leave the merge to the owner.
 
-**Who acts.** A host script. The bot account opens the pull request. The owner merges and, later, releases. The developer is involved again only when a rebase conflicts.
+**Who acts.** A host script. The bot account opens the pull request. The owner merges and releases by hand, outside the harness. The developer is involved again only when a rebase conflicts.
 
-**Inputs.** The gates that passed, including the rollback rehearsal. The envelope inputs: the brief, the gate results, the metrics, the tree hash, and the rollback mode.
+**Inputs.** The gates that passed, including the rollback rehearsal once that stage exists; it is not in v1. The envelope inputs: the brief, the gate results, the metrics, the tree hash, and the rollback mode.
 
 **Outputs.** A branch push and a pull request opened by the bot account. An envelope bound to the tree hash. Process-file changes go out as their own pull request, labelled `process-files`.
 
 **What must pass.** CI runs the script gates again. Mutation on CI reports the trend and does not repeat the full blocking run. CI blocks when the tree of `HEAD` is not the recorded tree hash. The envelope contains the brief and fails closed when D0, D1, D2, or the out-of-scope line is missing. It also contains gate results, the count of old tests changed, the mutation trend, every warning, suppressions, QA media when QA ran, the rollback mode and the rehearsal evidence, tokens, time, budget remaining, and model ids.
 
-Commits are cut per link. The owner squash-merges. The script rebases. A conflict goes to the developer, then L6 and L7 run again and the envelope is bound to the new tree. The split, if there was one, was decided at L2. This link only opens the part that is next.
+Commits are cut per link. The owner merges with the method of their choice. The script rebases the task branch onto the default branch before the pull request. A conflict goes to the developer, then L6 and L7 run again and the envelope is bound to the new tree. The split, if there was one, was decided at L2. This link only opens the part that is next.
 
 The envelope may recommend a red-team pass when the diff touches authentication, payments, or user data. That stage is not part of the v1 build. It is described in [Status](status.md#left-out-of-v1).
 
@@ -342,7 +343,7 @@ Release is a separate owner action after the merge, documented in [Human decisio
 | Tester closing a mutation gap | 1 return | Then the developer, inside the submission budget, else a dossier |
 | Review rounds | 3 | Dossier |
 | QA bug path | 2 | Dossier |
-| Rollback rehearsal failure | Spends one coding submission | Inside the L5 budget |
+| Rollback rehearsal failure, only once that stage exists (not in v1) | Spends one coding submission | Inside the L5 budget |
 | Token limit on the context package | Split into iterations | No dossier |
 
 ## Related

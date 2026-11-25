@@ -1,10 +1,10 @@
 # Harness design (Step 7)
 
-Design documents for the warm Pi orchestrator, host dispatcher, and FSM. These are **design** — the dispatcher is not built in the repository yet. Implementation is Step 7 of the plan and ships as a **process-files** pull request (do not mix with product code).
+Design documents for the host Pi orchestrator (a guard and one `keel` tool), the host dispatcher, and the FSM. These are **design** — planned; nothing in this layer is built. They ship as **process-files** pull requests (do not mix with product code).
 
 | Document | What it is |
 |---|---|
-| [Orchestrator and dispatcher](orchestrator-dispatcher.md) | Planes, visibility, FSM, `keel_request`, and the D-T* tests |
+| [Orchestrator and dispatcher](orchestrator-dispatcher.md) | Planes, visibility, FSM, the `keel` tool, keys and model access, layout, push and cleanup, and the D-T* tests |
 | [Implementation plan v1](implementation-plan-v1.md) | Ordered steps for the harness |
 | [Dispatcher transitions YAML](dispatcher-transitions-v1.yaml) | Machine FSM table (runtime copy will live under `setup/dispatcher/` after Step 7) |
 
