@@ -12,6 +12,36 @@ HERE=$(cd "$(dirname "$0")" && pwd -P)
 # shellcheck source=setup/lib/egress.sh
 . "$HERE/lib/egress.sh"
 P=${KEEL_ROOT:-$HOME/keel-proto}; T=${TASK:-task-1}
+task_check=1  # task-name-check
+keel_task_ok() {
+  local name=$1
+  (
+    LC_ALL=C
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]
+  )
+}
+if [ "$task_check" = 1 ] && ! keel_task_ok "$T"; then
+  echo "REFUSED: task name" >&2
+  exit 1
+fi
+sha_check=1  # commit-id-check
+keel_sha_ok() {
+  local sha=$1
+  (
+    LC_ALL=C
+    [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+  )
+}
+keel_require_sha() {
+  if [ "$sha_check" != 1 ]; then
+    return 0
+  fi
+  if keel_sha_ok "$1"; then
+    return 0
+  fi
+  echo "REFUSED: commit id" >&2
+  return 1
+}
 mkdir -p "$P"; P=$(abs_dir "$P")    # physical path: Docker Desktop shares /private/tmp, not /tmp
 R=$P/repo; W=$P/work/$T; S=$P/shadow/$T.git; B=$P/bundles; G=$P/gate/$T.git
 DOCKER=${DOCKER:-docker}; IMG=${IMG:-keel-git}
@@ -21,7 +51,7 @@ MAX_BUNDLE=${MAX_BUNDLE:-1048576}; MAX_LINES=${MAX_LINES:-5000}; MAX_FILES=${MAX
 # Pi Agent process set (scripts/check-scope.py), plus .gitmodules.
 # .pi/ and .agents/ match at any depth. setup/README.md and setup/TESTING.md
 # are ordinary docs (whole path, any case).
-FORBID_PREFIX='^(\.github|setup|scripts)/|(^|/)\.pi/|(^|/)\.agents/'
+FORBID_PREFIX='^(\.github|setup|scripts|\.keel)/|(^|/)\.pi/|(^|/)\.agents/'
 FORBID_NAME='(^|/)(agents\.md|agents\.override\.md|claude\.md|codeowners|\.shellcheckrc|\.gitmodules)$'
 DOTGIT='(^|/)\.git(/|$)'
 TEST_ENTRY=${KEEL_TEST_ENTRY:-test.sh}   # test entrypoint, always taken from MAIN, never from the bundle
@@ -41,6 +71,40 @@ case "$DOCKER" in *podman*) HARDEN+=(--userns=keep-id);; esac
 GITENV=(-e HOME=/tmp -e "GIT_CONFIG_PARAMETERS='core.hooksPath'='/dev/null' 'core.fsmonitor'='false'"
   -e GIT_AUTHOR_NAME=agent -e GIT_AUTHOR_EMAIL=a@x -e GIT_COMMITTER_NAME=agent -e GIT_COMMITTER_EMAIL=a@x)
 hgit(){ env -i PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin HOME="$P/.gatehome" GIT_CONFIG_NOSYSTEM=1 git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.pager=cat -c protocol.allow=never -c protocol.file.allow=always "$@"; }
+# Start the container CLI with an explicit environment. A listed or matching
+# name is dropped even when it is also on this list. The runtime's own
+# configuration is outside this launch.
+docker_cli() {
+  local allow name names="" kept
+  allow="PATH HOME USER LOGNAME LANG LC_ALL TMPDIR XDG_RUNTIME_DIR XDG_CONFIG_HOME DBUS_SESSION_BUS_ADDRESS DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG DOCKER_CERT_PATH DOCKER_TLS_VERIFY CONTAINER_HOST CONTAINER_CONNECTION CONTAINERS_CONF CONTAINERS_STORAGE_CONF CONTAINERS_REGISTRIES_CONF"
+  # The list is a fixed set of names. Splitting it is the point.
+  # shellcheck disable=SC2086
+  for name in $allow; do
+    if [ -n "${!name+x}" ]; then
+      names="$names $name"
+    fi
+  done
+  # shellcheck disable=SC2086
+  kept=$(python3 "$HERE/lib/secret_names.py" keep-names $names)
+  _cli_env_run "$kept" "$@"
+}
+_cli_env_run() {
+  local kept=$1
+  shift
+  local name
+  local -a acc
+  acc=()
+  # Names come back separated by spaces. None of them contain whitespace.
+  # shellcheck disable=SC2086
+  for name in $kept; do
+    acc+=("$name=${!name}")
+  done
+  if [ "${#acc[@]}" -eq 0 ]; then
+    env -i "$@"
+    return $?
+  fi
+  env -i "${acc[@]}" "$@"  # cli-env-reset
+}
 # shellcheck disable=SC2119
 launch_guard(){ keel_require_runtime || exit $?; } # launch-guard
 crun(){
@@ -55,15 +119,57 @@ crun(){
   else
     harden=("${HARDEN[@]}")
   fi
-  $DOCKER run "${harden[@]}" "${GITENV[@]}" "$@"
+  docker_cli $DOCKER run "${harden[@]}" "${GITENV[@]}" "$@"
 }
 KEEL_CMD=${1:-}
+KEEL_ROLE_NAME=${KEEL_ROLE_NAME:-}
+quarantine_nested=1  # nested-git-on
+record_nested_git() {
+  python3 "$HERE/lib/visibility.py" nested-git --role "$KEEL_ROLE_NAME" --work "$W" --harness "$HERE" --keel "$P" --task "$T" --repo "$R" --file "$1"  # nested-git-record
+}
+quarantine_git_tree() {
+  local list path parent rel mode expected content run
+  [ "$quarantine_nested" = 1 ] || return 0
+  case "${KEEL_CMD:-}" in
+    role|role-env|proto|proto-env) ;;
+    *) return 0 ;;
+  esac
+  [ -d "$W" ] || return 0
+  list=$(mktemp) || return 0
+  find -P "$W" -iname '.git' -prune -print >"$list" 2>/dev/null || true
+  run=$P/quarantine/$T/$$
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    [ -e "$path" ] || [ -L "$path" ] || continue
+    parent=$(dirname -- "$path")
+    if [ "$parent" = "$W" ]; then
+      mode=$(cat "$P/$T.mode" 2>/dev/null || printf '%s\n' pointer)
+      if [ "$mode" = pointer ] && [ -f "$path" ] && [ ! -L "$path" ]; then
+        expected=$(printf 'gitdir: /shadow/%s.git\n' "$T")
+        content=$(cat -- "$path" 2>/dev/null || true)
+        if [ "$content" = "$expected" ]; then
+          continue
+        fi
+      fi
+    fi
+    rel=${path#"$W"/}
+    case $rel in
+      /*|"") continue ;;
+    esac
+    mkdir -p -- "$run/$(dirname -- "$rel")"
+    mv -- "$path" "$run/$rel" || continue
+    record_nested_git "$rel" || true
+  done <"$list"
+  rm -f "$list"
+}
 keel_on_exit() {
   local ec=$?
+  quarantine_git_tree || true
   rm -rf "$P/.keel/runs"
   if [ "$KEEL_CMD" = cleanup ] || { [ "$KEEL_CMD" = setup ] && [ "$ec" -ne 0 ]; }; then
     rm -rf "$P/$T.deny" "$W/.keel/runs"
   fi
+  exit "$ec"
 }
 trap keel_on_exit EXIT
 role_mounts() {
@@ -94,10 +200,6 @@ role_mounts() {
 start_role() {
   local name=$1
   shift
-  secret_env_gate=1  # secret-env-gate
-  if [ "$secret_env_gate" = 1 ]; then
-    python3 "$HERE/lib/visibility.py" secret-env --role "$name" --work "$W" --harness "$HERE" --keel "$P" --task "$T" --repo "$R" || return $?
-  fi
   reset_shadow
   run_policy "$name" "$@"
 }
@@ -150,8 +252,9 @@ init-repo) mkdir -p "$R" "$P/.gatehome"; cd "$R" || exit 1; git init -q; git sym
   mkdir -p .keel/memory
   : > .keel/memory/.keep
   git add -A; git -c user.name=h -c user.email=h@x commit -qm init; echo "repo main=$(git rev-parse main) gc.auto=$(git config gc.auto) gc.pruneExpire=$(git config gc.pruneExpire)";;
-setup) launch_guard; need_docker; M=$(git -C "$R" rev-parse main); mkdir -p "$W" "$B" "$(dirname "$S")"
-  git init -q --bare "$S"; reset_shadow; echo "$M" > "$P/$T.base"
+setup) launch_guard; M=$(hgit -C "$R" rev-parse main 2>/dev/null) || M=; keel_require_sha "$M" || exit 1  # setup-main-hgit
+  need_docker; mkdir -p "$W" "$B" "$(dirname "$S")"
+  hgit init -q --bare "$S"; reset_shadow; echo "$M" > "$P/$T.base"
   printf 'gitdir: /shadow/%s.git\n' "$T" > "$W/.git"
   want=${KEEL_POINTER_MODE:-auto}; md='env'
   if [ "$want" != env ]; then
@@ -162,12 +265,13 @@ setup) launch_guard; need_docker; M=$(git -C "$R" rev-parse main); mkdir -p "$W"
   [ $md = env ] && rm -f "$W/.git"      # env mode: no pointer file at all
   echo $md > "$P/$T.mode"; work_mounts rw
   crun -v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c \
-   "git update-ref refs/heads/$T $M && git symbolic-ref HEAD refs/heads/$T && git checkout -q -f $T && git log --oneline -1" \
+   'git update-ref refs/heads/"$1" "$2" && git symbolic-ref HEAD refs/heads/"$1" && git checkout -q -f "$1" && git log --oneline -1' \
+   _ "$T" "$M" \
    || { echo "setup container failed. If this is Docker Desktop, check that $P is in Settings > Resources > File sharing." >&2; exit 7; }
   echo "mode=$md";;
 mode) mode;;
 reset-shadow) reset_shadow; echo "shadow reset";;
-proto) launch_guard; shift; name=$1 m=$2; shift 2; reset_shadow
+proto) launch_guard; shift; name=$1 m=$2; shift 2; KEEL_ROLE_NAME=$name; reset_shadow
   echo "== role $name ($m) [shadow reset, mode=$(mode)]"; work_mounts "$m"
   use_none=1  # proto-network-none
   if [ "$use_none" = 1 ]; then
@@ -181,11 +285,12 @@ proto) launch_guard; shift; name=$1 m=$2; shift 2; reset_shadow
       args+=("$a")
     done
     launch_guard
-    $DOCKER run "${args[@]}" "${GITENV[@]}" -v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c "$*"
+    docker_cli $DOCKER run "${args[@]}" "${GITENV[@]}" -v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c "$*"
   fi;;
-proto-env) launch_guard; shift; WE=$P/work/$T-env; mkdir -p "$WE"; reset_shadow
+proto-env) launch_guard; shift; KEEL_ROLE_NAME=proto-env; WE=$P/work/$T-env; mkdir -p "$WE"; reset_shadow
   crun -e "GIT_DIR=/shadow/$T.git" -e GIT_WORK_TREE=/work -v "$R/.git/objects:/base/objects:ro" -v "$WE:/work" -v "$S:/shadow/$T.git" -w /work "$IMG" sh -c "$*";;
 role) launch_guard; shift; name=$1; shift
+  KEEL_ROLE_NAME=$name
   if [ "${1:-}" = rw ] || [ "${1:-}" = ro ]; then shift; fi
   start_role "$name" "$@" || exit $?;;
 role-env) launch_guard; shift
@@ -194,11 +299,12 @@ role-env) launch_guard; shift
     exit 1
   fi
   name=$1; shift
+  KEEL_ROLE_NAME=$name
   start_role "$name" "$@" || exit $?;;
-export) launch_guard; M=$(cat "$P/$T.base"); rm -f "$B/$T.bundle"; reset_shadow
+export) launch_guard; M=$(cat "$P/$T.base" 2>/dev/null || true); keel_require_sha "$M" || exit 1; rm -f "$B/$T.bundle"; reset_shadow
   crun -v "$R/.git/objects:/base/objects:ro" -v "$S:/shadow/$T.git:ro" -v "$B:/bundles" "$IMG" \
     git --git-dir="/shadow/$T.git" bundle create "/bundles/$T.bundle" "refs/heads/$T" "^$M";;
-gate) launch_guard; F=$B/$T.bundle; M=$(git -C "$R" rev-parse main); I=refs/keel/incoming/$T
+gate) launch_guard; F=$B/$T.bundle; M=$(hgit -C "$R" rev-parse main 2>/dev/null) || M=; keel_require_sha "$M" || exit 1; I=refs/keel/incoming/$T
   fail(){ echo "GATE FAIL: $*"; rm -rf "$G"; exit 1; }
   mkdir -p "$P/.gatehome" "$P/gate"; [ -f "$F" ] || fail "no bundle"
   bad=$(find "$P/work" "$P/shadow" "$B" ! -user "$(id -u)" 2>/dev/null | head -3)
@@ -270,16 +376,18 @@ gate) launch_guard; F=$B/$T.bundle; M=$(git -C "$R" rev-parse main); I=refs/keel
   hgit -C "$G" archive "$I" | tar -x --no-same-owner -C "$TD"
   hgit -C "$G" show "main:$TEST_ENTRY" > "$TE/entry.sh" || { rm -rf "$TD" "$TE"; fail "no $TEST_ENTRY on main"; }
   launch_guard
-  $DOCKER run "${HARDEN[@]}" -e HOME=/tmp -v "$TD:/src:ro" -v "$TE:/keel-entry:ro" -w /src "$IMG" sh /keel-entry/entry.sh || { rm -rf "$TD" "$TE"; fail "tests (main:$TEST_ENTRY)"; }
+  docker_cli $DOCKER run "${HARDEN[@]}" -e HOME=/tmp -v "$TD:/src:ro" -v "$TE:/keel-entry:ro" -w /src "$IMG" sh /keel-entry/entry.sh || { rm -rf "$TD" "$TE"; fail "tests (main:$TEST_ENTRY)"; }
   rm -rf "$TD" "$TE"; echo "GATE PASS: $(hgit -C "$G" rev-parse "$I") files=$nf lines=$lines (objects held in $G)";;
 push-stub) I=$(hgit -C "$G" rev-parse "refs/keel/incoming/$T") || exit 1
   echo "[stub] broker (token) would run: git -C $G -c core.hooksPath=/dev/null push origin $I:refs/heads/agent/$T ; open PR agent/$T -> main";;
 repo-gc|repo-prune) tasks_active && { echo "REFUSED: tasks active ($(cd "$P/work" && echo *)); no gc/prune"; exit 3; }
-  if [ "$1" = repo-gc ]; then git -C "$R" gc -q; else git -C "$R" prune; fi; echo "$1 done";;
-set-main) new=$2; old=$(git -C "$R" rev-parse main)
-  if tasks_active && ! git -C "$R" merge-base --is-ancestor "$old" "$new"; then echo "REFUSED: main $old -> $new is not fast-forward while tasks active"; exit 3; fi
-  git -C "$R" update-ref refs/heads/main "$new" "$old" && echo "main -> $new";;
-cleanup) rm -rf "$P/$T.deny" "$P/.keel/runs" "$W/.keel/runs" "$W" "$P/work/$T-env" "$S" "$G" "$B/$T.bundle" "$P/$T.base" "$P/$T.mode"
+  if [ "$1" = repo-gc ]; then hgit -C "$R" gc -q; else hgit -C "$R" prune; fi  # repo-gc-hgit
+  echo "$1 done";;
+set-main) new=${2:-}; keel_require_sha "$new" || exit 1; old=$(hgit -C "$R" rev-parse main)
+  if tasks_active && ! hgit -C "$R" merge-base --is-ancestor "$old" "$new"; then echo "REFUSED: main $old -> $new is not fast-forward while tasks active"; exit 3; fi
+  hgit -C "$R" update-ref refs/heads/main "$new" "$old" && echo "main -> $new"  # set-main-hgit
+  ;;
+cleanup) rm -rf "$P/$T.deny" "$P/.keel/runs" "$W/.keel/runs" "$W" "$P/work/$T-env" "$S" "$G" "$B/$T.bundle" "$P/$T.base" "$P/$T.mode" "$P/quarantine/$T"
   rm -f "$P/.keel/redact-fixture"
   mkdir -p "$P/work"; echo "cleaned $T";;
 *) sed -n 2,7p "$0"; exit 2;;

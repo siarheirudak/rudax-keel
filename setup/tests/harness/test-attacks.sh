@@ -5,6 +5,7 @@ set -u; HERE=$(cd "$(dirname "$0")" && pwd -P); SETUP=$(cd "$HERE/../.." && pwd 
 . "$SETUP/lib/portable.sh"; export KEEL_ROOT=${KEEL_ROOT:-$HOME/keel-proto}; P=$KEEL_ROOT
 R=$P/repo W=$P/work/task-1 S=$P/shadow/task-1.git; D=${DOCKER:-docker}
 unset GH_TOKEN GITHUB_TOKEN BOT_GH_TOKEN GITHUB_PAT AWS_SECRET_ACCESS_KEY AWS_ACCESS_KEY_ID API_KEY API_TOKEN NPM_TOKEN PYPI_TOKEN PASSWORD OPENAI_API_KEY KEEL_SECRET ANTHROPIC_API_KEY GEMINI_API_KEY GOOGLE_API_KEY OPENROUTER_API_KEY || true
+unset GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN CODEX_ACCESS_TOKEN CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKEN SSH_AUTH_SOCK GIT_ASKPASS || true
 # shellcheck source=setup/tests/harness/h3-verdict.sh
 . "$HERE/h3-verdict.sh"
 res(){ echo "RESULT $1: $2"; }
@@ -250,6 +251,95 @@ $K set-main "$FF"; echo "  ff rc=$?"
 $K cleanup >/dev/null; $K set-main "$OLD"; echo "  backwards with no task: rc=$?"
 if [ $rb = 3 ]; then res A10b "BLOCKED (non-ff main refused while task active; ff and no-task allowed)"; else res A10b "NOT BLOCKED"; fi
 
+hostile_prepare() {
+  hostile_second=$(mktemp -d)
+  git -C "$hostile_second" init -q
+  git -C "$hostile_second" symbolic-ref HEAD refs/heads/main
+  git -C "$hostile_second" config user.email h@x
+  git -C "$hostile_second" config user.name h
+  echo other > "$hostile_second/other.txt"
+  git -C "$hostile_second" add other.txt
+  git -C "$hostile_second" commit -qm other
+  hostile_hook=$(mktemp -d)
+  hostile_marker=$(mktemp)
+  rm -f "$hostile_marker"
+  printf '%s\n' '#!/bin/sh' "touch '$hostile_marker'" > "$hostile_hook/pre-auto-gc"
+  chmod +x "$hostile_hook/pre-auto-gc"
+  hostile_cfg=$(mktemp)
+  cat > "$hostile_cfg" << EOF
+[core]
+	hooksPath = $hostile_hook
+[alias]
+	gc = !touch '$hostile_marker'; git -c alias.gc= gc
+	prune = !touch '$hostile_marker'; git -c alias.prune= prune
+EOF
+}
+hostile_run() {
+  GIT_DIR="$hostile_second/.git" GIT_CONFIG_GLOBAL="$hostile_cfg" GIT_CONFIG_PARAMETERS="'core.hooksPath'='$hostile_hook'" "$@"
+}
+hostile_clear() {
+  rm -rf "$hostile_second" "$hostile_hook"
+  rm -f "$hostile_marker" "$hostile_cfg"
+}
+echo "### A10c repo-gc and repo-prune keep the caller git environment out"
+$K init-repo >/dev/null
+rm -rf "$P/work"
+mkdir -p "$P/work"
+hostile_prepare
+echo right-loose | git -C "$R" hash-object -w --stdin >/dev/null
+right_loose_before=$(git -C "$R" count-objects | awk '{print $1}')
+second_loose_before=$(git -C "$hostile_second" count-objects | awk '{print $1}')
+right_main_before=$(git -C "$R" rev-parse main)
+second_main_before=$(git -C "$hostile_second" rev-parse main)
+hostile_run "$K" repo-gc; a10c_gc=$?
+hostile_run "$K" repo-prune; a10c_prune=$?
+right_loose_after=$(git -C "$R" count-objects | awk '{print $1}')
+second_loose_after=$(git -C "$hostile_second" count-objects | awk '{print $1}')
+right_main_after=$(git -C "$R" rev-parse main)
+second_main_after=$(git -C "$hostile_second" rev-parse main)
+if [ "$a10c_gc" -eq 0 ] && [ "$a10c_prune" -eq 0 ] && [ ! -e "$hostile_marker" ] \
+  && [ "$right_main_before" = "$right_main_after" ] && [ "$second_main_before" = "$second_main_after" ] \
+  && [ "$right_loose_after" -lt "$right_loose_before" ] && [ "$second_loose_before" = "$second_loose_after" ]; then
+  res A10c "BLOCKED (gc and prune used the task repository and ran no hook)"
+else
+  res A10c "NOT BLOCKED"
+fi
+hostile_clear
+echo "### A10d set-main keeps the caller git environment out"
+$K init-repo >/dev/null
+rm -rf "$P/work"
+mkdir -p "$P/work"
+a10d_old=$(git -C "$R" rev-parse main)
+git -C "$R" -c user.name=h -c user.email=h@x commit -q --allow-empty -m forward
+a10d_new=$(git -C "$R" rev-parse main)
+git -C "$R" update-ref refs/heads/main "$a10d_old"
+hostile_prepare
+second_main_before=$(git -C "$hostile_second" rev-parse main)
+hostile_run "$K" set-main "$a10d_new"; a10d_rc=$?
+a10d_got=$(git -C "$R" rev-parse main)
+second_main_after=$(git -C "$hostile_second" rev-parse main)
+if [ "$a10d_rc" -eq 0 ] && [ "$a10d_got" = "$a10d_new" ] && [ "$second_main_before" = "$second_main_after" ] && [ ! -e "$hostile_marker" ]; then
+  res A10d "BLOCKED (set-main moved the task repository only)"
+else
+  res A10d "NOT BLOCKED"
+fi
+hostile_clear
+echo "### A10e setup and gate read the task repository main"
+hostile_prepare
+real_main=$(git -C "$R" rev-parse main)
+second_main=$(git -C "$hostile_second" rev-parse main)
+hostile_run "$K" setup >/dev/null 2>&1; a10e_setup=$?
+recorded=$(cat "$P/task-1.base" 2>/dev/null || true)
+hostile_run "$K" proto ok rw 'echo e > e10 && git add e10 && git commit -qm e10' >/dev/null 2>&1
+hostile_run "$K" export >/dev/null 2>&1
+a10e_gate=$(hostile_run "$K" gate 2>&1 || true)
+if [ "$a10e_setup" -eq 0 ] && [ "$recorded" = "$real_main" ] && [ "$recorded" != "$second_main" ] && printf '%s\n' "$a10e_gate" | grep -q 'GATE PASS'; then
+  res A10e "BLOCKED (base is the task main and the gate accepts that bundle)"
+else
+  res A10e "NOT BLOCKED"
+fi
+hostile_clear
+
 echo "### A11 root-owned files"; fresh
 echo "  with --user (normal):"; $K proto a rw 'echo u > u && git add u && git commit -qm u; id -u'; find "$P" ! -user "$(id -u)" | head -3; n11=$(find "$P" ! -user "$(id -u)" | wc -l | tr -d ' '); echo "  count=$n11"
 cu=$($K proto idchk ro 'id -u'); cu=$(echo "$cu" | tail -1); echo "  container uid=$cu host uid=$(id -u)"
@@ -353,6 +443,11 @@ fresh
 $K proto evil rw 'mkdir -p setup && echo x > setup/README.md && echo y > setup/TESTING.md && git add -A && git commit -qm a18b-docs' >/dev/null; $K export >/dev/null
 $K gate 2>&1 | grep -q 'GATE PASS' || miss="$miss setup-docs"
 if [ -z "$miss" ]; then res A18b "BLOCKED (14/14 process paths: rule names anywhere, .pi/ and .agents/ at any depth, setup/ scripts/; setup/README.md and setup/TESTING.md are not forbidden)"; else res A18b "NOT BLOCKED:$miss"; fi
+echo "### A18c commit under .keel/"
+fresh
+$K proto evil rw 'mkdir -p .keel/memory && echo x > .keel/memory/x && git add -A && git commit -qm a18c' >/dev/null
+$K export >/dev/null
+gate_expect_fail A18c 'forbidden path'
 echo "### A19 shadow config replaced by a symlink to a host file"; fresh
 echo victim > "$P/victim"
 $K proto evil rw "rm /shadow/task-1.git/config && ln -s '$P/victim' /shadow/task-1.git/config && echo planted" ; $K reset-shadow 2>&1 | tail -1
@@ -364,6 +459,47 @@ if [ ! -e "$P/victimdir/alternates" ] && [ $rc -ne 0 ] && echo "$out" | grep -q 
 echo "### A20 nested .git directory committed as content"; fresh
 $K proto evil rw 'b=$(echo "[core]" | git hash-object -w --stdin) && g=$(printf "100644 blob %s\tconfig\n" $b | git mktree --missing) && s=$(printf "040000 tree %s\t.git\n" $g | git mktree --missing) && r=$( (git ls-tree HEAD; printf "040000 tree %s\tsub\n" $s) | git mktree --missing) && c=$(echo a20 | git commit-tree $r -p HEAD) && git update-ref refs/heads/task-1 $c && git ls-tree -r --name-only $c | grep git/'
 $K export >/dev/null; gate_expect_fail A20 'nested .git|fetch/fsck'
+echo "### A20b nested .git moved out after a failed role"
+fresh
+a20b_out=$($K role developer 'mkdir -p src/sub/.git src/SUB/.GIT && echo x > src/sub/.git/config && echo y > src/SUB/.GIT/config && exit 1' 2>&1) || a20b_rc=$?
+a20b_rc=${a20b_rc:-0}
+a20b_q=$(find "$P/quarantine/task-1" -iname config -print 2>/dev/null | wc -l | tr -d ' ')
+if [ "$a20b_rc" -eq 1 ] && [ ! -e "$W/src/sub/.git" ] && [ ! -e "$W/src/SUB/.GIT" ] && [ "$a20b_q" -ge 2 ]; then
+  res A20b "BLOCKED (both nested git dirs moved, exit 1)"
+else
+  res A20b "NOT BLOCKED"
+fi
+echo "### A20c nested git record"
+fresh
+$K role developer 'mkdir -p src/sub/.git && echo SECRETCONTENT > src/sub/.git/config && exit 0' >/dev/null 2>&1 || true
+if python3 - "$P/.keel/logs/launch.jsonl" << 'PY'
+import json, sys
+path = sys.argv[1]
+allow = {"ts", "event", "role", "reason_code", "file", "line", "detail", "mounted_roots", "denied_withheld", "redactions"}
+found = False
+try:
+    lines = open(path, encoding="utf-8")
+except OSError:
+    sys.exit(1)
+for line in lines:
+    line = line.strip()
+    if not line:
+        continue
+    obj = json.loads(line)
+    if obj.get("event") != "nested_git":
+        continue
+    if set(obj) - allow:
+        sys.exit(1)
+    if obj.get("role") != "developer" or obj.get("detail") != "task-1" or obj.get("file") != "src/sub/.git":
+        sys.exit(1)
+    if obj.get("reason_code") != "NESTED_GIT":
+        sys.exit(1)
+    if "SECRETCONTENT" in line:
+        sys.exit(1)
+    found = True
+sys.exit(0 if found else 1)
+PY
+then res A20c "BLOCKED (record has the role, task, and path only)"; else res A20c "NOT BLOCKED"; fi
 echo "### A21 agent rewrites test.sh to always pass and breaks the product"; fresh
 $K proto evil rw 'printf "#!/bin/sh\necho TESTS-OK\n" > test.sh && echo broken > app.txt && git commit -qam a21'; $K export >/dev/null; gate_expect_fail A21 'tests \(main:'
 echo "### A22 merge commit parking an orphan history"; fresh
@@ -372,6 +508,76 @@ $K export >/dev/null; gate_expect_fail A22 'merge commit|orphan'
 echo "### A22b merge of two branches both based on main"; fresh
 $K proto evil rw 'git checkout -qb side && echo s > s22 && git add s22 && git commit -qm side && git checkout -q task-1 && echo m > m22 && git add m22 && git commit -qm main22 && git merge -q --no-edit side && git log --oneline --graph | head -5'
 $K export >/dev/null; gate_expect_fail A22b 'merge commit'
+
+echo "### A23 task name checked at assignment"
+a23_ok=1
+a23_canary=$P/a23-canary
+rm -rf "$a23_canary"
+mkdir -p "$a23_canary" "$P/repo"
+echo keep > "$a23_canary/keep"
+echo keep > "$P/repo/a23-keep"
+a23_check() {
+  local label=$1
+  shift
+  local out rc=0
+  out=$("$@" 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ] || ! printf '%s\n' "$out" | grep -q 'REFUSED: task name'; then
+    a23_ok=0
+    echo "  a23 miss $label rc=$rc"
+  fi
+}
+a23_check meta env TASK='bad;name' "$K" setup
+a23_check slash env TASK='a/b' "$K" setup
+a23_check dots env TASK='../x' "$K" setup
+a23_check seg env TASK='foo/../bar' "$K" setup
+a23_check nl env TASK="$(printf 'bad\nname')" "$K" setup
+a23_check clean env TASK='../a23-canary' "$K" cleanup
+a23_check role env TASK='../a23-canary' "$K" role developer true
+if [ ! -f "$a23_canary/keep" ] || [ ! -f "$P/repo/a23-keep" ]; then
+  a23_ok=0
+fi
+happy=$(TASK=task-1 "$K" mode 2>&1 || true)
+happy2=$(TASK='Good.Name_1' "$K" mode 2>&1 || true)
+printf '%s\n' "$happy" "$happy2" | grep -q 'REFUSED: task name' && a23_ok=0
+if [ "$a23_ok" -eq 1 ]; then
+  res A23 "BLOCKED (bad task names refused before any change; a normal name is accepted)"
+else
+  res A23 "NOT BLOCKED"
+fi
+rm -rf "$a23_canary"
+rm -f "$P/repo/a23-keep"
+echo "### A23b commit ids checked where they enter"
+a23b_ok=1
+$K init-repo >/dev/null
+a23b_main=$(git -C "$R" rev-parse main)
+a23b_out=$("$K" set-main main 2>&1) || a23b_rc=$?
+a23b_rc=${a23b_rc:-0}
+if [ "$a23b_rc" -eq 0 ] || ! printf '%s\n' "$a23b_out" | grep -q 'REFUSED: commit id' || [ "$(git -C "$R" rev-parse main)" != "$a23b_main" ]; then
+  a23b_ok=0
+fi
+a23b_out=$("$K" set-main -x 2>&1) || a23b_rc=$?
+a23b_rc=${a23b_rc:-0}
+if [ "$a23b_rc" -eq 0 ] || ! printf '%s\n' "$a23b_out" | grep -q 'REFUSED: commit id' || [ "$(git -C "$R" rev-parse main)" != "$a23b_main" ]; then
+  a23b_ok=0
+fi
+mkdir -p "$P"
+printf '%s\n' 'not-a-sha' > "$P/task-1.base"
+a23b_out=$("$K" export 2>&1) || a23b_rc=$?
+a23b_rc=${a23b_rc:-0}
+if [ "$a23b_rc" -eq 0 ] || ! printf '%s\n' "$a23b_out" | grep -q 'REFUSED: commit id'; then
+  a23b_ok=0
+fi
+git -C "$R" update-ref -d refs/heads/main
+a23b_out=$("$K" setup 2>&1) || a23b_rc=$?
+a23b_rc=${a23b_rc:-0}
+if [ "$a23b_rc" -eq 0 ] || ! printf '%s\n' "$a23b_out" | grep -q 'REFUSED: commit id' || [ -d "$P/shadow/task-1.git" ]; then
+  a23b_ok=0
+fi
+if [ "$a23b_ok" -eq 1 ]; then
+  res A23b "BLOCKED (bad base file, set-main argument, and empty main refused)"
+else
+  res A23b "NOT BLOCKED"
+fi
 
 echo "### SEC-H1 clean bundle has no secret"
 fresh

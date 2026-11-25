@@ -13,6 +13,7 @@ export W=$P/work/task-1
 export SETUP
 export DOCKER=${DOCKER:-docker}
 unset GH_TOKEN GITHUB_TOKEN BOT_GH_TOKEN GITHUB_PAT AWS_SECRET_ACCESS_KEY AWS_ACCESS_KEY_ID API_KEY API_TOKEN NPM_TOKEN PYPI_TOKEN PASSWORD OPENAI_API_KEY KEEL_SECRET ANTHROPIC_API_KEY GEMINI_API_KEY GOOGLE_API_KEY OPENROUTER_API_KEY || true
+unset GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN CODEX_ACCESS_TOKEN CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKEN SSH_AUTH_SOCK GIT_ASKPASS FOO_API_KEY || true
 trap 'rm -f "$P/.keel/redact-fixture"' EXIT
 res(){ echo "RESULT $1: $2"; }
 bad=0
@@ -213,26 +214,244 @@ unset KEEL_REDACT_FIXTURE GH_TOKEN
 rm -f "$P/.keel/redact-fixture"
 echo "fixture launch: logged"
 
-sentinel=sentinelsecretvalue999
-secret_out=$(ANTHROPIC_API_KEY="$sentinel" "$K" role developer 'echo LAUNCH-OK' 2>&1 || true)
-echo "secret-env: $secret_out"
-if echo "$secret_out" | grep -q LAUNCH-OK || echo "$secret_out" | grep -q "$sentinel" || grep -q "$sentinel" "$(LOG)"; then
-  mark S-A1 bad "secret env launched"
-elif echo "$secret_out" | grep -q secret_env; then
-  mark S-A1 ok "secret env refused"
+s1_key=envonlyanthropic123456
+s1_gh=envonlyghtoken12345678
+log_before=$(wc -c < "$(LOG)" 2>/dev/null || echo 0)
+secret_out=$(ANTHROPIC_API_KEY="$s1_key" GH_TOKEN="$s1_gh" "$K" role developer 'echo LAUNCH-OK; tr "\0" "\n" < /proc/1/environ' 2>&1 || true)
+echo "boundary-env: $(printf '%s\n' "$secret_out" | grep -c LAUNCH-OK || true)"
+log_new=$(tail -c +"$((log_before + 1))" "$(LOG)" 2>/dev/null || true)
+s1_hit=0
+printf '%s\n' "$secret_out" | grep -q LAUNCH-OK || s1_hit=1
+printf '%s\n' "$secret_out" | grep -q "$s1_key" && s1_hit=1
+printf '%s\n' "$secret_out" | grep -q "$s1_gh" && s1_hit=1
+printf '%s\n' "$secret_out" | grep -q ANTHROPIC_API_KEY && s1_hit=1
+printf '%s\n' "$secret_out" | grep -q GH_TOKEN && s1_hit=1
+printf '%s\n' "$log_new" | grep -q "$s1_key" && s1_hit=1
+printf '%s\n' "$log_new" | grep -q "$s1_gh" && s1_hit=1
+printf '%s\n' "$log_new" | grep -q ANTHROPIC_API_KEY && s1_hit=1
+printf '%s\n' "$log_new" | grep -q GH_TOKEN && s1_hit=1
+if [ "$s1_hit" -eq 0 ]; then
+  mark S-A1 ok "role started and host names stayed out"
 else
-  mark S-A1 bad "no refuse"
+  mark S-A1 bad "host name reached the container or the log"
 fi
 
 plain=envonlysecretvalue123456
-name_out=$(KEEL_SECRET="$plain" "$K" role developer 'echo LAUNCH-OK' 2>&1 || true)
-echo "keel-secret-name: $name_out"
-if echo "$name_out" | grep -q LAUNCH-OK || echo "$name_out" | grep -q "$plain" || grep -q "$plain" "$(LOG)"; then
-  mark S-A4 bad "name not refused"
-elif echo "$name_out" | grep -q secret_env; then
-  mark S-A4 ok "name refused"
+pat_only=patternonlyvalue12345678
+mkdir -p "$P/.keel"
+printf '%s\n' "GITHUB_PAT=$plain" "FOO_API_KEY=$pat_only" > "$P/.keel/redact-fixture"
+log_before=$(wc -c < "$(LOG)" 2>/dev/null || echo 0)
+name_out=$(
+  export KEEL_REDACT_FIXTURE=1
+  python3 - "$SETUP" << 'PY' >"$P/.keel/s-a4-env"
+import os, sys
+sys.path.insert(0, os.path.join(sys.argv[1], "lib"))
+import secret_names
+names = list(secret_names.EXACT) + ["FOO_API_KEY"]
+for i, name in enumerate(names):
+    print("%s=v%02dvalue123456789" % (name, i))
+PY
+  set -a
+  # shellcheck disable=SC1091
+  . "$P/.keel/s-a4-env"
+  set +a
+  "$K" role developer 'echo LAUNCH-OK; tr "\0" "\n" < /proc/1/environ'
+)
+echo "name-env: $(printf '%s\n' "$name_out" | grep -c LAUNCH-OK || true)"
+rm -f "$P/.keel/redact-fixture" "$P/.keel/s-a4-env"
+log_new=$(tail -c +"$((log_before + 1))" "$(LOG)" 2>/dev/null || true)
+s4_hit=0
+printf '%s\n' "$name_out" | grep -q LAUNCH-OK || s4_hit=1
+printf '%s\n' "$name_out" "$log_new" | grep -q "$plain" && s4_hit=1
+printf '%s\n' "$name_out" "$log_new" | grep -q "$pat_only" && s4_hit=1
+while IFS= read -r pair; do
+  name=${pair%%=*}
+  value=${pair#*=}
+  printf '%s\n' "$name_out" | grep -q "^${name}=" && s4_hit=1
+  printf '%s\n' "$name_out" | grep -q "$value" && s4_hit=1
+done < <(python3 - "$SETUP" << 'PY'
+import os, sys
+sys.path.insert(0, os.path.join(sys.argv[1], "lib"))
+import secret_names
+names = list(secret_names.EXACT) + ["FOO_API_KEY"]
+for i, name in enumerate(names):
+    print("%s=v%02dvalue123456789" % (name, i))
+PY
+)
+redactions=$(printf '%s\n' "$log_new" | grep -o '\[REDACTED:env\]' | wc -l | tr -d ' ')
+if [ "$s4_hit" -eq 0 ] && [ "$redactions" -ge 2 ]; then
+  mark S-A4 ok "names stayed out and assignments were redacted"
 else
-  mark S-A4 bad "no refuse"
+  mark S-A4 bad "name reached the container or was left in the log"
+fi
+
+# S-A1b: a test CLI records names only for run and create.
+sa1b_root=$(mktemp -d)
+sa1b_log=$sa1b_root/calls
+sa1b_state=$sa1b_root/running
+cat > "$sa1b_root/fake-docker" << EOF
+#!/bin/bash
+set -u
+log='$sa1b_log'
+state='$sa1b_state'
+record() {
+  printf '%s\n' "CALL \$1" >> "\$log"
+  env | sed 's/=.*//' | sort | while IFS= read -r n; do
+    printf '%s\n' "NAME \$n" >> "\$log"
+  done
+  printf '%s\n' END >> "\$log"
+}
+mark_name() {
+  prev=
+  for a in "\$@"; do
+    if [ "\$prev" = --name ]; then printf '%s\n' "\$a" >> "\$state"; fi
+    prev=\$a
+  done
+}
+cmd=\${1:-}
+shift || true
+case \$cmd in
+  info) printf '%s\n' "Server Version: fake"; exit 0 ;;
+  run|create)
+    record "\$cmd"
+    mark_name "\$@"
+    exit 0
+    ;;
+  inspect)
+    name=
+    for a in "\$@"; do
+      case \$a in
+        -*) ;;
+        *) name=\$a ;;
+      esac
+    done
+    if [ -f "\$state" ] && grep -qx "\$name" "\$state"; then
+      printf '%s\n' true
+      exit 0
+    fi
+    exit 1
+    ;;
+  network)
+    if [ "\${1:-}" = inspect ] && printf '%s\n' "\$*" | grep -q Internal; then
+      printf '%s\n' true
+    fi
+    exit 0
+    ;;
+  rm) exit 0 ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod 755 "$sa1b_root/fake-docker"
+: > "$sa1b_log"
+saved_root=$KEEL_ROOT
+saved_p=$P
+saved_w=$W
+saved_docker=${DOCKER:-}
+export KEEL_ROOT=$sa1b_root/keel
+export P=$KEEL_ROOT
+export W=$P/work/task-1
+export DOCKER=$sa1b_root/fake-docker
+export LANG=keelcliok
+sa1b_fail=0
+sa1b_counts=""
+python3 - "$SETUP" << 'PY' > "$sa1b_root/parent-env"
+import os, sys
+sys.path.insert(0, os.path.join(sys.argv[1], "lib"))
+import secret_names
+names = list(secret_names.EXACT) + ["FOO_API_KEY"]
+for i, name in enumerate(names):
+    print("%s=p%02dvalue123456789" % (name, i))
+PY
+set -a
+# shellcheck disable=SC1091
+. "$sa1b_root/parent-env"
+set +a
+run_sa1b() {
+  local label=$1
+  shift
+  : > "$sa1b_log"
+  "$@" >/dev/null 2>&1 || true
+  local calls
+  calls=$(grep -c '^CALL ' "$sa1b_log" || true)
+  sa1b_counts="$sa1b_counts $label=$calls"
+  if [ "$calls" -lt 1 ]; then
+    sa1b_fail=1
+    return 0
+  fi
+  python3 - "$SETUP" "$sa1b_log" << 'PY'
+import os, sys
+sys.path.insert(0, os.path.join(sys.argv[1], "lib"))
+import secret_names
+text = open(sys.argv[2], encoding="utf-8").read().splitlines()
+blocks = []
+cur = None
+for line in text:
+    if line.startswith("CALL "):
+        cur = []
+        blocks.append(cur)
+    elif line == "END":
+        cur = None
+    elif line.startswith("NAME ") and cur is not None:
+        cur.append(line[5:])
+if not blocks:
+    sys.exit(1)
+for names in blocks:
+    if "LANG" not in names:
+        sys.exit(1)
+    for name in names:
+        if secret_names.is_secret_name(name):
+            sys.exit(1)
+sys.exit(0)
+PY
+  if [ $? -ne 0 ]; then
+    sa1b_fail=1
+  fi
+}
+"$K" init-repo >/dev/null 2>&1 || true
+run_sa1b setup "$K" setup
+mkdir -p "$W/src" "$W/docs" "$W/tests" "$W/.keel/memory" "$W/.agents/skills"
+run_sa1b role "$K" role developer 'echo ROLE-OK'
+run_sa1b proto "$K" proto developer rw 'echo PROTO-OK'
+set +a
+while IFS= read -r pair; do
+  unset "${pair%%=*}" || true
+done < "$sa1b_root/parent-env"
+unset LANG || true
+export KEEL_ROOT=$saved_root
+export P=$saved_p
+export W=$saved_w
+if [ -n "$saved_docker" ]; then export DOCKER=$saved_docker; else unset DOCKER || true; fi
+rm -rf "$sa1b_root"
+echo "S-A1b calls:$sa1b_counts"
+if [ "$sa1b_fail" -eq 0 ]; then
+  mark S-A1b ok "each command recorded a clean run$sa1b_counts"
+else
+  mark S-A1b bad "recorded environment$sa1b_counts"
+fi
+
+direct_container_line() {
+  printf '%s\n' "$1" | grep -Eq '(^|[[:space:]])\$DOCKER[[:space:]]+(run|create)([[:space:]]|\\|$)' \
+    && ! printf '%s\n' "$1" | grep -q 'docker_cli '
+}
+s1c_fail=0
+sample_gate='  $DOCKER run "${HARDEN[@]}" -e HOME=/tmp -v "$TD:/src:ro" -v "$TE:/keel-entry:ro" -w /src "$IMG" sh /keel-entry/entry.sh || { rm -rf "$TD" "$TE"; fail "tests (main:$TEST_ENTRY)"; }'
+sample_mock='    $DOCKER run -d --name "$MOCK_NAME" --network "$EGRESS_NET" --network-alias keel-mock --network-alias keel-secret \'
+sample_proxy='    $DOCKER run -d --name "$PROXY_NAME" --network "$EGRESS_NET" --network-alias keel-proxy \'
+direct_container_line "$sample_gate" || s1c_fail=1
+direct_container_line "$sample_mock" || s1c_fail=1
+direct_container_line "$sample_proxy" || s1c_fail=1
+grep -q '^docker_cli()' "$SETUP/keel.sh" || s1c_fail=1
+for src in "$SETUP/keel.sh" "$SETUP/lib/egress.sh"; do
+  while IFS= read -r line; do
+    if direct_container_line "$line"; then
+      s1c_fail=1
+    fi
+  done < "$src"
+done
+if [ "$s1c_fail" -eq 0 ]; then
+  mark S-A1c ok "sample lines match and converted calls go through the shared reset"
+else
+  mark S-A1c bad "direct container call remains"
 fi
 
 if python3 - << 'PY'

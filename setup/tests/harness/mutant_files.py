@@ -81,7 +81,7 @@ FILES = {
     "M69": ["setup/keel.sh"],
     "M70": ["setup/lib/visibility.py"],
     "M71": ["setup/lib/visibility.py"],
-    "M72": ["setup/lib/visibility.py"],
+    "M72": ["setup/lib/secret_names.py"],
     "M73": ["setup/keel.sh"],
     "M74": ["setup/keel.sh"],
     "M75": ["setup/keel.sh"],
@@ -313,6 +313,15 @@ FILES = {
     "M337": ["setup/common.sh"],
     "M338": ["setup/rulesets/require-checks.json"],
     "M339": ["setup/keel-doctor.sh"],
+    "M340": ["setup/lib/visibility.py"],
+    "M341": ["setup/keel.sh"],
+    "M342": ["setup/keel.sh"],
+    "M343": ["setup/keel.sh"],
+    "M344": ["setup/keel.sh"],
+    "M345": ["setup/keel.sh"],
+    "M346": ["setup/keel.sh"],
+    "M347": ["setup/keel.sh"],
+    "M348": ["setup/keel.sh"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -575,6 +584,15 @@ CI_IDS = [
     "M337",
     "M338",
     "M339",
+    "M340",
+    "M341",
+    "M342",
+    "M343",
+    "M344",
+    "M345",
+    "M346",
+    "M347",
+    "M348",
 ]
 
 # Docker mount probes, plus M01. Pull-request CI skips these. The daily full run includes them.
@@ -688,7 +706,10 @@ DEPENDS = {
     ),
     "setup/lib/egress_proxy.py": ("setup/lib/egress.py",),
     "setup/lib/pi_launch.py": ("setup/lib/visibility.py",),
-    "setup/lib/visibility.py": ("setup/lib/pi_launch.py",),
+    "setup/lib/visibility.py": (
+        "setup/lib/pi_launch.py",
+        "setup/lib/secret_names.py",
+    ),
 }
 
 SCAN_FILES = (
@@ -873,6 +894,15 @@ META = {
     "M337": ("(.bypass_actors // [])", "fail-closed"),
     "M338": ('"bypass_mode": "pull_request"', "decision"),
     "M339": ("gh01-remote", "fail-closed"),
+    "M340": ("name-assign-redact", "secret"),
+    "M341": ("task-name-check", "fail-closed"),
+    "M342": ("commit-id-check", "fail-closed"),
+    "M343": ("repo-gc-hgit", "mechanism"),
+    "M344": ("set-main-hgit", "mechanism"),
+    "M345": ("nested-git-on", "mechanism"),
+    "M346": ("nested-git-record", "visibility"),
+    "M347": ("setup-main-hgit", "mechanism"),
+    "M348": ("cli-env-reset", "secret"),
 }
 
 # CI ids, in CI_IDS order. Pull-request selection never includes OFFLINE_IDS.
@@ -884,11 +914,14 @@ VISIBILITY_CI = (
     "M50",
     "M51",
     "M52",
+    "M69",
     "M70",
     "M71",
     "M72",
     "M104",
     "M105",
+    "M340",
+    "M348",
 )
 EGRESS_CI = (
     "M53",
@@ -937,10 +970,8 @@ ATTACK_CI = (
     "M66",
     "M67",
     "M68",
-    "M69",
     "M70",
     "M71",
-    "M72",
     "M73",
     "M74",
     "M75",
@@ -951,6 +982,13 @@ ATTACK_CI = (
     "M83",
     "M84",
     "M85",
+    "M341",
+    "M342",
+    "M343",
+    "M344",
+    "M345",
+    "M346",
+    "M347",
 )
 RUNTIME_CI = (
     "M80",
@@ -1022,6 +1060,7 @@ STEP5_CI = (
 TARGET_ONLY = frozenset((
     "setup/keel.sh",
     "setup/lib/visibility.py",
+    "setup/lib/secret_names.py",
     "setup/lib/egress.sh",
     "setup/lib/egress.py",
     "setup/lib/egress_proxy.py",
