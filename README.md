@@ -7,7 +7,9 @@
 </p>
 
 # rudax-keel
+
 > ⚠️ **Work in progress — not ready for use yet.**
+>
 > 🤝 Open to partnerships and collaboration: [siarhei.rudak@rudax.pro](mailto:siarhei.rudak@rudax.pro)
 
 Rudax Keel is a guarded production line for building software with AI agents.
