@@ -134,7 +134,8 @@ _keel_held_exec() {
   local gate=$1
   shift
   IFS= read -r _ < "$gate" || true
-  exec 7>&- 2>/dev/null || true
+  # Close the hold descriptor only. A redirection on this exec would stay for the CLI.
+  exec 7>&- || true
   _keel_exec_env "$@"
 }
 # shellcheck disable=SC2119
@@ -319,7 +320,11 @@ def recheck(tree, path):
             return False
     return True
 
-def move_tree(tree, dest, uid, pointer):
+def work_pointer(task_name):
+    # The same bytes setup writes, trailing newline included.
+    return ("gitdir: /shadow/%s.git\n" % task_name).encode("utf-8")
+
+def move_tree(tree, dest, uid, pointer_b):
     found = []
 
     def restore(dirfd, path):
@@ -401,7 +406,6 @@ def move_tree(tree, dest, uid, pointer):
         restore(rfd, tree)
     finally:
         os.close(rfd)
-    pointer_b = pointer.encode("utf-8")
     for path in found:
         rel = os.path.relpath(path, tree)
         if os.sep not in rel and pointer_b:
@@ -475,8 +479,12 @@ elif cmd == "proc":
         fixture = os.environ.get("KEEL_REDACT_FIXTURE") == "1"
         unreadable = fixture and fields.get("probe") == "unreadable"
         sys.stdout.write(proc_state(fields["pid"], fields["start"], unreadable) + "\n")
+elif cmd == "pointer":
+    sys.stdout.buffer.write(work_pointer(task))
 elif cmd == "move":
-    move_tree(rest[0], rest[1], int(rest[2]), rest[3] if len(rest) > 3 else "")
+    kind = rest[3] if len(rest) > 3 else ""
+    blob = work_pointer(task) if kind == "pointer" else b""
+    move_tree(rest[0], rest[1], int(rest[2]), blob)
 else:
     raise SystemExit(2)
 PY
@@ -751,7 +759,7 @@ record_nested_git() {
   python3 "$HERE/lib/visibility.py" nested-git --role "$KEEL_ROLE_NAME" --work "$W" --harness "$HERE" --keel "$P" --task "$T" --repo "$R" --file "$1"  # nested-git-record
 }
 quarantine_git_tree() {
-  local cmd pointer qrc=0
+  local cmd kind qrc=0
   [ "${quarantine_nested:-0}" = 1 ] || return 0
   cmd=${KEEL_CMD:-}
   case "$cmd" in
@@ -769,11 +777,11 @@ quarantine_git_tree() {
     fi
   fi
   if [ -d "${W:-}" ]; then
-    pointer=
+    kind=
     if [ "$(cat "$P/$T.mode" 2>/dev/null || printf '%s' pointer)" = pointer ]; then
-      pointer=$(printf 'gitdir: /shadow/%s.git\n' "$T")
+      kind=pointer
     fi
-    keel_quarantine_one "$W" "$pointer" || return $?
+    keel_quarantine_one "$W" "$kind" || return $?
   fi
 }
 keel_on_exit() {
@@ -886,7 +894,7 @@ init-repo) mkdir -p "$R" "$P/.gatehome"; cd "$R" || exit 1; git init -q; git sym
 setup) launch_guard; M=$(hgit -C "$R" rev-parse main 2>/dev/null) || M=; keel_require_sha "$M" || exit 1  # setup-main-hgit
   need_docker; mkdir -p "$W" "$B" "$(dirname "$S")"
   hgit init -q --bare "$S"; reset_shadow; echo "$M" > "$P/$T.base"
-  printf 'gitdir: /shadow/%s.git\n' "$T" > "$W/.git"
+  keel_tool pointer > "$W/.git" || exit $?
   want=${KEEL_POINTER_MODE:-auto}; md='env'
   if [ "$want" != env ]; then
     keel_track_begin || exit $?

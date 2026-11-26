@@ -188,17 +188,45 @@ echo "  side note: agent CAN edit shadow alternates (rw shadow):"; $K proto evil
 echo "### A2 rewrite pointer file"; fresh
 a2_mode=$($K mode 2>/dev/null || true)
 if [ "$a2_mode" != pointer ] && [ "$a2_mode" != env ]; then res A2 "NOT BLOCKED (mode=${a2_mode:-empty})"
-elif [ "$a2_mode" = env ]; then res A2 "N/A: env fallback mode, no pointer file (GIT_DIR set by harness)"; else before=$(cat "$W/.git")
+elif [ "$a2_mode" = env ]; then res A2 "N/A: env fallback mode, no pointer file (GIT_DIR set by harness)"; else
+cp -p -- "$W/.git" "$P/a2-pointer"
 a2_rc=0
 a2_out=$($K proto evil rw 'echo "gitdir: /tmp/x" > /work/.git 2>&1; rm -f /work/.git 2>&1; mv /work/.git /work/g 2>&1; echo done') || a2_rc=$?
-if [ "$a2_rc" -eq 0 ] && printf '%s\n' "$a2_out" | grep -q '^done$' && [ "$(cat "$W/.git")" = "$before" ]; then res A2 "BLOCKED (ro bind on file; rm/mv EBUSY)"; else res A2 "NOT BLOCKED (rc=$a2_rc)"; fi; fi
+a2_ptr=0
+cmp -s -- "$P/a2-pointer" "$W/.git" && a2_ptr=1
+a2_top=0
+if python3 - "$P/.keel/logs/launch.jsonl" << 'PY'
+import json, sys
+path = sys.argv[1]
+try:
+    lines = open(path, encoding="utf-8")
+except OSError:
+    sys.exit(0)
+for line in lines:
+    line = line.strip()
+    if not line:
+        continue
+    obj = json.loads(line)
+    if obj.get("event") == "nested_git" and obj.get("file") == ".git":
+        sys.exit(1)
+sys.exit(0)
+PY
+then a2_top=0; else a2_top=1; fi
+if [ "$a2_rc" -eq 0 ] && printf '%s\n' "$a2_out" | grep -q '^done$' && [ "$a2_ptr" -eq 1 ] && [ "$a2_top" -eq 0 ]; then res A2 "BLOCKED (ro bind on file; rm/mv EBUSY)"; else res A2 "NOT BLOCKED (rc=$a2_rc pointer=$a2_ptr top=$a2_top)"; fi; fi
 
 echo "### A3 hooks + core.fsmonitor in shadow config"; fresh; rm -f "$P"/PWNED-*
 HOSTMARK="$P/PWNED-HOST"
 a3_rc=0
-a3_out=$($K proto evil rw "git config core.fsmonitor 'touch /bundles/RAN-IN-EXPORT-CONTAINER; touch $HOSTMARK-fsmon; false' && git config core.hooksPath /shadow/task-1.git/hooks && for h in pre-commit post-commit post-checkout reference-transaction pre-auto-gc; do printf '#!/bin/sh\ntouch $HOSTMARK-%s 2>/dev/null; touch /work/.hookran-%s\n' \$h \$h > /shadow/task-1.git/hooks/\$h; chmod +x /shadow/task-1.git/hooks/\$h; done; git config alias.bundle '!touch $HOSTMARK-alias'; git config core.pager 'touch $HOSTMARK-pager'; echo x > a3.txt; git add a3.txt; git commit -qm a3; ls -a /work | grep hookran") || a3_rc=$?
+a3_out=$($K proto evil rw "git config core.fsmonitor 'touch /bundles/RAN-IN-EXPORT-CONTAINER; touch $HOSTMARK-fsmon; false' && git config core.hooksPath /shadow/task-1.git/hooks && for h in pre-commit post-commit post-checkout reference-transaction pre-auto-gc; do printf '#!/bin/sh\ntouch $HOSTMARK-%s 2>/dev/null; touch /work/.hookran-%s\n' \$h \$h > /shadow/task-1.git/hooks/\$h; chmod +x /shadow/task-1.git/hooks/\$h; done; git config alias.bundle '!touch $HOSTMARK-alias'; git config core.pager 'touch $HOSTMARK-pager'; echo x > a3.txt; git add a3.txt; git commit -qm a3; echo a3-done") || a3_rc=$?
 $K export; ls "$P/bundles"; $K gate; $K push-stub
-if [ "$a3_rc" -eq 0 ] && printf '%s\n' "$a3_out" | grep -q hookran && ! ls "$P"/PWNED-* >/dev/null 2>&1; then res A3 "BLOCKED: on host (no PWNED-HOST* marker after export+gate+push-stub; hooks only ran inside agent container)"; else res A3 "NOT BLOCKED (rc=$a3_rc)"; fi
+a3_mark=0
+printf '%s\n' "$a3_out" | grep -qx 'a3-done' && a3_mark=1
+a3_head=$(git bundle list-heads "$P/bundles/task-1.bundle" refs/heads/task-1 2>/dev/null | awk 'NR==1 { print $1 }')
+a3_commit=0
+if [ -n "$a3_head" ] && git --git-dir="$S" cat-file -e "${a3_head}:a3.txt" 2>/dev/null; then a3_commit=1; fi
+a3_host=0
+if ls "$P"/PWNED-* >/dev/null 2>&1; then a3_host=1; fi
+if [ "$a3_rc" -eq 0 ] && [ "$a3_mark" -eq 1 ] && [ "$a3_commit" -eq 1 ] && [ "$a3_host" -eq 0 ]; then res A3 "BLOCKED (no host marker after export, gate and push-stub; hooks and fsmonitor disabled by keel launch)"; else res A3 "NOT BLOCKED (rc=$a3_rc mark=$a3_mark commit=$a3_commit host=$a3_host)"; fi
 
 echo "### A4 commit touching .github/"; fresh
 $K proto evil rw 'echo evil >> .github/ci.yml && git commit -qam a4'; $K export >/dev/null; gate_expect_fail A4 'forbidden path'
@@ -252,10 +280,12 @@ else res A10 "PARTIAL: guard REFUSES repo-gc/prune while tasks exist; plain git 
 echo "### A10b guard: moving main backwards while task active"; fresh
 OLD=$(git -C "$R" rev-parse main); (cd "$R" && echo v2 >> app.txt && git -c user.name=h -c user.email=h@x commit -qam v2); NEW=$(git -C "$R" rev-parse main)
 $K set-main "$OLD"; rb=$?; echo "  rc=$rb main=$(git -C "$R" rev-parse --short main)"
+a10b_mode=0
+if [ -f "$P/task-1.mode" ]; then a10b_mode=1; fi
 (cd "$R" && git -c user.name=h -c user.email=h@x commit -q --allow-empty -m v3); FF=$(git -C "$R" rev-parse main); git -C "$R" update-ref refs/heads/main "$NEW"
 $K set-main "$FF"; echo "  ff rc=$?"
 $K cleanup >/dev/null; $K set-main "$OLD"; echo "  backwards with no task: rc=$?"
-if [ ! -f "$P/task-1.mode" ]; then res A10b "NOT BLOCKED (rc=$rb no-mode)"
+if [ "$a10b_mode" -ne 1 ]; then res A10b "NOT BLOCKED (rc=$rb no-mode)"
 elif [ $rb = 3 ]; then res A10b "BLOCKED (non-ff main refused while task active; ff and no-task allowed)"; else res A10b "NOT BLOCKED (rc=$rb)"; fi
 
 hostile_prepare() {
@@ -593,9 +623,9 @@ if [ "$a20b_rc" -ne 1 ] || [ -e "$W/src/sub/.git" ] || [ -e "$W/src/SUB/.GIT" ] 
 fi
 fresh
 a20b_rc=0
-a20b_out=$($K role developer 'mkdir -p "$(printf "odd\nname")/.git" && printf z > "$(printf "odd\nname")/.git/config" && printf stay > odd && exit 0' 2>&1) || a20b_rc=$?
+a20b_out=$($K role developer 'mkdir -p "$(printf "src/odd\nname")/.git" && printf z > "$(printf "src/odd\nname")/.git/config" && printf stay > src/odd && exit 0' 2>&1) || a20b_rc=$?
 odd_ok=0
-if [ "$a20b_rc" -eq 0 ] && [ "$(cat "$W/odd" 2>/dev/null)" = stay ] && python3 - "$P/.keel/logs/launch.jsonl" << 'PY'
+if [ "$a20b_rc" -eq 0 ] && [ "$(cat "$W/src/odd" 2>/dev/null)" = stay ] && python3 - "$P/.keel/logs/launch.jsonl" << 'PY'
 import json, sys
 found = False
 for line in open(sys.argv[1], encoding="utf-8"):
@@ -607,19 +637,19 @@ for line in open(sys.argv[1], encoding="utf-8"):
 sys.exit(0 if found else 1)
 PY
 then odd_ok=1; fi
-if [ "$odd_ok" -ne 1 ] || [ -e "$(printf '%s\n%s' "$W/odd" "name/.git")" ]; then
+if [ "$odd_ok" -ne 1 ] || [ -e "$(printf '%s\n%s' "$W/src/odd" "name/.git")" ]; then
   a20b_miss 2 "rc=$a20b_rc odd_ok=$odd_ok"
 fi
 fresh
 a20b_rc=0
-$K role developer 'mkdir -p hidden/.git && echo z > hidden/.git/config && chmod 000 hidden && exit 0' >"$P/a20b3.out" 2>&1 || a20b_rc=$?
-if [ "$a20b_rc" -ne 0 ] || [ -e "$W/hidden/.git" ] || ! grep -q 'hidden/.git' "$P/.keel/logs/launch.jsonl"; then
+$K role developer 'mkdir -p src/hidden/.git && echo z > src/hidden/.git/config && chmod 000 src/hidden && exit 0' >"$P/a20b3.out" 2>&1 || a20b_rc=$?
+if [ "$a20b_rc" -ne 0 ] || [ -e "$W/src/hidden/.git" ] || ! grep -q 'src/hidden/.git' "$P/.keel/logs/launch.jsonl"; then
   a20b_miss 3 "rc=$a20b_rc"
 fi
 fresh
 a20b_rc=0
-$K role developer 'mkdir -p locked/.git && echo z > locked/.git/config && chmod 555 locked && exit 0' >"$P/a20b4.out" 2>&1 || a20b_rc=$?
-if [ "$a20b_rc" -ne 0 ] || [ -e "$W/locked/.git" ] || ! grep -q 'locked/.git' "$P/.keel/logs/launch.jsonl"; then
+$K role developer 'mkdir -p src/locked/.git && echo z > src/locked/.git/config && chmod 555 src/locked && exit 0' >"$P/a20b4.out" 2>&1 || a20b_rc=$?
+if [ "$a20b_rc" -ne 0 ] || [ -e "$W/src/locked/.git" ] || ! grep -q 'src/locked/.git' "$P/.keel/logs/launch.jsonl"; then
   a20b_miss 4 "rc=$a20b_rc"
 fi
 fresh
@@ -695,7 +725,11 @@ else
 fi
 echo "### A20c nested git record"
 fresh
+a20c_mode=$($K mode 2>/dev/null || true)
+if [ "$a20c_mode" = pointer ]; then cp -p -- "$W/.git" "$P/a20c-pointer"; fi
 $K role developer 'mkdir -p src/sub/.git && echo SECRETCONTENT > src/sub/.git/config && exit 0' >/dev/null 2>&1 || true
+a20c_why=
+if [ "$a20c_mode" = pointer ] && ! cmp -s -- "$P/a20c-pointer" "$W/.git"; then a20c_why=pointer; fi
 if python3 - "$P/.keel/logs/launch.jsonl" << 'PY'
 import json, sys
 path = sys.argv[1]
@@ -714,6 +748,8 @@ for line in lines:
         continue
     if set(obj) - allow:
         sys.exit(1)
+    if obj.get("file") == ".git":
+        sys.exit(2)
     if obj.get("role") != "developer" or obj.get("detail") != "task-1" or obj.get("file") != "src/sub/.git":
         sys.exit(1)
     if obj.get("reason_code") != "NESTED_GIT":
@@ -723,7 +759,10 @@ for line in lines:
     found = True
 sys.exit(0 if found else 1)
 PY
-then res A20c "BLOCKED (record has the role, task, and path only)"; else res A20c "NOT BLOCKED"; fi
+then a20c_py=0; else a20c_py=$?; fi
+if [ "$a20c_py" -eq 2 ]; then a20c_why="${a20c_why:+$a20c_why }top-git"; fi
+if [ "$a20c_py" -ne 0 ] && [ "$a20c_py" -ne 2 ]; then a20c_why="${a20c_why:+$a20c_why }record"; fi
+if [ -z "$a20c_why" ]; then res A20c "BLOCKED (record has the role, task, and path only)"; else res A20c "NOT BLOCKED ($a20c_why)"; fi
 echo "### A20d proto-env tree"
 fresh
 a20d_rc=0

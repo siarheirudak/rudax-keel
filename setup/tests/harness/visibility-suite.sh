@@ -310,6 +310,14 @@ mark_name() {
 }
 cmd=\${1:-}
 shift || true
+if [ "\$cmd" = container ]; then
+  cmd=\${1:-}
+  shift || true
+  if [ "\$cmd" = inspect ]; then
+    printf 'Error response from daemon: No such container: %s\n' "\$1" >&2
+    exit 1
+  fi
+fi
 case \$cmd in
   info) printf '%s\n' "Server Version: fake"; exit 0 ;;
   run|create)
