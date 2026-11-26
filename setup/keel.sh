@@ -6,6 +6,11 @@
 # env: KEEL_ROOT (default ~/keel-proto), TASK, DOCKER (docker | "sudo docker" | podman), IMG,
 #      KEEL_POINTER_MODE (auto | pointer | env)
 set -u
+# Installed before the task is known. A later trap replaces it once the real
+# body exists, and this one keeps an early exit from depending on unset names.
+trap 'ec=$?; exit "$ec"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 # shellcheck source=setup/lib/portable.sh
 . "$HERE/lib/portable.sh"
@@ -99,11 +104,38 @@ _cli_env_run() {
   for name in $kept; do
     acc+=("$name=${!name}")
   done
+  if [ -n "$keel_arm_file" ] && keel_arm_ok "$keel_arm_file"; then
+    local gate pid rc=0
+    mkdir -p -- "$P/containers/$T" || return 91
+    gate=$(mktemp "$P/containers/$T/.gate.XXXXXX") || return 91
+    rm -f -- "$gate"
+    mkfifo "$gate" || return 91
+    # Holding the fifo open lets the child read it without losing the caller's stdin.
+    exec 7<>"$gate" || return 91
+    _keel_held_exec "$gate" "$@" <&0 &
+    pid=$!
+    keel_tool note "$keel_arm_file" "$pid" || true
+    printf '\n' >&7 || true
+    exec 7>&-
+    wait "$pid" || rc=$?
+    rm -f -- "$gate"
+    return "$rc"
+  fi
+  _keel_exec_env "$@"
+}
+_keel_exec_env() {
   if [ "${#acc[@]}" -eq 0 ]; then
     env -i "$@"
     return $?
   fi
   env -i "${acc[@]}" "$@"  # cli-env-reset
+}
+_keel_held_exec() {
+  local gate=$1
+  shift
+  IFS= read -r _ < "$gate" || true
+  exec 7>&- 2>/dev/null || true
+  _keel_exec_env "$@"
 }
 # shellcheck disable=SC2119
 launch_guard(){ keel_require_runtime || exit $?; } # launch-guard
@@ -119,59 +151,651 @@ crun(){
   else
     harden=("${HARDEN[@]}")
   fi
+  if [ -n "$keel_arm_name" ]; then
+    harden+=(--name "$keel_arm_name" --label "$keel_arm_label")
+  fi
+  # shellcheck disable=SC2086  # a two-word container command is a supported form, so this stays split
   docker_cli $DOCKER run "${harden[@]}" "${GITENV[@]}" "$@"
 }
 KEEL_CMD=${1:-}
 KEEL_ROLE_NAME=${KEEL_ROLE_NAME:-}
+keel_arm_file=
+keel_arm_name=
+keel_arm_label=
+keel_name_seq=0
+KEEL_ENV_TREE=
 quarantine_nested=1  # nested-git-on
+quarantine_fail=1  # quarantine-fail-closed
+leftover_check=1  # leftover-container-check
+keel_tool() {
+  python3 - "$P" "$T" "$@" << 'PY'
+import ctypes, errno, hashlib, os, stat, sys, tempfile
+
+root_p, task = sys.argv[1], sys.argv[2]
+cmd = sys.argv[3]
+rest = sys.argv[4:]
+LABEL_KEY = "keel.identity"
+AT_SYMLINK_NOFOLLOW = 0x100
+libc = ctypes.CDLL(None, use_errno=True)
+
+def fail(reason):
+    sys.stderr.write(reason + "\n")
+    raise SystemExit(2)
+
+def state_tag():
+    return hashlib.sha256(root_p.encode("utf-8")).hexdigest()[:12]
+
+def label_value():
+    return "s%st%s" % (state_tag(), task)
+
+def containers_dir():
+    return os.path.join(root_p, "containers", task)
+
+def atomic_write(path, text):
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".part.", dir=folder)
+    try:
+        os.write(fd, text.encode("utf-8"))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)
+
+def parse_record(path):
+    try:
+        raw = open(path, "r", encoding="utf-8").read()
+    except OSError:
+        return None
+    if raw == "" or raw[-1] != "\n" or "\n\n" in raw:
+        return None
+    allowed = {"v", "name", "label", "pid", "start", "cid", "probe"}
+    found = {}
+    for line in raw.splitlines():
+        if "=" not in line:
+            return None
+        key, val = line.split("=", 1)
+        if key not in allowed or key in found:
+            return None
+        found[key] = val
+    for key in ("v", "name", "label", "pid", "start", "cid"):
+        if key not in found:
+            return None
+    if found["v"] != "1":
+        return None
+    name = found["name"]
+    if not name.startswith("keelc-") or "/" in name or "\n" in name:
+        return None
+    expect = "%s=%s" % (LABEL_KEY, label_value())
+    if found["label"] != expect:
+        return None
+    for key in ("pid", "start"):
+        if found[key] != "" and not found[key].isdigit():
+            return None
+    cid = found["cid"]
+    if cid != "" and (len(cid) != 64 or any(c not in "0123456789abcdef" for c in cid)):
+        return None
+    if (found["pid"] == "") != (found["start"] == ""):
+        return None
+    probe = found.get("probe", "")
+    if probe not in ("", "unreadable"):
+        return None
+    found["path"] = path
+    return found
+
+def record_text(fields):
+    lines = [
+        "v=1",
+        "name=%s" % fields["name"],
+        "label=%s" % fields["label"],
+        "pid=%s" % fields.get("pid", ""),
+        "start=%s" % fields.get("start", ""),
+        "cid=%s" % fields.get("cid", ""),
+    ]
+    if fields.get("probe"):
+        lines.append("probe=%s" % fields["probe"])
+    return "\n".join(lines) + "\n"
+
+def proc_state(pid, recorded, unreadable):
+    if unreadable:
+        return "alive"
+    path = "/proc/%s/stat" % pid
+    marker = None
+    try:
+        data = open(path, "rb").read()
+    except FileNotFoundError:
+        return "gone"
+    except PermissionError:
+        return "alive"
+    except OSError:
+        return "unknown"
+    end = data.rfind(b")")
+    if end < 0:
+        return "unknown"
+    fields = data[end + 2:].split()
+    if len(fields) < 20:
+        return "unknown"
+    try:
+        marker = fields[19].decode("ascii")
+    except UnicodeError:
+        return "unknown"
+    if marker != recorded:
+        return "gone"
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return "gone"
+    except PermissionError:
+        return "alive"
+    except OSError:
+        return "unknown"
+    return "alive"
+
+def chmod_at(dirfd, name, mode):
+    rc = libc.fchmodat(ctypes.c_int(dirfd), os.fsencode(name), ctypes.c_uint(mode & 0o7777), ctypes.c_int(AT_SYMLINK_NOFOLLOW))
+    if rc != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err), name)
+
+def recheck(tree, path):
+    tree = os.path.abspath(tree)
+    if os.path.islink(tree):
+        return False
+    path = os.path.abspath(path)
+    try:
+        if os.path.commonpath([tree, path]) != tree:
+            return False
+    except ValueError:
+        return False
+    rel = os.path.relpath(path, tree)
+    cur = tree
+    if rel == ".":
+        return not os.path.islink(tree)
+    for part in rel.split(os.sep):
+        if part in ("", ".", ".."):
+            return False
+        cur = os.path.join(cur, part)
+        if not os.path.lexists(cur) or os.path.islink(cur):
+            return False
+    return True
+
+def move_tree(tree, dest, uid, pointer):
+    found = []
+
+    def restore(dirfd, path):
+        if not recheck(tree, path):
+            fail("recheck")
+        try:
+            names = os.listdir(dirfd)
+        except OSError:
+            fail("scan")
+        for name in names:
+            if name in (".", ".."):
+                continue
+            child = os.path.join(path, name)
+            try:
+                st = os.stat(name, dir_fd=dirfd, follow_symlinks=False)
+            except OSError:
+                fail("scan")
+            if stat.S_ISLNK(st.st_mode):
+                continue
+            if not recheck(tree, child):
+                fail("recheck")
+            if st.st_uid != uid:
+                fail("foreign-owner")
+            if name.lower() == ".git":
+                try:
+                    chmod_at(dirfd, name, st.st_mode | (0o700 if stat.S_ISDIR(st.st_mode) else 0o600))
+                except OSError:
+                    fail("perm-restore")
+                found.append(child)
+                continue
+            if stat.S_ISDIR(st.st_mode):
+                try:
+                    chmod_at(dirfd, name, st.st_mode | 0o700)
+                except OSError:
+                    fail("perm-restore")
+                if not recheck(tree, child):
+                    fail("recheck")
+                try:
+                    cfd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dirfd)
+                except OSError:
+                    fail("recheck")
+                try:
+                    restore(cfd, child)
+                finally:
+                    os.close(cfd)
+            else:
+                try:
+                    chmod_at(dirfd, name, st.st_mode | 0o600)
+                except OSError:
+                    fail("perm-restore")
+
+    if os.path.islink(tree) or not os.path.isdir(tree):
+        fail("scan")
+    parent = os.path.dirname(tree)
+    base = os.path.basename(tree)
+    if not recheck(tree, tree):
+        fail("recheck")
+    try:
+        st = os.lstat(tree)
+    except OSError:
+        fail("scan")
+    if st.st_uid != uid:
+        fail("foreign-owner")
+    try:
+        pfd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        fail("perm-restore")
+    try:
+        chmod_at(pfd, base, st.st_mode | 0o700)
+    except OSError:
+        fail("perm-restore")
+    finally:
+        os.close(pfd)
+    try:
+        rfd = os.open(tree, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        fail("recheck")
+    try:
+        restore(rfd, tree)
+    finally:
+        os.close(rfd)
+    pointer_b = pointer.encode("utf-8")
+    for path in found:
+        rel = os.path.relpath(path, tree)
+        if os.sep not in rel and pointer_b:
+            try:
+                st = os.lstat(path)
+                data = open(path, "rb").read() if stat.S_ISREG(st.st_mode) and not stat.S_ISLNK(st.st_mode) else b""
+            except OSError:
+                data = b""
+            if data == pointer_b:
+                continue
+        if not recheck(tree, path):
+            fail("recheck")
+        target = os.path.join(dest, rel)
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+        except OSError:
+            fail("dest")
+        if not recheck(tree, path):
+            fail("recheck")
+        try:
+            os.rename(path, target)
+        except OSError:
+            fail("move")
+        sys.stdout.buffer.write(os.fsencode(rel) + b"\0")
+
+if cmd == "tag":
+    sys.stdout.write(state_tag())
+elif cmd == "write":
+    name, label = rest[0], rest[1]
+    path = os.path.join(containers_dir(), name + ".rec")
+    atomic_write(path, record_text({"name": name, "label": label, "pid": "", "start": "", "cid": ""}))
+    sys.stdout.write(path)
+elif cmd == "note":
+    path, pid = rest[0], rest[1]
+    fields = parse_record(path)
+    if fields is None or not pid.isdigit():
+        raise SystemExit(2)
+    state = proc_state(pid, "", False)
+    # Read the marker even when the comparison value is empty.
+    stat_path = "/proc/%s/stat" % pid
+    try:
+        data = open(stat_path, "rb").read()
+        end = data.rfind(b")")
+        marker = data[end + 2:].split()[19].decode("ascii")
+    except (OSError, IndexError, UnicodeError):
+        raise SystemExit(2)
+    fields["pid"] = pid
+    fields["start"] = marker
+    atomic_write(path, record_text(fields))
+elif cmd == "paths":
+    folder = containers_dir()
+    if os.path.isdir(folder):
+        for name in sorted(os.listdir(folder)):
+            if name.endswith(".rec"):
+                sys.stdout.buffer.write(os.fsencode(os.path.join(folder, name)) + b"\0")
+elif cmd == "show":
+    fields = parse_record(rest[0])
+    if fields is None:
+        raise SystemExit(2)
+    sys.stdout.write("\n".join([fields["name"], fields["label"], fields["pid"], fields["start"], fields["cid"], fields.get("probe", "")]) + "\n")
+elif cmd == "clear":
+    path = rest[0]
+    if parse_record(path) is None:
+        raise SystemExit(2)
+    os.remove(path)
+elif cmd == "proc":
+    fields = parse_record(rest[0])
+    if fields is None or fields["pid"] == "":
+        sys.stdout.write("unknown\n")
+    else:
+        fixture = os.environ.get("KEEL_REDACT_FIXTURE") == "1"
+        unreadable = fixture and fields.get("probe") == "unreadable"
+        sys.stdout.write(proc_state(fields["pid"], fields["start"], unreadable) + "\n")
+elif cmd == "move":
+    move_tree(rest[0], rest[1], int(rest[2]), rest[3] if len(rest) > 3 else "")
+else:
+    raise SystemExit(2)
+PY
+}
+keel_arm_ok() {
+  local file=$1 base
+  [ -f "$file" ] || return 1
+  case "$file" in
+    "$P/containers/$T/"*.rec) ;;
+    *) return 1 ;;
+  esac
+  base=$(basename -- "$file" .rec)
+  case "$base" in
+    keelc-*) [ "$base" = "$keel_arm_name" ] || return 1 ;;
+    *) return 1 ;;
+  esac
+}
+keel_rt() {
+  local -a bin
+  # Split on spaces so a two-word container command stays two words.
+  IFS=' ' read -r -a bin <<< "$DOCKER"
+  [ "${#bin[@]}" -gt 0 ] || return 127
+  LC_ALL=C "${bin[@]}" "$@"
+}
+keel_runtime_up() {
+  keel_rt info >/dev/null 2>&1
+}
+keel_not_found_text() {
+  # Docker's C-locale reply contains "No such container".
+  # Podman's C-locale reply contains "no such container".
+  grep -q -e 'No such container' -e 'no such container' "$1"
+}
+keel_label_value() {
+  printf 's%st%s' "$(keel_tool tag)" "$T"
+}
+keel_track_begin() {
+  local tag name label path
+  tag=$(keel_tool tag) || return 91
+  keel_name_seq=$((keel_name_seq + 1))
+  name=$(printf 'keelc-%s-%s-%s-%s' "$tag" "$T" "$$" "$(python3 -c 'import os; print(os.urandom(4).hex())')") || return 91
+  label="keel.identity=$(keel_label_value)" || return 91
+  path=$(keel_tool write "$name" "$label") || return 91
+  keel_arm_name=$name
+  keel_arm_label=$label
+  keel_arm_file=$path
+}
+keel_show() {
+  local file=$1
+  keel_tool show "$file"
+}
+keel_proc_state() {
+  local file=$1
+  keel_tool proc "$file"
+}
+keel_label_ids() {
+  local value=$1
+  [ -n "$value" ] || return 1
+  keel_rt ps -a --no-trunc --filter "label=keel.identity=${value}" --format '{{.ID}}'
+}
+keel_classify_file() {
+  local file=$1 line name label pid cid err out id got status running hits
+  line=$(keel_show "$file") || { printf '%s\n' unknown; return 0; }
+  name=$(printf '%s\n' "$line" | sed -n '1p')
+  label=$(printf '%s\n' "$line" | sed -n '2p')
+  pid=$(printf '%s\n' "$line" | sed -n '3p')
+  cid=$(printf '%s\n' "$line" | sed -n '5p')
+  case "$name" in
+    keelc-*) ;;
+    *) printf '%s\n' unknown; return 0 ;;
+  esac
+  case "$label" in
+    "keel.identity=$(keel_label_value)") ;;
+    *) printf '%s\n' unknown; return 0 ;;
+  esac
+  if ! keel_runtime_up; then
+    printf '%s\n' unknown
+    return 0
+  fi
+  local proc=unknown
+  if [ -z "$pid" ]; then
+    proc=unknown
+  else
+    proc=$(keel_proc_state "$file" | head -n 1)
+  fi
+  err=$(mktemp "$P/containers/$T/.err.XXXXXX") || { printf '%s\n' unknown; return 0; }
+  out=$(keel_rt inspect --format '{{.Id}} {{.Name}} {{.State.Status}} {{.State.Running}}' -- "$name" 2>"$err") || true
+  if ! keel_runtime_up; then
+    rm -f -- "$err"
+    printf '%s\n' unknown
+    return 0
+  fi
+  if [ ! -s "$err" ] && [ -n "$out" ]; then
+    id=$(printf '%s\n' "$out" | awk '{print $1}')
+    got=$(printf '%s\n' "$out" | awk '{print $2}')
+    status=$(printf '%s\n' "$out" | awk '{print $3}')
+    running=$(printf '%s\n' "$out" | awk '{print $4}')
+    rm -f -- "$err"
+    if [ "$got" != "/$name" ] && [ "$got" != "$name" ]; then
+      printf '%s\n' unknown
+      return 0
+    fi
+    if [ "${#id}" -ne 64 ] || printf '%s' "$id" | grep -q '[^0-9a-f]'; then
+      printf '%s\n' unknown
+      return 0
+    fi
+    if [ -n "$cid" ] && [ "$cid" != "$id" ]; then
+      printf '%s\n' unknown
+      return 0
+    fi
+    if [ "$running" = true ] || [ "$status" = running ] || [ "$status" = restarting ] || [ "$status" = paused ]; then
+      printf '%s\n' running
+      return 0
+    fi
+    if [ "$status" = exited ] || [ "$status" = dead ]; then
+      printf '%s\n' stopped
+      return 0
+    fi
+    printf '%s\n' unknown
+    return 0
+  fi
+  if keel_not_found_text "$err"; then
+    rm -f -- "$err"
+    hits=$(keel_label_ids "$(keel_label_value)" 2>/dev/null || true)
+    if [ -n "$hits" ]; then
+      printf '%s\n' unknown
+      return 0
+    fi
+    if [ "$proc" = gone ]; then
+      printf '%s\n' stopped
+      return 0
+    fi
+    if [ "$proc" = alive ]; then
+      printf '%s\n' running
+      return 0
+    fi
+    printf '%s\n' unknown
+    return 0
+  fi
+  rm -f -- "$err"
+  printf '%s\n' unknown
+}
+keel_stop_name() {
+  local name=$1
+  case "$name" in
+    keelc-*) ;;
+    *) return 1 ;;
+  esac
+  keel_rt stop -t 2 -- "$name" >/dev/null 2>&1 || true
+  keel_rt kill -- "$name" >/dev/null 2>&1 || true
+}
+keel_settle_one() {
+  local file=$1 name state
+  if [ "$leftover_check" != 1 ]; then
+    return 0
+  fi
+  name=$(keel_show "$file" | sed -n '1p') || return 91
+  state=$(keel_classify_file "$file")
+  if [ "$state" = stopped ]; then
+    keel_tool clear "$file" || return 91
+    printf '%s\n' "container state stopped" >&2
+    return 0
+  fi
+  if [ "$state" = running ]; then
+    printf '%s\n' "container state running" >&2
+    keel_stop_name "$name" || true
+    state=$(keel_classify_file "$file")
+    if [ "$state" = stopped ]; then
+      keel_tool clear "$file" || return 91
+      printf '%s\n' "container state stopped" >&2
+      return 0
+    fi
+  fi
+  printf '%s\n' "REFUSED: container state is not confirmed" >&2
+  keel_tool_log container-unknown - || printf '%s\n' "quarantine record could not be written" >&2
+  return 91
+}
+keel_tool_log() {
+  local reason=$1 path=$2
+  python3 "$HERE/lib/visibility.py" quarantine-fail \
+    --role "${KEEL_ROLE_NAME:-}" --work "${W:-}" --harness "$HERE" \
+    --keel "$P" --task "$T" --repo "${R:-}" --file "$path" --code "$reason"
+}
+keel_guard_trees() {
+  local file
+  if [ "$leftover_check" != 1 ]; then
+    return 0
+  fi
+  mkdir -p -- "$P/containers/$T" || return 91
+  keel_tool paths >"$P/containers/$T/.paths" || return 91
+  while IFS= read -r -d '' file; do
+    [ -n "$file" ] || continue
+    keel_settle_one "$file" || return $?
+  done <"$P/containers/$T/.paths"
+  rm -f -- "$P/containers/$T/.paths"
+}
+keel_track_end() {
+  local file=$keel_arm_file
+  keel_arm_file=
+  keel_arm_name=
+  keel_arm_label=
+  if [ -z "$file" ]; then
+    return 0
+  fi
+  keel_settle_one "$file"
+}
+keel_finish_track() {
+  local rc=$1 end=0
+  keel_track_end || end=$?
+  if [ "$rc" -eq 0 ] && [ "$end" -ne 0 ]; then
+    return "$end"
+  fi
+  return "$rc"
+}
+keel_print_state() {
+  local file state worst=none hits
+  if ! keel_runtime_up; then
+    printf '%s\n' unknown
+    return 91
+  fi
+  while IFS= read -r -d '' file; do
+    [ -n "$file" ] || continue
+    state=$(keel_classify_file "$file")
+    case "$state" in
+      running) worst=running ;;
+      unknown) [ "$worst" = running ] || worst=unknown ;;
+      stopped) [ "$worst" = none ] && worst=stopped ;;
+    esac
+  done < <(keel_tool paths || true)
+  hits=$(keel_label_ids "$(keel_label_value)" 2>/dev/null || true)
+  if [ -n "$hits" ] && [ "$worst" = none ]; then
+    worst=running
+  fi
+  printf '%s\n' "$worst"
+  [ "$worst" != unknown ]
+}
+keel_quar_fail() {
+  local reason=$1 path=$2
+  if [ "$quarantine_fail" != 1 ]; then
+    return 0
+  fi
+  if ! keel_tool_log "$reason" "$path"; then
+    printf '%s\n' "quarantine record could not be written" >&2
+  else
+    printf '%s\n' "quarantine failed: $reason" >&2
+  fi
+  return 90
+}
+keel_quarantine_one() {
+  local tree=$1 pointer=$2 dest rel qrc=0
+  [ -d "$tree" ] || return 0
+  mkdir -p -- "$P/containers/$T" || { keel_quar_fail temp-file -; return $?; }
+  dest=$P/quarantine/$T/$$
+  qrc=0
+  keel_tool move "$tree" "$dest" "$(id -u)" "$pointer" >"$P/containers/$T/.moved" 2>"$P/containers/$T/.why" || qrc=$?
+  if [ "$qrc" -ne 0 ]; then
+    rel=$(head -n 1 "$P/containers/$T/.why" 2>/dev/null || printf '%s' scan)
+    [ -n "$rel" ] || rel=scan
+    keel_quar_fail "$rel" -
+    return $?
+  fi
+  while IFS= read -r -d '' rel; do
+    [ -n "$rel" ] || continue
+    if ! record_nested_git "$rel"; then
+      keel_quar_fail record "$rel"
+      return $?
+    fi
+  done <"$P/containers/$T/.moved"
+  rm -f -- "$P/containers/$T/.moved" "$P/containers/$T/.why"
+}
 record_nested_git() {
   python3 "$HERE/lib/visibility.py" nested-git --role "$KEEL_ROLE_NAME" --work "$W" --harness "$HERE" --keel "$P" --task "$T" --repo "$R" --file "$1"  # nested-git-record
 }
 quarantine_git_tree() {
-  local list path parent rel mode expected content run
-  [ "$quarantine_nested" = 1 ] || return 0
-  case "${KEEL_CMD:-}" in
+  local cmd pointer qrc=0
+  [ "${quarantine_nested:-0}" = 1 ] || return 0
+  cmd=${KEEL_CMD:-}
+  case "$cmd" in
     role|role-env|proto|proto-env) ;;
     *) return 0 ;;
   esac
-  [ -d "$W" ] || return 0
-  list=$(mktemp) || return 0
-  find -P "$W" -iname '.git' -prune -print >"$list" 2>/dev/null || true
-  run=$P/quarantine/$T/$$
-  while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    [ -e "$path" ] || [ -L "$path" ] || continue
-    parent=$(dirname -- "$path")
-    if [ "$parent" = "$W" ]; then
-      mode=$(cat "$P/$T.mode" 2>/dev/null || printf '%s\n' pointer)
-      if [ "$mode" = pointer ] && [ -f "$path" ] && [ ! -L "$path" ]; then
-        expected=$(printf 'gitdir: /shadow/%s.git\n' "$T")
-        content=$(cat -- "$path" 2>/dev/null || true)
-        if [ "$content" = "$expected" ]; then
-          continue
-        fi
-      fi
+  if ! keel_guard_trees; then
+    keel_quar_fail stop-unconfirmed -
+    return $?
+  fi
+  if [ "$cmd" = proto-env ] && [ -n "${KEEL_ENV_TREE:-}" ]; then
+    keel_quarantine_one "$KEEL_ENV_TREE" "" || qrc=$?
+    if [ "$qrc" -ne 0 ]; then
+      return "$qrc"
     fi
-    rel=${path#"$W"/}
-    case $rel in
-      /*|"") continue ;;
-    esac
-    mkdir -p -- "$run/$(dirname -- "$rel")"
-    mv -- "$path" "$run/$rel" || continue
-    record_nested_git "$rel" || true
-  done <"$list"
-  rm -f "$list"
+  fi
+  if [ -d "${W:-}" ]; then
+    pointer=
+    if [ "$(cat "$P/$T.mode" 2>/dev/null || printf '%s' pointer)" = pointer ]; then
+      pointer=$(printf 'gitdir: /shadow/%s.git\n' "$T")
+    fi
+    keel_quarantine_one "$W" "$pointer" || return $?
+  fi
 }
 keel_on_exit() {
   local ec=$?
-  quarantine_git_tree || true
-  rm -rf "$P/.keel/runs"
-  if [ "$KEEL_CMD" = cleanup ] || { [ "$KEEL_CMD" = setup ] && [ "$ec" -ne 0 ]; }; then
-    rm -rf "$P/$T.deny" "$W/.keel/runs"
+  local q=0
+  local root=${P:-}
+  local task=${T:-}
+  local cmd=${KEEL_CMD:-}
+  local work=${W:-}
+  if [ -n "$root" ] && [ -n "$task" ]; then
+    quarantine_git_tree || q=$?
+    rm -rf "$root/.keel/runs"
+    if [ "$cmd" = cleanup ] || { [ "$cmd" = setup ] && [ "$ec" -ne 0 ]; }; then
+      rm -rf "$root/$task.deny" "$work/.keel/runs"
+    fi
+  fi
+  if [ "$q" -ne 0 ] && [ "$ec" -eq 0 ]; then
+    ec=$q
   fi
   exit "$ec"
 }
 trap keel_on_exit EXIT
+
 role_mounts() {
   local role=$1 mf rc=0 kind src dst how
   mkdir -p "$P/.keel/runs"
@@ -204,17 +828,18 @@ start_role() {
   run_policy "$name" "$@"
 }
 run_policy() {
-  local name=$1
+  local name=$1 rc=0
   shift
   role_mounts "$name" || return $?
   echo "== role $name (policy)"
   # Whole-tree fallback is not used.
   :
   if [ "${#MNT[@]}" -eq 0 ]; then
-    crun_for "$name" -w /tmp "$IMG" sh -c "$*"
+    crun_for "$name" -w /tmp "$IMG" sh -c "$*" || rc=$?
   else
-    crun_for "$name" "${MNT[@]}" -w /work "$IMG" sh -c "$*"
+    crun_for "$name" "${MNT[@]}" -w /work "$IMG" sh -c "$*" || rc=$?
   fi
+  keel_finish_track "$rc"
 }
 mode(){ cat "$P/$T.mode" 2>/dev/null || echo pointer; }
 # work-tree mounts for the current mode. $1 = rw|ro. Sets array MNT.
@@ -236,6 +861,11 @@ tasks_active(){ ls -d "$P"/work/*/ >/dev/null 2>&1; }
 # shellcheck source=setup/lib/runtime.sh
 . "$HERE/lib/runtime.sh"
 need_docker(){ $DOCKER info >/dev/null 2>&1 || { docker_hint >&2; exit 5; }; keel_disk_ok "$P" || { printf 'REFUSE\truntime\tdisk\t0\n' >&2; exit 1; }; }
+case "$KEEL_CMD" in
+  setup|reset-shadow|proto|proto-env|role|role-env|export|gate|cleanup)
+    keel_guard_trees || exit $?
+    ;;
+esac
 case "${1:-}" in
 egress-up) launch_guard; need_docker; egress_proxy_up;;
 init-repo) mkdir -p "$R" "$P/.gatehome"; cd "$R" || exit 1; git init -q; git symbolic-ref HEAD refs/heads/main
@@ -258,24 +888,31 @@ setup) launch_guard; M=$(hgit -C "$R" rev-parse main 2>/dev/null) || M=; keel_re
   printf 'gitdir: /shadow/%s.git\n' "$T" > "$W/.git"
   want=${KEEL_POINTER_MODE:-auto}; md='env'
   if [ "$want" != env ]; then
+    keel_track_begin || exit $?
     if err=$(crun -v "$W:/work" -v "$W/.git:/work/.git:ro" "$IMG" true 2>&1); then md=pointer
-    elif [ "$want" = pointer ]; then echo "single-file ro bind rejected: $err" >&2; exit 6
+    elif [ "$want" = pointer ]; then echo "single-file ro bind rejected: $err" >&2; keel_track_end || exit $?; exit 6
     else echo "WARN: single-file ro bind rejected by Docker ($(echo "$err" | tail -1)); falling back to GIT_DIR/GIT_WORK_TREE" >&2; fi
+    keel_track_end || exit $?
   fi
   [ $md = env ] && rm -f "$W/.git"      # env mode: no pointer file at all
   echo $md > "$P/$T.mode"; work_mounts rw
+  keel_track_begin || exit $?
+  # shellcheck disable=SC2016  # single quotes keep the setup script literal; the task and base are arguments inside the container
   crun -v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c \
    'git update-ref refs/heads/"$1" "$2" && git symbolic-ref HEAD refs/heads/"$1" && git checkout -q -f "$1" && git log --oneline -1' \
    _ "$T" "$M" \
-   || { echo "setup container failed. If this is Docker Desktop, check that $P is in Settings > Resources > File sharing." >&2; exit 7; }
+   || { keel_track_end || exit $?; echo "setup container failed. If this is Docker Desktop, check that $P is in Settings > Resources > File sharing." >&2; exit 7; }
+  keel_track_end || exit $?
   echo "mode=$md";;
 mode) mode;;
 reset-shadow) reset_shadow; echo "shadow reset";;
 proto) launch_guard; shift; name=$1 m=$2; shift 2; KEEL_ROLE_NAME=$name; reset_shadow
   echo "== role $name ($m) [shadow reset, mode=$(mode)]"; work_mounts "$m"
   use_none=1  # proto-network-none
+  keel_track_begin || exit $?
+  proto_rc=0
   if [ "$use_none" = 1 ]; then
-    crun -v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c "$*"
+    crun -v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c "$*" || proto_rc=$?
   else
     skip=0
     args=()
@@ -284,11 +921,19 @@ proto) launch_guard; shift; name=$1 m=$2; shift 2; KEEL_ROLE_NAME=$name; reset_s
       if [ "$a" = "--network" ]; then skip=1; continue; fi
       args+=("$a")
     done
+    if [ -n "$keel_arm_name" ]; then
+      args+=(--name "$keel_arm_name" --label "$keel_arm_label")
+    fi
     launch_guard
-    docker_cli $DOCKER run "${args[@]}" "${GITENV[@]}" -v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c "$*"
-  fi;;
-proto-env) launch_guard; shift; KEEL_ROLE_NAME=proto-env; WE=$P/work/$T-env; mkdir -p "$WE"; reset_shadow
-  crun -e "GIT_DIR=/shadow/$T.git" -e GIT_WORK_TREE=/work -v "$R/.git/objects:/base/objects:ro" -v "$WE:/work" -v "$S:/shadow/$T.git" -w /work "$IMG" sh -c "$*";;
+    # shellcheck disable=SC2086  # a two-word container command is a supported form, so this stays split
+    docker_cli $DOCKER run "${args[@]}" "${GITENV[@]}" -v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c "$*" || proto_rc=$?
+  fi
+  keel_finish_track "$proto_rc" || exit $?;;
+proto-env) launch_guard; shift; KEEL_ROLE_NAME=proto-env; WE=$P/work/$T-env; mkdir -p "$WE"; KEEL_ENV_TREE=$WE; reset_shadow
+  keel_track_begin || exit $?
+  proto_env_rc=0
+  crun -e "GIT_DIR=/shadow/$T.git" -e GIT_WORK_TREE=/work -v "$R/.git/objects:/base/objects:ro" -v "$WE:/work" -v "$S:/shadow/$T.git" -w /work "$IMG" sh -c "$*" || proto_env_rc=$?
+  keel_finish_track "$proto_env_rc" || exit $?;;
 role) launch_guard; shift; name=$1; shift
   KEEL_ROLE_NAME=$name
   if [ "${1:-}" = rw ] || [ "${1:-}" = ro ]; then shift; fi
@@ -376,6 +1021,7 @@ gate) launch_guard; F=$B/$T.bundle; M=$(hgit -C "$R" rev-parse main 2>/dev/null)
   hgit -C "$G" archive "$I" | tar -x --no-same-owner -C "$TD"
   hgit -C "$G" show "main:$TEST_ENTRY" > "$TE/entry.sh" || { rm -rf "$TD" "$TE"; fail "no $TEST_ENTRY on main"; }
   launch_guard
+  # shellcheck disable=SC2086  # a two-word container command is a supported form, so this stays split
   docker_cli $DOCKER run "${HARDEN[@]}" -e HOME=/tmp -v "$TD:/src:ro" -v "$TE:/keel-entry:ro" -w /src "$IMG" sh /keel-entry/entry.sh || { rm -rf "$TD" "$TE"; fail "tests (main:$TEST_ENTRY)"; }
   rm -rf "$TD" "$TE"; echo "GATE PASS: $(hgit -C "$G" rev-parse "$I") files=$nf lines=$lines (objects held in $G)";;
 push-stub) I=$(hgit -C "$G" rev-parse "refs/keel/incoming/$T") || exit 1
@@ -387,8 +1033,9 @@ set-main) new=${2:-}; keel_require_sha "$new" || exit 1; old=$(hgit -C "$R" rev-
   if tasks_active && ! hgit -C "$R" merge-base --is-ancestor "$old" "$new"; then echo "REFUSED: main $old -> $new is not fast-forward while tasks active"; exit 3; fi
   hgit -C "$R" update-ref refs/heads/main "$new" "$old" && echo "main -> $new"  # set-main-hgit
   ;;
-cleanup) rm -rf "$P/$T.deny" "$P/.keel/runs" "$W/.keel/runs" "$W" "$P/work/$T-env" "$S" "$G" "$B/$T.bundle" "$P/$T.base" "$P/$T.mode" "$P/quarantine/$T"
+cleanup) rm -rf "$P/$T.deny" "$P/.keel/runs" "$W/.keel/runs" "$W" "$P/work/$T-env" "$S" "$G" "$B/$T.bundle" "$P/$T.base" "$P/$T.mode" "$P/quarantine/$T" "$P/containers/$T"
   rm -f "$P/.keel/redact-fixture"
   mkdir -p "$P/work"; echo "cleaned $T";;
+container-state) keel_print_state; exit $?;;
 *) sed -n 2,7p "$0"; exit 2;;
 esac

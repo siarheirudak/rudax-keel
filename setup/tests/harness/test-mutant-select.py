@@ -32,13 +32,14 @@ def mids(start, end):
 VIS = mids(45, 46) + mids(48, 52) + ["M69"] + mids(70, 72) + mids(104, 105) + ["M340", "M348"]
 VIS_FILE = mids(45, 46) + mids(48, 52) + mids(70, 71) + mids(104, 105) + ["M128", "M340"]
 EGRESS = mids(53, 66) + ["M68", "M76", "M77"]
-ATTACK = ["M03", "M17", "M27"] + mids(45, 68) + mids(70, 71) + mids(73, 77) + ["M79"] + mids(82, 85) + ["M%d" % n for n in range(341, 348)]
+ATTACK = ["M03", "M17", "M27"] + mids(45, 68) + mids(70, 71) + mids(73, 77) + ["M79"] + mids(82, 85) + ["M%d" % n for n in range(341, 348)] + ["M349", "M350"]
 RUNTIME = ["M80", "M81"] + mids(86, 91) + ["M%d" % n for n in range(333, 340)]
 STEP4 = mids(94, 98) + ["M101", "M103"] + mids(104, 105) + mids(107, 118)
 KEEL = [
     "M03", "M17", "M27", "M47", "M67", "M69",
     "M73", "M74", "M75", "M82", "M83", "M84", "M85", "M91",
     "M341", "M342", "M343", "M344", "M345", "M346", "M347", "M348",
+    "M349", "M350",
 ]
 SECRET_NAMES = mids(45, 46) + mids(48, 52) + mids(70, 72) + mids(104, 105) + ["M128", "M340"]
 PI = mids(94, 98) + ["M101", "M103", "M107", "M109"] + mids(111, 118) + ["M123", "M224", "M225", "M226"]
@@ -118,12 +119,12 @@ def validate():
     path_ids = ["M308", "M309", "M310", "M311", "M312"]
     labeler_ids = ["M%d" % n for n in range(313, 333)]
     doctor_ids = ["M%d" % n for n in range(333, 340)]
-    boundary_ids = ["M%d" % n for n in range(340, 349)]
+    boundary_ids = ["M%d" % n for n in range(340, 351)]
     added = len(legacy_ids) + len(step6_ids) + len(p1b_ids) + len(doc_ids) + len(plan_ids) + len(cover_ids) + len(pin_ids) + len(path_ids) + len(labeler_ids) + len(doctor_ids) + len(boundary_ids)
     if len(mf.CI_IDS) != len(set(mf.CI_IDS)) or len(mf.CI_IDS) != 93 + added:
         fail("CI id set changed")
     if mf.CI_IDS[-len(boundary_ids):] != boundary_ids:
-        fail("new CI ids are not M340-M348")
+        fail("new CI ids are not M340-M350")
     tail = len(boundary_ids)
     if mf.CI_IDS[-tail - len(doctor_ids):-tail] != doctor_ids:
         fail("new CI ids are not M333-M339")
@@ -261,7 +262,7 @@ def validate():
             fail("%s drifted: %s" % (path, got))
         if any(mid not in mf.CI_IDS for mid in got):
             fail("%s includes a non-CI id" % path)
-    if len(ATTACK) != 46 or len(STEP4) != 21 or len(RUNTIME) != 15:
+    if len(ATTACK) != 48 or len(STEP4) != 21 or len(RUNTIME) != 15:
         fail("oracle list length changed")
     if len(VIS) != 15 or len(EGRESS) != 17:
         fail("policy list length changed")
@@ -346,7 +347,7 @@ def main():
             fail("id list is not in CI order")
 
     expect_exact(["setup/keel.sh"], KEEL, "SEL-H1")
-    if "M03" not in KEEL or "M51" in KEEL or len(KEEL) != 22:
+    if "M03" not in KEEL or "M51" in KEEL or len(KEEL) != 24:
         fail("SEL-H1 keel set")
     expect_exact(["setup/lib/secret_names.py"], SECRET_NAMES, "secret-names")
     if "M72" not in SECRET_NAMES or "M340" not in SECRET_NAMES or len(SECRET_NAMES) != 14:

@@ -239,7 +239,7 @@ fi
 plain=envonlysecretvalue123456
 pat_only=patternonlyvalue12345678
 mkdir -p "$P/.keel"
-printf '%s\n' "GITHUB_PAT=$plain" "FOO_API_KEY=$pat_only" > "$P/.keel/redact-fixture"
+printf '%s\n' "GITHUB_PAT=$plain" "FOO_API_KEY=$pat_only" NAME-ASSIGN-MARK > "$P/.keel/redact-fixture"
 log_before=$(wc -c < "$(LOG)" 2>/dev/null || echo 0)
 name_out=$(
   export KEEL_REDACT_FIXTURE=1
@@ -378,7 +378,7 @@ run_sa1b() {
     sa1b_fail=1
     return 0
   fi
-  python3 - "$SETUP" "$sa1b_log" << 'PY'
+  if ! python3 - "$SETUP" "$sa1b_log" << 'PY'
 import os, sys
 sys.path.insert(0, os.path.join(sys.argv[1], "lib"))
 import secret_names
@@ -403,7 +403,7 @@ for names in blocks:
             sys.exit(1)
 sys.exit(0)
 PY
-  if [ $? -ne 0 ]; then
+  then
     sa1b_fail=1
   fi
 }
@@ -435,7 +435,9 @@ direct_container_line() {
 }
 s1c_fail=0
 sample_gate='  $DOCKER run "${HARDEN[@]}" -e HOME=/tmp -v "$TD:/src:ro" -v "$TE:/keel-entry:ro" -w /src "$IMG" sh /keel-entry/entry.sh || { rm -rf "$TD" "$TE"; fail "tests (main:$TEST_ENTRY)"; }'
+# shellcheck disable=SC1003  # this sample keeps the continued command's trailing backslash
 sample_mock='    $DOCKER run -d --name "$MOCK_NAME" --network "$EGRESS_NET" --network-alias keel-mock --network-alias keel-secret \'
+# shellcheck disable=SC1003  # this sample keeps the continued command's trailing backslash
 sample_proxy='    $DOCKER run -d --name "$PROXY_NAME" --network "$EGRESS_NET" --network-alias keel-proxy \'
 direct_container_line "$sample_gate" || s1c_fail=1
 direct_container_line "$sample_mock" || s1c_fail=1
@@ -531,7 +533,16 @@ else:
     joined="\n".join(str(obj.get("detail") or "") for obj in fed)
     if "[REDACTED:token]" not in joined or "[REDACTED:password]" not in joined or "[REDACTED:unknown]" not in joined:
         bad.append("placeholder")
-other=[obj.get("redactions") for obj in rows if obj not in fed]
+mark="NAME-ASSIGN-MARK"
+sa4=[obj for obj in rows if mark in str(obj.get("detail") or "")]
+if len(sa4) != 1:
+    bad.append("s-a4 count %s" % [obj.get("redactions") for obj in sa4])
+else:
+    one=sa4[0]
+    detail=str(one.get("detail") or "")
+    if one.get("event") != "launch_ok" or one.get("role") != "developer" or one.get("redactions") != 2 or detail.count("[REDACTED:env]") != 2:
+        bad.append("s-a4 count %s" % [one.get("redactions")])
+other=[obj.get("redactions") for obj in rows if obj not in fed and obj not in sa4]
 if any(c != 0 for c in other):
     bad.append("leak %s" % other[:8])
 print("REDACT", "ok" if not bad else "bad "+",".join(bad))

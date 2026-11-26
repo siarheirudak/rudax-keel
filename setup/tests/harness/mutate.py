@@ -320,6 +320,8 @@ M = {
  'M346': (K, 'python3 "$HERE/lib/visibility.py" nested-git --role "$KEEL_ROLE_NAME" --work "$W" --harness "$HERE" --keel "$P" --task "$T" --repo "$R" --file "$1"  # nested-git-record', ': # nested-git-record', 'nested git record not written', ['A20c']),
  'M347': (K, 'M=$(hgit -C "$R" rev-parse main 2>/dev/null) || M=; keel_require_sha "$M" || exit 1  # setup-main-hgit', 'M=$(git -C "$R" rev-parse main 2>/dev/null) || M=; keel_require_sha "$M" || exit 1  # setup-main-hgit', 'setup and gate read main with plain git', ['A10e'], [('F=$B/$T.bundle; M=$(hgit -C "$R" rev-parse main 2>/dev/null) || M=;', 'F=$B/$T.bundle; M=$(git -C "$R" rev-parse main 2>/dev/null) || M=;')]),
  'M348': (K, 'env -i "${acc[@]}" "$@"  # cli-env-reset', '"$@"  # cli-env-reset', 'container CLI started with the caller environment', ['S-A1b']),
+ 'M349': (K, 'quarantine_fail=1  # quarantine-fail-closed', 'quarantine_fail=0  # quarantine-fail-closed', 'quarantine failure is a silent skip', ['A20b']),
+ 'M350': (K, 'leftover_check=1  # leftover-container-check', 'leftover_check=0  # leftover-container-check', 'leftover container check off', ['A20e']),
 }
 SUITE_OF = {
     'M01': 'test-attacks.sh',
@@ -634,6 +636,8 @@ SUITE_OF = {
     'M346': 'test-attacks.sh',
     'M347': 'test-attacks.sh',
     'M348': 'visibility-suite.sh',
+    'M349': 'test-attacks.sh',
+    'M350': 'test-attacks.sh',
 }
 EXTRA_EDITS = {
     'M15': ['M14'],

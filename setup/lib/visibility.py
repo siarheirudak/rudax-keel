@@ -1044,6 +1044,23 @@ def main(argv):
             return 1
         sys.stdout.write("REFUSE\t{0}\t{1}\t{2}\n".format(err.code, err.file, err.line))
         return 1
+    if cmd == "quarantine-fail":
+        record = {
+            "ts": now_ts(),
+            "event": "quarantine_fail",
+            "role": args.role,
+            "reason_code": args.code or "quarantine",
+            "file": args.file,
+            "line": 0,
+            "detail": args.task,
+            "mounted_roots": [],
+            "denied_withheld": [],
+        }
+        try:
+            write_log(args.keel, record, {})
+        except PolicyError:
+            return 1
+        return 0
     if cmd == "nested-git":
         record = {
             "ts": now_ts(),

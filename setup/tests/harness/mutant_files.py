@@ -322,6 +322,8 @@ FILES = {
     "M346": ["setup/keel.sh"],
     "M347": ["setup/keel.sh"],
     "M348": ["setup/keel.sh"],
+    "M349": ["setup/keel.sh"],
+    "M350": ["setup/keel.sh"],
 }
 
 # The CI set. Offline mutants stay out of pull-request runs.
@@ -593,6 +595,8 @@ CI_IDS = [
     "M346",
     "M347",
     "M348",
+    "M349",
+    "M350",
 ]
 
 # Docker mount probes, plus M01. Pull-request CI skips these. The daily full run includes them.
@@ -903,6 +907,8 @@ META = {
     "M346": ("nested-git-record", "visibility"),
     "M347": ("setup-main-hgit", "mechanism"),
     "M348": ("cli-env-reset", "secret"),
+    "M349": ("quarantine-fail-closed", "fail-closed"),
+    "M350": ("leftover-container-check", "fail-closed"),
 }
 
 # CI ids, in CI_IDS order. Pull-request selection never includes OFFLINE_IDS.
@@ -989,6 +995,8 @@ ATTACK_CI = (
     "M345",
     "M346",
     "M347",
+    "M349",
+    "M350",
 )
 RUNTIME_CI = (
     "M80",

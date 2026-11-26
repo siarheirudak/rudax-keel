@@ -4522,31 +4522,31 @@ def _add_catalog_id(text, expr, mid="M900"):
         "\n '%s': (%s, 'OLDQQ', 'NEWQQ', 'what', ['A1']),\n}\nSUITE_OF = {\n" % (mid, expr),
         1,
     )
-    suite = "    '%s': 'visibility-suite.sh',\n}" % "M348"
+    suite = "    'M350': 'test-attacks.sh',\n}"
     if suite not in text:
         raise RuntimeError("catalog")
     text = text.replace(
         suite,
-        "    'M348': 'visibility-suite.sh',\n    '%s': 'test-attacks.sh',\n}" % mid,
+        "    'M350': 'test-attacks.sh',\n    '%s': 'test-attacks.sh',\n}" % mid,
         1,
     )
     return text
 
 
 def _add_ci_id(text, mid="M900"):
-    needle = '    "M348",\n]'
+    needle = '    "M350",\n]'
     if needle not in text:
         raise RuntimeError("catalog")
-    return text.replace(needle, '    "M348",\n    "%s",\n]' % mid, 1)
+    return text.replace(needle, '    "M350",\n    "%s",\n]' % mid, 1)
 
 
 def _add_files_id(text, files_expr, mid="M900"):
-    needle = '    "M348": ["setup/keel.sh"],\n}'
+    needle = '    "M350": ["setup/keel.sh"],\n}'
     if needle not in text:
         raise RuntimeError("catalog")
     return text.replace(
         needle,
-        '    "M348": ["setup/keel.sh"],\n    "%s": [%s],\n}' % (mid, files_expr),
+        '    "M350": ["setup/keel.sh"],\n    "%s": [%s],\n}' % (mid, files_expr),
         1,
     )
 
@@ -4941,8 +4941,8 @@ def case_s_a59():
 
     def both_ids(text):
         return text.replace(
-            '    "M348",\n]',
-            '    "M348",\n    "M900",\n    "M901",\n]',
+            '    "M350",\n]',
+            '    "M350",\n    "M900",\n    "M901",\n]',
             1,
         )
 
