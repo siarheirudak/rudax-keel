@@ -505,8 +505,9 @@ keel_runtime_up() {
   keel_rt info >/dev/null 2>&1
 }
 keel_not_found_text() {
-  # Docker's C-locale reply contains "No such container".
-  # Podman's C-locale reply contains "no such container".
+  # Container-scoped inspect only. A generic missing-object reply is not this.
+  # Docker's container reply contains "No such container".
+  # Podman's container reply contains "no such container".
   grep -q -e 'No such container' -e 'no such container' "$1"
 }
 keel_label_value() {
@@ -562,7 +563,7 @@ keel_classify_file() {
     proc=$(keel_proc_state "$file" | head -n 1)
   fi
   err=$(mktemp "$P/containers/$T/.err.XXXXXX") || { printf '%s\n' unknown; return 0; }
-  out=$(keel_rt inspect --format '{{.Id}} {{.Name}} {{.State.Status}} {{.State.Running}}' -- "$name" 2>"$err") || true
+  out=$(keel_rt container inspect --format '{{.Id}} {{.Name}} {{.State.Status}} {{.State.Running}}' -- "$name" 2>"$err") || true
   if ! keel_runtime_up; then
     rm -f -- "$err"
     printf '%s\n' unknown

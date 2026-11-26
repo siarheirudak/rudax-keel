@@ -180,20 +180,25 @@ gate_expect_fail(){ out=$($K gate 2>&1); rc=$?; echo "$out" | tail -2; why=$(ech
   if [ $rc -eq 0 ]; then res "$1" "NOT BLOCKED"; elif echo "$why" | grep -qE "$2"; then res "$1" "BLOCKED (gate: $why)"; else res "$1" "WRONG REASON (expected /$2/, got: ${why:-rc=$rc})"; fi; }
 
 echo "### A1 write to /base/objects"; fresh
-$K proto evil rw 'touch /base/objects/pwn 2>&1; mkdir /base/objects/aa 2>&1; echo x > /base/objects/info/alternates 2>&1; echo rc=$?'
-if [ -e "$R/.git/objects/pwn" ]; then res A1 "NOT BLOCKED"; else res A1 "BLOCKED (read-only mount)"; fi
+a1_rc=0
+a1_out=$($K proto evil rw 'touch /base/objects/pwn 2>&1; mkdir /base/objects/aa 2>&1; echo x > /base/objects/info/alternates 2>&1; echo rc=$?') || a1_rc=$?
+if [ "$a1_rc" -eq 0 ] && printf '%s\n' "$a1_out" | grep -q '^rc=' && [ ! -e "$R/.git/objects/pwn" ]; then res A1 "BLOCKED (read-only mount)"; else res A1 "NOT BLOCKED (rc=$a1_rc)"; fi
 echo "  side note: agent CAN edit shadow alternates (rw shadow):"; $K proto evil rw 'echo /tmp >> /shadow/task-1.git/objects/info/alternates && echo edited-shadow-alternates'
 
 echo "### A2 rewrite pointer file"; fresh
-if [ "$($K mode)" = env ]; then res A2 "N/A: env fallback mode, no pointer file (GIT_DIR set by harness)"; else before=$(cat "$W/.git")
-$K proto evil rw 'echo "gitdir: /tmp/x" > /work/.git 2>&1; rm -f /work/.git 2>&1; mv /work/.git /work/g 2>&1; echo done'
-if [ "$(cat "$W/.git")" = "$before" ]; then res A2 "BLOCKED (ro bind on file; rm/mv EBUSY)"; else res A2 "NOT BLOCKED"; fi; fi
+a2_mode=$($K mode 2>/dev/null || true)
+if [ "$a2_mode" != pointer ] && [ "$a2_mode" != env ]; then res A2 "NOT BLOCKED (mode=${a2_mode:-empty})"
+elif [ "$a2_mode" = env ]; then res A2 "N/A: env fallback mode, no pointer file (GIT_DIR set by harness)"; else before=$(cat "$W/.git")
+a2_rc=0
+a2_out=$($K proto evil rw 'echo "gitdir: /tmp/x" > /work/.git 2>&1; rm -f /work/.git 2>&1; mv /work/.git /work/g 2>&1; echo done') || a2_rc=$?
+if [ "$a2_rc" -eq 0 ] && printf '%s\n' "$a2_out" | grep -q '^done$' && [ "$(cat "$W/.git")" = "$before" ]; then res A2 "BLOCKED (ro bind on file; rm/mv EBUSY)"; else res A2 "NOT BLOCKED (rc=$a2_rc)"; fi; fi
 
 echo "### A3 hooks + core.fsmonitor in shadow config"; fresh; rm -f "$P"/PWNED-*
 HOSTMARK="$P/PWNED-HOST"
-$K proto evil rw "git config core.fsmonitor 'touch /bundles/RAN-IN-EXPORT-CONTAINER; touch $HOSTMARK-fsmon; false' && git config core.hooksPath /shadow/task-1.git/hooks && for h in pre-commit post-commit post-checkout reference-transaction pre-auto-gc; do printf '#!/bin/sh\ntouch $HOSTMARK-%s 2>/dev/null; touch /work/.hookran-%s\n' \$h \$h > /shadow/task-1.git/hooks/\$h; chmod +x /shadow/task-1.git/hooks/\$h; done; git config alias.bundle '!touch $HOSTMARK-alias'; git config core.pager 'touch $HOSTMARK-pager'; echo x > a3.txt; git add a3.txt; git commit -qm a3; ls -a /work | grep hookran"
+a3_rc=0
+a3_out=$($K proto evil rw "git config core.fsmonitor 'touch /bundles/RAN-IN-EXPORT-CONTAINER; touch $HOSTMARK-fsmon; false' && git config core.hooksPath /shadow/task-1.git/hooks && for h in pre-commit post-commit post-checkout reference-transaction pre-auto-gc; do printf '#!/bin/sh\ntouch $HOSTMARK-%s 2>/dev/null; touch /work/.hookran-%s\n' \$h \$h > /shadow/task-1.git/hooks/\$h; chmod +x /shadow/task-1.git/hooks/\$h; done; git config alias.bundle '!touch $HOSTMARK-alias'; git config core.pager 'touch $HOSTMARK-pager'; echo x > a3.txt; git add a3.txt; git commit -qm a3; ls -a /work | grep hookran") || a3_rc=$?
 $K export; ls "$P/bundles"; $K gate; $K push-stub
-if ls "$P"/PWNED-* 2>/dev/null; then res A3 "NOT BLOCKED (host marker exists)"; else res A3 "BLOCKED: on host (no PWNED-HOST* marker after export+gate+push-stub; hooks only ran inside agent container)"; fi
+if [ "$a3_rc" -eq 0 ] && printf '%s\n' "$a3_out" | grep -q hookran && ! ls "$P"/PWNED-* >/dev/null 2>&1; then res A3 "BLOCKED: on host (no PWNED-HOST* marker after export+gate+push-stub; hooks only ran inside agent container)"; else res A3 "NOT BLOCKED (rc=$a3_rc)"; fi
 
 echo "### A4 commit touching .github/"; fresh
 $K proto evil rw 'echo evil >> .github/ci.yml && git commit -qam a4'; $K export >/dev/null; gate_expect_fail A4 'forbidden path'
@@ -226,9 +231,10 @@ $D run --rm --network none --user "$(id -u):$(id -g)" -v "$R/.git/objects:/base/
 gate_expect_fail A8b 'bundle base|merge-base'
 
 echo "### A9 reviewer role commits (ro mounts)"; fresh; before=$(cd "$S" && find . -type f | sort | fingerprint)
-$K proto reviewer ro 'cat app.txt; echo r > review.txt 2>&1; git commit --allow-empty -qm "reviewer" 2>&1; git update-ref refs/heads/task-1 HEAD~0 2>&1; mkdir -p /tmp/report && echo "finding: ok" > /tmp/report/r.md && echo wrote-tmp-only'
+a9_rc=0
+a9_out=$($K proto reviewer ro 'cat app.txt; echo r > review.txt 2>&1; git commit --allow-empty -qm "reviewer" 2>&1; git update-ref refs/heads/task-1 HEAD~0 2>&1; mkdir -p /tmp/report && echo "finding: ok" > /tmp/report/r.md && echo wrote-tmp-only') || a9_rc=$?
 after=$(cd "$S" && find . -type f | sort | fingerprint)
-if [ "$before" = "$after" ] && [ ! -e "$W/review.txt" ]; then res A9 "BLOCKED (work+shadow ro; no change in shadow)"; else res A9 "NOT BLOCKED"; fi
+if [ "$a9_rc" -eq 0 ] && printf '%s\n' "$a9_out" | grep -q '^wrote-tmp-only$' && [ "$before" = "$after" ] && [ ! -e "$W/review.txt" ]; then res A9 "BLOCKED (work+shadow ro; no change in shadow)"; else res A9 "NOT BLOCKED (rc=$a9_rc)"; fi
 
 echo "### A10 gc in repo while task active"; fresh
 (cd "$R" && git checkout -qb side && echo s > s && git add s && git -c user.name=h -c user.email=h@x commit -qm side && git checkout -q main)
@@ -249,7 +255,8 @@ $K set-main "$OLD"; rb=$?; echo "  rc=$rb main=$(git -C "$R" rev-parse --short m
 (cd "$R" && git -c user.name=h -c user.email=h@x commit -q --allow-empty -m v3); FF=$(git -C "$R" rev-parse main); git -C "$R" update-ref refs/heads/main "$NEW"
 $K set-main "$FF"; echo "  ff rc=$?"
 $K cleanup >/dev/null; $K set-main "$OLD"; echo "  backwards with no task: rc=$?"
-if [ $rb = 3 ]; then res A10b "BLOCKED (non-ff main refused while task active; ff and no-task allowed)"; else res A10b "NOT BLOCKED"; fi
+if [ ! -f "$P/task-1.mode" ]; then res A10b "NOT BLOCKED (rc=$rb no-mode)"
+elif [ $rb = 3 ]; then res A10b "BLOCKED (non-ff main refused while task active; ff and no-task allowed)"; else res A10b "NOT BLOCKED (rc=$rb)"; fi
 
 hostile_prepare() {
   hostile_second=$(mktemp -d)
@@ -302,7 +309,7 @@ if [ "$a10c_gc" -eq 0 ] && [ "$a10c_prune" -eq 0 ] && [ ! -e "$hostile_marker" ]
   && [ "$right_loose_after" -lt "$right_loose_before" ] && [ "$second_loose_before" = "$second_loose_after" ]; then
   res A10c "BLOCKED (gc and prune used the task repository and ran no hook)"
 else
-  res A10c "NOT BLOCKED"
+  res A10c "NOT BLOCKED (gc=$a10c_gc prune=$a10c_prune)"
 fi
 hostile_clear
 echo "### A10d set-main keeps the caller git environment out"
@@ -321,7 +328,7 @@ second_main_after=$(git -C "$hostile_second" rev-parse main)
 if [ "$a10d_rc" -eq 0 ] && [ "$a10d_got" = "$a10d_new" ] && [ "$second_main_before" = "$second_main_after" ] && [ ! -e "$hostile_marker" ]; then
   res A10d "BLOCKED (set-main moved the task repository only)"
 else
-  res A10d "NOT BLOCKED"
+  res A10d "NOT BLOCKED (rc=$a10d_rc)"
 fi
 hostile_clear
 echo "### A10e setup and gate read the task repository main"
@@ -450,8 +457,10 @@ $K export >/dev/null
 gate_expect_fail A18c 'forbidden path'
 echo "### A19 shadow config replaced by a symlink to a host file"; fresh
 echo victim > "$P/victim"
-$K proto evil rw "rm /shadow/task-1.git/config && ln -s '$P/victim' /shadow/task-1.git/config && echo planted" ; $K reset-shadow 2>&1 | tail -1
-if [ "$(cat "$P/victim")" = victim ] && [ ! -L "$P/shadow/task-1.git/config" ]; then res A19 "BLOCKED (reset_shadow unlinks before writing; host file untouched)"; else res A19 "NOT BLOCKED (victim: $(head -1 "$P/victim"))"; fi
+a19_rc=0
+a19_out=$($K proto evil rw "rm /shadow/task-1.git/config && ln -s '$P/victim' /shadow/task-1.git/config && echo planted") || a19_rc=$?
+$K reset-shadow >/dev/null 2>&1 || true
+if [ "$a19_rc" -eq 0 ] && printf '%s\n' "$a19_out" | grep -q '^planted$' && [ "$(cat "$P/victim")" = victim ] && [ ! -L "$P/shadow/task-1.git/config" ]; then res A19 "BLOCKED (reset_shadow unlinks before writing; host file untouched)"; else res A19 "NOT BLOCKED (rc=$a19_rc)"; fi
 echo "### A19b shadow objects/info replaced by a symlink to a host dir"; fresh
 mkdir -p "$P/victimdir"
 $K proto evil rw "rm -rf /shadow/task-1.git/objects/info && ln -s '$P/victimdir' /shadow/task-1.git/objects/info && echo planted"; out=$($K reset-shadow 2>&1); rc=$?; echo "$out" | tail -1
@@ -476,6 +485,12 @@ label_of() {
 }
 cmd=\$1
 shift
+scoped=0
+if [ "\$cmd" = container ]; then
+  scoped=1
+  cmd=\$1
+  shift
+fi
 case "\$cmd" in
   info|version)
     [ -f "\$STATE/down" ] && exit 1
@@ -508,7 +523,11 @@ case "\$cmd" in
     phase=\$(cat "\$STATE/phase" 2>/dev/null || echo absent)
     name=\$(last_arg "\$@")
     if [ "\$phase" != running ]; then
-      printf 'Error: No such container: %s\n' "\$name" >&2
+      if [ "\$scoped" = 1 ]; then
+        printf 'Error response from daemon: No such container: %s\n' "\$name" >&2
+      else
+        printf 'Error: No such object: %s\n' "\$name" >&2
+      fi
       exit 1
     fi
     printf '%s /%s running true\n' "\$(cat "\$STATE/cid")" "\$name"
@@ -557,7 +576,13 @@ a20_wait_phase() {
 }
 echo "### A20b nested .git moved out after role commands"
 a20b_ok=1
-a20b_miss() { a20b_ok=0; printf '  a20b miss %s %s\n' "$1" "$2"; }
+a20b_why=
+a20b_miss() {
+  a20b_ok=0
+  bit=$(printf '%s' "$2" | tr -cd ' -~' | cut -c1-48)
+  a20b_why="${a20b_why} ${1}=${bit}"
+  printf '  a20b miss %s %s\n' "$1" "$2"
+}
 fresh
 a20b_rc=0
 a20b_out=$($K role developer 'mkdir -p src/sub/.git src/SUB/.GIT && echo x > src/sub/.git/config && echo y > src/SUB/.GIT/config && exit 1' 2>&1) || a20b_rc=$?
@@ -666,7 +691,7 @@ a20b_live b
 if [ "$a20b_ok" -eq 1 ]; then
   res A20b "BLOCKED (nested git moved, odd names kept, and a live container is stopped before any change)"
 else
-  res A20b "NOT BLOCKED"
+  res A20b "NOT BLOCKED ($(printf '%s' "${a20b_why# }" | cut -c1-340))"
 fi
 echo "### A20c nested git record"
 fresh
@@ -713,7 +738,12 @@ fi
 echo "### A20e leftover container from a killed run"
 a20e_ok=1
 a20e_why=
-a20e_miss() { a20e_ok=0; a20e_why="$a20e_why $1"; printf '  a20e miss %s %s\n' "$1" "$2"; }
+a20e_miss() {
+  a20e_ok=0
+  bit=$(printf '%s' "$2" | tr -cd ' -~' | cut -c1-36)
+  a20e_why="${a20e_why} ${1}=${bit}"
+  printf '  a20e miss %s %s\n' "$1" "$2"
+}
 a20e_arm() {
   local kind=$1 tag=$2 child
   A20E_STATE=$(mktemp -d)
@@ -899,19 +929,30 @@ if "$D" info >/dev/null 2>&1; then
   gr=$(KEEL_ROOT="$groot" TASK=task-1 "$K" container-state 2>/dev/null || true)
   "$K" reset-shadow >/dev/null 2>&1 || true
   gs2=$($K container-state 2>/dev/null || true)
+  grec=$(find "$P/containers/task-1" -name 'keelc-*.rec' 2>/dev/null | head -n 1)
   if [ -n "$gchild" ]; then kill -KILL "$gchild" 2>/dev/null || true; fi
   kill -KILL "$gpid" 2>/dev/null || true
   wait "$gpid" 2>/dev/null || true
-  if [ -z "$ghit" ] || [ "$gs" != running ] || [ "$go" != none ] || [ "$gr" != none ] || [ "$gs2" != none ]; then
-    a20e_miss g "hit=${ghit:-none} state=$gs other=$go root=$gr after=$gs2"
+  if [ -z "$ghit" ] || [ "$gs" != running ] || [ "$go" != none ] || [ "$gr" != none ] || [ "$gs2" != none ] || [ -n "$grec" ]; then
+    a20e_miss g "hit=${ghit:-none} state=$gs other=$go root=$gr after=$gs2 rec=${grec:-none}"
+  fi
+  hrc=0
+  "$K" role developer 'echo ROLE-DONE' >"$gstate/h.out" 2>&1 || hrc=$?
+  hrec=$(find "$P/containers/task-1" -name 'keelc-*.rec' 2>/dev/null | head -n 1)
+  hs=$($K container-state 2>/dev/null || true)
+  h2rc=0
+  "$K" reset-shadow >"$gstate/h2.out" 2>&1 || h2rc=$?
+  if [ "$hrc" -ne 0 ] || [ -n "$hrec" ] || [ "$hs" != none ] || [ "$h2rc" -ne 0 ] || ! grep -q 'shadow reset' "$gstate/h2.out" || ! grep -q ROLE-DONE "$gstate/h.out"; then
+    a20e_miss h "rc=$hrc state=${hs:-empty} next=$h2rc"
   fi
 else
   a20e_miss g "not run"
+  a20e_miss h "not run"
 fi
 if [ "$a20e_ok" -eq 1 ]; then
   res A20e "BLOCKED (leftover container stopped or the command refused)"
 else
-  res A20e "NOT BLOCKED (${a20e_why# })"
+  res A20e "NOT BLOCKED ($(printf '%s' "${a20e_why# }" | cut -c1-340))"
 fi
 echo "### A21 agent rewrites test.sh to always pass and breaks the product"; fresh
 $K proto evil rw 'printf "#!/bin/sh\necho TESTS-OK\n" > test.sh && echo broken > app.txt && git commit -qam a21'; $K export >/dev/null; gate_expect_fail A21 'tests \(main:'
@@ -1021,8 +1062,12 @@ $K proto evil rw 'printf "%s\n" "ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE" > lea
 $K export >/dev/null
 gate_expect_fail SEC-05 'secret'
 echo "### N1 network from agent container"; fresh
-out=$($K proto net rw 'ls /sys/class/net | tr "\n" " "; echo; wget -q -T 5 -O- http://1.1.1.1 >/dev/null 2>&1 && echo NET-OK; nslookup github.com >/dev/null 2>&1 && echo DNS-OK; true'); echo "$out"
-if echo "$out" | grep -qE 'NET-OK|DNS-OK'; then res N1 "NOT BLOCKED"; else res N1 "BLOCKED (only $(echo "$out" | sed -n 2p)interfaces; no HTTP, no DNS)"; fi
+n1_rc=0
+out=$($K proto net rw 'ls /sys/class/net | tr "\n" " "; echo; wget -q -T 5 -O- http://1.1.1.1 >/dev/null 2>&1 && echo NET-OK; nslookup github.com >/dev/null 2>&1 && echo DNS-OK; true') || n1_rc=$?
+echo "$out"
+if [ "$n1_rc" -ne 0 ] || ! printf '%s\n' "$out" | grep -qw lo; then res N1 "NOT BLOCKED (rc=$n1_rc)"
+elif echo "$out" | grep -qE 'NET-OK|DNS-OK'; then res N1 "NOT BLOCKED"
+else res N1 "BLOCKED (only lo interfaces; no HTTP, no DNS)"; fi
 echo "### N2 host token does not leak into containers"; fresh
 out=$(GH_TOKEN=fake-doctor-canary GITHUB_TOKEN=fake-doctor-canary BOT_GH_TOKEN=fake-doctor-canary $K proto tok rw 'env | grep -cE "^(GH_|GITHUB_|BOT_GH_TOKEN)" ; grep -rl fake-doctor-canary /proc/1/environ 2>/dev/null | wc -l'); echo "$out"
 if [ "$(echo "$out" | sed -n 2p)" = 0 ] && [ "$(echo "$out" | sed -n 3p)" = 0 ]; then res N2 "BLOCKED (token vars set on host are absent in container)"; else res N2 "NOT BLOCKED"; fi
