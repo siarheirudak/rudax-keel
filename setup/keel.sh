@@ -119,6 +119,7 @@ crun(){
   else
     harden=("${HARDEN[@]}")
   fi
+  # shellcheck disable=SC2086  # DOCKER may hold two words (for example sudo docker); splitting it is intended
   docker_cli $DOCKER run "${harden[@]}" "${GITENV[@]}" "$@"
 }
 KEEL_CMD=${1:-}
@@ -264,6 +265,7 @@ setup) launch_guard; M=$(hgit -C "$R" rev-parse main 2>/dev/null) || M=; keel_re
   fi
   [ $md = env ] && rm -f "$W/.git"      # env mode: no pointer file at all
   echo $md > "$P/$T.mode"; work_mounts rw
+  # shellcheck disable=SC2016  # $1 and $2 expand inside the container, passed as arguments, never interpolated
   crun -v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c \
    'git update-ref refs/heads/"$1" "$2" && git symbolic-ref HEAD refs/heads/"$1" && git checkout -q -f "$1" && git log --oneline -1' \
    _ "$T" "$M" \
@@ -285,6 +287,7 @@ proto) launch_guard; shift; name=$1 m=$2; shift 2; KEEL_ROLE_NAME=$name; reset_s
       args+=("$a")
     done
     launch_guard
+    # shellcheck disable=SC2086  # DOCKER may hold two words (for example sudo docker); splitting it is intended
     docker_cli $DOCKER run "${args[@]}" "${GITENV[@]}" -v "$R/.git/objects:/base/objects:ro" "${MNT[@]}" -w /work "$IMG" sh -c "$*"
   fi;;
 proto-env) launch_guard; shift; KEEL_ROLE_NAME=proto-env; WE=$P/work/$T-env; mkdir -p "$WE"; reset_shadow
@@ -376,6 +379,7 @@ gate) launch_guard; F=$B/$T.bundle; M=$(hgit -C "$R" rev-parse main 2>/dev/null)
   hgit -C "$G" archive "$I" | tar -x --no-same-owner -C "$TD"
   hgit -C "$G" show "main:$TEST_ENTRY" > "$TE/entry.sh" || { rm -rf "$TD" "$TE"; fail "no $TEST_ENTRY on main"; }
   launch_guard
+  # shellcheck disable=SC2086  # DOCKER may hold two words (for example sudo docker); splitting it is intended
   docker_cli $DOCKER run "${HARDEN[@]}" -e HOME=/tmp -v "$TD:/src:ro" -v "$TE:/keel-entry:ro" -w /src "$IMG" sh /keel-entry/entry.sh || { rm -rf "$TD" "$TE"; fail "tests (main:$TEST_ENTRY)"; }
   rm -rf "$TD" "$TE"; echo "GATE PASS: $(hgit -C "$G" rev-parse "$I") files=$nf lines=$lines (objects held in $G)";;
 push-stub) I=$(hgit -C "$G" rev-parse "refs/keel/incoming/$T") || exit 1

@@ -463,6 +463,7 @@ echo "### A20b nested .git moved out after a failed role"
 fresh
 a20b_out=$($K role developer 'mkdir -p src/sub/.git src/SUB/.GIT && echo x > src/sub/.git/config && echo y > src/SUB/.GIT/config && exit 1' 2>&1) || a20b_rc=$?
 a20b_rc=${a20b_rc:-0}
+echo "  a20b out: $a20b_out"
 a20b_q=$(find "$P/quarantine/task-1" -iname config -print 2>/dev/null | wc -l | tr -d ' ')
 if [ "$a20b_rc" -eq 1 ] && [ ! -e "$W/src/sub/.git" ] && [ ! -e "$W/src/SUB/.GIT" ] && [ "$a20b_q" -ge 2 ]; then
   res A20b "BLOCKED (both nested git dirs moved, exit 1)"
@@ -550,28 +551,34 @@ echo "### A23b commit ids checked where they enter"
 a23b_ok=1
 $K init-repo >/dev/null
 a23b_main=$(git -C "$R" rev-parse main)
+a23b_rc=0
 a23b_out=$("$K" set-main main 2>&1) || a23b_rc=$?
-a23b_rc=${a23b_rc:-0}
 if [ "$a23b_rc" -eq 0 ] || ! printf '%s\n' "$a23b_out" | grep -q 'REFUSED: commit id' || [ "$(git -C "$R" rev-parse main)" != "$a23b_main" ]; then
   a23b_ok=0
+  echo "  a23b miss set-main-main rc=$a23b_rc"
 fi
+a23b_rc=0
 a23b_out=$("$K" set-main -x 2>&1) || a23b_rc=$?
-a23b_rc=${a23b_rc:-0}
 if [ "$a23b_rc" -eq 0 ] || ! printf '%s\n' "$a23b_out" | grep -q 'REFUSED: commit id' || [ "$(git -C "$R" rev-parse main)" != "$a23b_main" ]; then
   a23b_ok=0
+  echo "  a23b miss set-main-dash rc=$a23b_rc"
 fi
 mkdir -p "$P"
 printf '%s\n' 'not-a-sha' > "$P/task-1.base"
+a23b_rc=0
 a23b_out=$("$K" export 2>&1) || a23b_rc=$?
-a23b_rc=${a23b_rc:-0}
 if [ "$a23b_rc" -eq 0 ] || ! printf '%s\n' "$a23b_out" | grep -q 'REFUSED: commit id'; then
   a23b_ok=0
+  echo "  a23b miss export-base rc=$a23b_rc"
 fi
+# Earlier cases leave a shadow repo and work tree; remove them so the check proves this setup made none.
+rm -rf "$S" "$W"
 git -C "$R" update-ref -d refs/heads/main
+a23b_rc=0
 a23b_out=$("$K" setup 2>&1) || a23b_rc=$?
-a23b_rc=${a23b_rc:-0}
-if [ "$a23b_rc" -eq 0 ] || ! printf '%s\n' "$a23b_out" | grep -q 'REFUSED: commit id' || [ -d "$P/shadow/task-1.git" ]; then
+if [ "$a23b_rc" -eq 0 ] || ! printf '%s\n' "$a23b_out" | grep -q 'REFUSED: commit id' || [ -e "$S" ] || [ -e "$W/.git" ]; then
   a23b_ok=0
+  echo "  a23b miss setup-empty-main rc=$a23b_rc"
 fi
 if [ "$a23b_ok" -eq 1 ]; then
   res A23b "BLOCKED (bad base file, set-main argument, and empty main refused)"
