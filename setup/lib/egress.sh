@@ -71,7 +71,6 @@ egress_proxy_up() {
   launch_guard
   if [ "$($DOCKER inspect -f '{{.State.Running}}' "$MOCK_NAME" 2>/dev/null || echo false)" != true ]; then
     $DOCKER rm -f "$MOCK_NAME" >/dev/null 2>&1 || true
-    # shellcheck disable=SC2086  # DOCKER may hold two words (for example sudo docker); splitting it is intended
     docker_cli $DOCKER run -d --name "$MOCK_NAME" --network "$EGRESS_NET" --network-alias keel-mock --network-alias keel-secret \
       -v "$HERE/lib/mock_model.py:/keel/mock_model.py:ro" \
       keel-proxy python3 /keel/mock_model.py >/dev/null || { egress_refuse developer "" 0 egress_proxy; return 1; }
@@ -83,7 +82,6 @@ egress_proxy_up() {
   fi
   if [ "$proxy_state" != true ]; then
     $DOCKER rm -f "$PROXY_NAME" >/dev/null 2>&1 || true
-    # shellcheck disable=SC2086  # DOCKER may hold two words (for example sudo docker); splitting it is intended
     docker_cli $DOCKER run -d --name "$PROXY_NAME" --network "$EGRESS_NET" --network-alias keel-proxy \
       -e KEEL_ALLOW_FILE=/allow/developer.allow -e KEEL_LOG_ROOT=/keel-log -e KEEL_EGRESS_LOG=/keel-log/egress.jsonl -e KEEL_PROXY_ROLE=developer \
       -v "$HERE/egress/developer.allow:/allow/developer.allow:ro" \
@@ -131,7 +129,6 @@ crun_for() {
     args+=(-e HTTP_PROXY=http://keel-proxy:3128 -e HTTPS_PROXY=http://keel-proxy:3128)
     args+=(-e http_proxy=http://keel-proxy:3128 -e https_proxy=http://keel-proxy:3128)
     launch_guard
-    # shellcheck disable=SC2086  # DOCKER may hold two words (for example sudo docker); splitting it is intended
     docker_cli $DOCKER run "${args[@]}" "${GITENV[@]}" "$@"  # role-env-explicit
     return $?
   fi
@@ -143,6 +140,5 @@ crun_for() {
     args+=("$a")
   done
   launch_guard
-  # shellcheck disable=SC2086  # DOCKER may hold two words (for example sudo docker); splitting it is intended
   docker_cli $DOCKER run "${args[@]}" "${GITENV[@]}" "$@"
 }
