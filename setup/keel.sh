@@ -136,6 +136,20 @@ _keel_held_exec() {
   IFS= read -r _ < "$gate" || true
   # Close the hold descriptor only. A redirection on this exec would stay for the CLI.
   exec 7>&- || true
+  # The held shell becomes the CLI. The pid noted before the release stays the CLI's pid.
+  set -o functrace
+  trap '
+    case "$BASH_COMMAND" in
+      "env -i \"\${acc[@]}\" \"\$@\""|"env -i \"\$@\"")
+        trap - DEBUG
+        set +o functrace
+        if [ "${#acc[@]}" -eq 0 ]; then
+          exec env -i "$@"
+        fi
+        exec env -i "${acc[@]}" "$@"
+        ;;
+    esac
+  ' DEBUG
   _keel_exec_env "$@"
 }
 # shellcheck disable=SC2119
@@ -298,7 +312,7 @@ def chmod_at(dirfd, name, mode):
         err = ctypes.get_errno()
         raise OSError(err, os.strerror(err), name)
 
-def recheck(tree, path):
+def recheck(tree, path, allow_final_link=False):
     tree = os.path.abspath(tree)
     if os.path.islink(tree):
         return False
@@ -312,11 +326,15 @@ def recheck(tree, path):
     cur = tree
     if rel == ".":
         return not os.path.islink(tree)
-    for part in rel.split(os.sep):
+    parts = rel.split(os.sep)
+    for index, part in enumerate(parts):
         if part in ("", ".", ".."):
             return False
         cur = os.path.join(cur, part)
-        if not os.path.lexists(cur) or os.path.islink(cur):
+        if not os.path.lexists(cur):
+            return False
+        final = index == len(parts) - 1
+        if os.path.islink(cur) and not (allow_final_link and final):
             return False
     return True
 
@@ -342,19 +360,25 @@ def move_tree(tree, dest, uid, pointer_b):
                 st = os.stat(name, dir_fd=dirfd, follow_symlinks=False)
             except OSError:
                 fail("scan")
+            if name.lower() == ".git":
+                link = stat.S_ISLNK(st.st_mode)
+                if not recheck(tree, child, allow_final_link=link):
+                    fail("recheck")
+                if st.st_uid != uid:
+                    fail("foreign-owner")
+                if not link:
+                    try:
+                        chmod_at(dirfd, name, st.st_mode | (0o700 if stat.S_ISDIR(st.st_mode) else 0o600))
+                    except OSError:
+                        fail("perm-restore")
+                found.append(child)
+                continue
             if stat.S_ISLNK(st.st_mode):
                 continue
             if not recheck(tree, child):
                 fail("recheck")
             if st.st_uid != uid:
                 fail("foreign-owner")
-            if name.lower() == ".git":
-                try:
-                    chmod_at(dirfd, name, st.st_mode | (0o700 if stat.S_ISDIR(st.st_mode) else 0o600))
-                except OSError:
-                    fail("perm-restore")
-                found.append(child)
-                continue
             if stat.S_ISDIR(st.st_mode):
                 try:
                     chmod_at(dirfd, name, st.st_mode | 0o700)
@@ -416,14 +440,15 @@ def move_tree(tree, dest, uid, pointer_b):
                 data = b""
             if data == pointer_b:
                 continue
-        if not recheck(tree, path):
+        link = os.path.islink(path)
+        if not recheck(tree, path, allow_final_link=link):
             fail("recheck")
         target = os.path.join(dest, rel)
         try:
             os.makedirs(os.path.dirname(target), exist_ok=True)
         except OSError:
             fail("dest")
-        if not recheck(tree, path):
+        if not recheck(tree, path, allow_final_link=link):
             fail("recheck")
         try:
             os.rename(path, target)

@@ -529,6 +529,10 @@ case "\$cmd" in
     log RUN
     label_of "\$@" > "\$STATE/label"
     printf '%s\n' \$\$ > "\$STATE/run.pid"
+    if [ -f "\$STATE/precreate" ]; then
+      i=0
+      while [ "\$i" -lt 400 ] && [ -f "\$STATE/precreate" ]; do i=\$((i+1)); sleep 0.05; done
+    fi
     printf '%s\n' 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef > "\$STATE/cid"
     printf '%s\n' running > "\$STATE/phase"
     if [ -f "\$STATE/hold" ]; then
@@ -652,6 +656,53 @@ $K role developer 'mkdir -p src/locked/.git && echo z > src/locked/.git/config &
 if [ "$a20b_rc" -ne 0 ] || [ -e "$W/src/locked/.git" ] || ! grep -q 'src/locked/.git' "$P/.keel/logs/launch.jsonl"; then
   a20b_miss 4 "rc=$a20b_rc"
 fi
+a20b_link_config() {
+  printf '[core]\n\tfsmonitor = touch %s\n' "$P/a20b-link-mark" > "$P/a20b-link-config"
+}
+a20b_link_plant() {
+  local base=$1 link=$2
+  printf '%s\n' "mkdir -p $base/objects $base/refs && printf 'ref: refs/heads/main\n' > $base/HEAD && cat > $base/config << 'EOF'
+$(cat "$P/a20b-link-config")
+EOF
+chmod 750 $base && chmod 640 $base/config && ln -s crafted $link && exit 0"
+}
+a20b_link_ok() {
+  local tag=$1 dir=$2 name=$3 crafted=$4 rel=$5
+  local marker=$P/a20b-link-mark qlink why=
+  rm -f "$marker"
+  GIT_TERMINAL_PROMPT=0 git -C "$dir" --no-optional-locks status --porcelain >/dev/null 2>&1 || true
+  if [ -e "$marker" ]; then why="${why}mark "; fi
+  if [ -e "$dir/$name" ] || [ -L "$dir/$name" ]; then why="${why}stay "; fi
+  qlink=$(find "$P/quarantine/task-1" -name "$name" -type l 2>/dev/null | head -n 1)
+  if [ ! -L "$qlink" ] || [ "$(readlink "$qlink" 2>/dev/null)" != crafted ]; then why="${why}q "; fi
+  if [ "$(stat -c %a "$crafted" 2>/dev/null || echo x)" != 750 ] || [ "$(stat -c %a "$crafted/config" 2>/dev/null || echo x)" != 640 ]; then why="${why}mode "; fi
+  if ! cmp -s "$crafted/config" "$P/a20b-link-config"; then why="${why}config "; fi
+  if ! grep -q "\"file\":\"$rel\"" "$P/.keel/logs/launch.jsonl"; then why="${why}record "; fi
+  if [ -n "$why" ]; then a20b_miss "$tag" "$why"; fi
+}
+fresh
+a20b_link_config
+a20b_rc=0
+$K role developer "$(a20b_link_plant src/crafted src/.git)" >"$P/a20b-link.out" 2>&1 || a20b_rc=$?
+if [ "$a20b_rc" -ne 0 ]; then a20b_miss link "rc=$a20b_rc"; else a20b_link_ok link "$W/src" .git "$W/src/crafted" src/.git; fi
+rm -rf "$P"
+$K init-repo >/dev/null
+a20b_rc=0
+KEEL_POINTER_MODE='env' $K setup >/dev/null 2>&1 || a20b_rc=$?
+a20b_mode=$($K mode 2>/dev/null || true)
+a20b_link_config
+if [ "$a20b_rc" -ne 0 ] || [ "$a20b_mode" != env ]; then
+  a20b_miss envlink "rc=$a20b_rc mode=${a20b_mode:-empty}"
+else
+  a20b_rc=0
+  $K proto evil rw "$(a20b_link_plant crafted .git)" >"$P/a20b-envlink.out" 2>&1 || a20b_rc=$?
+  if [ "$a20b_rc" -ne 0 ]; then a20b_miss envlink "rc=$a20b_rc"; else a20b_link_ok envlink "$W" .git "$W/crafted" .git; fi
+fi
+fresh
+a20b_link_config
+a20b_rc=0
+$K role developer "$(a20b_link_plant src/crafted src/.GIT)" >"$P/a20b-caselink.out" 2>&1 || a20b_rc=$?
+if [ "$a20b_rc" -ne 0 ]; then a20b_miss caselink "rc=$a20b_rc"; else a20b_link_ok caselink "$W/src" .GIT "$W/src/crafted" src/.GIT; fi
 fresh
 rm -rf "$P/quarantine"
 printf 'x\n' > "$P/quarantine"
@@ -801,14 +852,19 @@ a20e_arm() {
   A20E_REC=$(a20_wait_record || true)
   a20_wait_phase "$A20E_STATE" || true
   child=$(ps -o pid=,cmd= --ppid "$A20E_PID" 2>/dev/null | awk '/keel/ {print $1; exit}')
+  rec_pid=$(sed -n 's/^pid=//p' "$A20E_REC" | head -n 1)
   if [ -z "$A20E_REC" ] || [ -z "$child" ]; then
     a20e_miss "$tag" "record=${A20E_REC:-none} child=${child:-none}"
     kill -KILL "$A20E_PID" 2>/dev/null || true
     wait "$A20E_PID" 2>/dev/null || true
     return 1
   fi
-  kill -KILL "$child" 2>/dev/null || true
-  kill -KILL "$A20E_PID" 2>/dev/null || true
+  if [ -n "$child" ] && [ "$child" != "$rec_pid" ]; then
+    kill -KILL "$child" 2>/dev/null || true
+  fi
+  if [ "$A20E_PID" != "$rec_pid" ]; then
+    kill -KILL "$A20E_PID" 2>/dev/null || true
+  fi
   wait "$A20E_PID" 2>/dev/null || true
   if [ ! -f "$A20E_REC" ]; then
     a20e_miss "$tag" "record lost"
@@ -946,6 +1002,59 @@ if a20e_arm proto f; then
     fi
   done
 fi
+a20e_cli() {
+  local state rec cli_pid rec_pid parent i rc=0
+  state=$(mktemp -d)
+  a20_write_cli "$state" "$state/docker"
+  : > "$state/precreate"
+  fresh
+  set -m
+  DOCKER="$state/docker" "$K" role critic 'echo live' >"$state/keel.out" 2>&1 &
+  parent=$!
+  set +m
+  rec=
+  cli_pid=
+  i=0
+  while [ "$i" -lt 200 ]; do
+    rec=$(a20_record || true)
+    cli_pid=$(cat "$state/run.pid" 2>/dev/null || true)
+    if [ -n "$rec" ] && [ -n "$cli_pid" ]; then
+      rec_pid=$(sed -n 's/^pid=//p' "$rec" | head -n 1)
+      if [ "$rec_pid" = "$cli_pid" ]; then break; fi
+    fi
+    i=$((i + 1))
+    sleep 0.05
+  done
+  if [ -z "$rec" ] || [ "$rec_pid" != "$cli_pid" ] || ! kill -0 "$cli_pid" 2>/dev/null; then
+    a20e_miss cli "record=${rec:-none} cli=${cli_pid:-none}"
+    rm -f "$state/precreate"
+    kill -KILL "$parent" 2>/dev/null || true
+    wait "$parent" 2>/dev/null || true
+    return 0
+  fi
+  child=$(ps -o pid=,cmd= --ppid "$parent" 2>/dev/null | awk '/keel/ {print $1; exit}')
+  if [ -n "$child" ] && [ "$child" != "$cli_pid" ]; then kill -KILL "$child" 2>/dev/null || true; fi
+  if [ "$parent" != "$cli_pid" ]; then kill -KILL "$parent" 2>/dev/null || true; fi
+  wait "$parent" 2>/dev/null || true
+  if ! kill -0 "$cli_pid" 2>/dev/null; then
+    a20e_miss cli "cli-died"
+    rm -f "$state/precreate"
+    return 0
+  fi
+  DOCKER="$state/docker" "$K" reset-shadow >"$state/next.out" 2>&1 || rc=$?
+  if [ "$rc" -ne 91 ] || [ ! -f "$rec" ] || grep -q 'container state stopped' "$state/next.out"; then
+    a20e_miss cli "rc=$rc rec=$([ -f "$rec" ] && echo stay || echo gone)"
+  fi
+  rm -f "$state/precreate"
+  i=0
+  while [ "$i" -lt 200 ] && [ -f "$state/run.pid" ]; do i=$((i + 1)); sleep 0.05; done
+  rc=0
+  DOCKER="$state/docker" "$K" reset-shadow >"$state/after.out" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ] || [ -f "$rec" ] || ! grep -q 'shadow reset' "$state/after.out"; then
+    a20e_miss cli "after=$rc"
+  fi
+}
+a20e_cli
 if "$D" info >/dev/null 2>&1; then
   fresh
   gstate=$(mktemp -d)
@@ -955,25 +1064,46 @@ if "$D" info >/dev/null 2>&1; then
   set +m
   gchild=$(ps -o pid=,cmd= --ppid "$gpid" 2>/dev/null | awk '/keel/ {print $1; exit}')
   gi=0
+  grec=
   ghit=
   while [ "$gi" -lt 200 ]; do
-    ghit=$("$D" ps -a --filter label=keel.identity --format '{{.Names}}' 2>/dev/null | grep keelc || true)
-    if [ -n "$ghit" ]; then break; fi
+    grec=$(find "$P/containers/task-1" -name 'keelc-*.rec' 2>/dev/null | head -n 1)
+    gval=
+    if [ -n "$grec" ]; then
+      gval=$(sed -n 's/^label=keel.identity=//p' "$grec" | head -n 1)
+    fi
+    if [ -n "$gval" ]; then
+      ghit=$("$D" ps -a --filter "label=keel.identity=$gval" --format '{{.ID}}' 2>/dev/null | head -n 1 || true)
+    fi
+    if [ -n "$grec" ] && [ -n "$ghit" ]; then break; fi
     gi=$((gi + 1))
     sleep 0.05
   done
-  gs=$($K container-state 2>/dev/null || true)
+  if [ -z "$grec" ] || [ -z "$ghit" ]; then
+    a20e_miss g "hit=${ghit:-none} rec=${grec:-none}"
+    gpid_rec=
+    gcmd=
+    glookup=
+    gs=
+  else
+  gpid_rec=$(sed -n 's/^pid=//p' "$grec" | head -n 1)
+  gcmd=$(tr '\0' ' ' < "/proc/$gpid_rec/cmdline" 2>/dev/null || true)
+  mv "$grec" "$grec.aside"
+  glookup=$($K container-state 2>/dev/null || true)
+  mv "$grec.aside" "$grec"
+  gs=$glookup
+  fi
   go=$(TASK=other-task "$K" container-state 2>/dev/null || true)
   groot=$(mktemp -d)
   gr=$(KEEL_ROOT="$groot" TASK=task-1 "$K" container-state 2>/dev/null || true)
   "$K" reset-shadow >/dev/null 2>&1 || true
   gs2=$($K container-state 2>/dev/null || true)
   grec=$(find "$P/containers/task-1" -name 'keelc-*.rec' 2>/dev/null | head -n 1)
-  if [ -n "$gchild" ]; then kill -KILL "$gchild" 2>/dev/null || true; fi
-  kill -KILL "$gpid" 2>/dev/null || true
+  if [ -n "$gchild" ] && [ "$gchild" != "$gpid_rec" ]; then kill -KILL "$gchild" 2>/dev/null || true; fi
+  if [ "$gpid" != "$gpid_rec" ]; then kill -KILL "$gpid" 2>/dev/null || true; fi
   wait "$gpid" 2>/dev/null || true
-  if [ -z "$ghit" ] || [ "$gs" != running ] || [ "$go" != none ] || [ "$gr" != none ] || [ "$gs2" != none ] || [ -n "$grec" ]; then
-    a20e_miss g "hit=${ghit:-none} state=$gs other=$go root=$gr after=$gs2 rec=${grec:-none}"
+  if [ "$gs" != running ] || [ "$glookup" != running ] || ! printf '%s' "$gcmd" | grep -q 'docker run' || [ "$go" != none ] || [ "$gr" != none ] || [ "$gs2" != none ] || [ -n "$grec" ]; then
+    a20e_miss g "state=$gs lookup=${glookup:-empty} cmd=${gcmd:-none} other=$go root=$gr after=$gs2 rec=${grec:-none}"
   fi
   hrc=0
   "$K" role developer 'echo ROLE-DONE' >"$gstate/h.out" 2>&1 || hrc=$?
