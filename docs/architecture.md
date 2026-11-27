@@ -2,7 +2,7 @@
 
 This page is the end-to-end picture of rudax-keel. Terms used here are also collected in the [glossary](glossary.md).
 
-**Status of this page.** The chain below is the v1 design. The repository today contains the GitHub rules, the CI checks, and a container harness that can run a shell command as a named role and reject a bad export. It does not run Pi Agent, and it does not run links L0 through L11. [Implementation status](status.md) says which pieces exist.
+**Status of this page.** The chain below is the v1 design. The repository today contains the GitHub rules, the CI checks, and a container harness that can run a shell command as a named role and reject a bad export. It also contains the developer egress proxy, the discoveries filter, the standards generator, and the Pi launch contract. No agent task runs end to end, and it does not run links L0 through L11. [Implementation status](status.md) says which pieces exist.
 
 A **link** is one step of a task. A **task** is one piece of work from the owner’s message to a merged pull request, or to a stop. A **gate** is a host script that returns pass or fail from evidence, not from an agent’s summary.
 
@@ -10,7 +10,7 @@ A **link** is one step of a task. A **task** is one piece of work from the owner
 
 The **reasoning plane** proposes. The **control plane** disposes.
 
-Agents sit in the reasoning plane. Each agent has one job: grill a brief, sketch stubs, write tests, write code, review a diff, or exercise a user interface. They run as Pi Agent inside a container. Pi Agent is the runtime the design names for those roles. It is not vendored here.
+Agents sit in the reasoning plane. Each agent has one job: grill a brief, sketch stubs, write tests, write code, review a diff, or exercise a user interface. Roles run as Pi Agent inside a container. The planned orchestrator runs as Pi on the host. Pi Agent is the runtime the design names for those roles. It is not vendored here.
 
 Host scripts sit in the control plane. They mount files, install dependencies, run tests, measure the diff, open the pull request, and write the log. The **dispatcher**, planned for Step 7 and not built yet, is the host script that owns task state and the L0–L11 transition table. An agent cannot skip a script by saying the step passed. When a script and an agent disagree, the script wins.
 
@@ -46,9 +46,9 @@ The owner’s pauses do not time out. An unanswered question waits until the own
 
 Colour in the diagram:
 
-- Blue — an agent (Pi Agent, in a rootless container, in the design)
+- Blue — a role agent (Pi Agent, in a rootless container, in the design). The L0 orchestrator node is on the host
 - Green — a host script
-- **DISP** — the planned host dispatcher (Step 7), drawn in green: task state, transitions, and the request-file allowlist. Not built yet
+- **DISP** — the planned host dispatcher (Step 7), drawn in green: task state, transitions, and the keel-request allowlist. Not built yet
 - Orange — a decision the owner makes
 - Red — a dossier, the cycle stops
 - Purple — the skills side path, which is not one of the numbered links
@@ -67,7 +67,7 @@ flowchart TD
 
  CHAT["Owner via chat intermediary<br/>or direct Pi terminal"]:::owner
  L0["L0 Grilling<br/>Orchestrator writes the brief<br/>shows size and estimated cost"]:::agent
- DISP["Host dispatcher (planned, Step 7)<br/>task state, transitions,<br/>request-file allowlist"]:::script
+ DISP["Host dispatcher (planned, Step 7)<br/>task state, transitions,<br/>keel-request allowlist"]:::script
  D2{"Owner answers D2<br/>options and a default"}:::owner
  WAIT["Waiting for an answer<br/>no timeout"]:::note
  BRIEF["Brief version 2<br/>shown as a diff"]:::owner
@@ -79,7 +79,7 @@ flowchart TD
  WAIT -.-> D2
  L0 -->|brief is wrong| BRIEF
  BRIEF -->|owner approves| L0
- L0 -->|brief ready; request files| DISP
+ L0 -->|brief ready; keel request| DISP
  DISP -->|launch / gate| L1
 
  SK["Skills side path"]:::skills
@@ -223,7 +223,7 @@ The paragraphs below are the short form. Inputs, outputs, blocks, and retry limi
 
 **Skills** are not a numbered link. A skill is a file of instructions for one role, kept in the project under `.agents/skills/`. The side path runs when a project starts, when the stack changes, when the same pitfall shows up twice, or when the owner asks. Nothing lands in the repo until the owner approves it. A suspicious skill (install commands, network access, secrets, or a way around a gate) needs its own explicit yes, with the offending lines highlighted.
 
-**L0 Grilling.** Planned, not built. The orchestrator (Step 7) turns the owner’s message into a brief: what the task is, a D0 paragraph, a D1 confidence level (not an owner decision), any D2 questions, and a line that says what is out of scope. It also shows size and estimated cost. The owner may raise how deep the rest of the pipeline goes. The orchestrator drops request files; the dispatcher (Step 7) advances the task. The grilling behaviour itself is Step 8.
+**L0 Grilling.** Planned, not built. The orchestrator (Step 7) turns the owner’s message into a brief: what the task is, a D0 paragraph, a D1 confidence level (not an owner decision), any D2 questions, and a line that says what is out of scope. It also shows size and estimated cost. The owner may raise how deep the rest of the pipeline goes. The orchestrator calls the `keel` tool and the dispatcher (Step 7) advances the task. The grilling behaviour itself is Step 8.
 
 **L1 Context packaging.** A script builds the packet of files and notes the next agents will see. Matching and critical notes are included in full. Everything else is an index line. Content fencing (M5) — wrapping packaged text as data so repository sentences are not treated as instructions — is specified and **deferred to the backlog**. Until fences land, packaging still selects what is mounted; agents must treat packaged text as data by role instruction.
 

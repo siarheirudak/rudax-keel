@@ -17,7 +17,7 @@ Implemented in `setup/apply-github-rules.sh`, `setup/verify-github-rules.sh`, an
 - The default Actions token is read-only and cannot approve pull requests.
 - On a public repository, fork workflows wait for approval.
 - Actions are limited to GitHub-owned actions plus the exact pinned `uses:` values already on the default branch.
-- `keel doctor` shows whether the required checks rule is on (GH-01, a warning, never a stop). [GH-01](harness-checks-why.md#gh-01).
+- `bash setup/keel-doctor.sh` shows whether the required checks rule is on (GH-01, a warning, never a stop). `bash setup/keel-doctor.sh --github` runs GH-01 alone. [GH-01](harness-checks-why.md#gh-01).
 
 How to apply them: [GitHub setup](github-setup.md). Why each rule exists: [why.md](why.md).
 
@@ -26,12 +26,12 @@ How to apply them: [GitHub setup](github-setup.md). Why each rule exists: [why.m
 Implemented in `.github/workflows/checks.yml`, `.github/workflows/scope.yml`, and `scripts/`.
 
 - `keel-gate` fails if any other job in the checks workflow failed, was cancelled, or was skipped. The workflow also runs when a pull request is edited, so a base change runs the gate again.
-- A pull request runs the fast harness and does not run mutants. Per-PR mutant selection depends only on the diff. When the diff selects mutants, the gate also fails until a maintainer has a successful `mutate-pr` dispatch on the default branch for that head SHA. That run counts only when its recorded plan contains every mutant the gate requires for the head, including mutants whose definitions the pull request adds or changes. A new commit needs a new run. A diff that selects no mutants does not need one. The daily full run on the default branch is separate. It starts at 18:17 UTC (02:17 WITA).
+- A pull request runs the fast harness and does not run mutants. Per-PR mutant selection depends only on the diff. When the diff selects mutants, the gate also fails until a maintainer has a successful `mutate-pr` dispatch on the default branch for that head SHA. That run counts only when its recorded plan contains every mutant the gate requires for the head, including mutants whose definitions the pull request adds or changes. A new commit needs a new run. A diff that selects no mutants does not need one. The daily full run on the default branch is separate. It starts at 18:17 UTC.
 - When `mutate-pr` or the daily full run builds its mutant plan, the planner first checks every path in the mutant catalog. That means each mutant's target, the targets of its extra edits, and its file list, in both the default branch's catalog and the tested commit's catalog. It refuses any path that is not a plain relative path of ASCII letters, digits, `/`, `.`, `_`, and `-`. That includes a leading or trailing `/`, an empty, `.`, or `..` part, a `.git` part in any case, a part starting with `-`, a path over 1024 bytes, and a part over 255 bytes. For each mutant in the plan, every path its edits touch must be a regular file in the tested commit. A symlink, a submodule, a folder, or a missing file is refused. It checks before it writes any file. On a refusal there is no plan file, no tested tree, and no shard archive. The plan step fails, no shard or grade job runs, and so there is no mutant result for that head. Each failure line starts with `mutants: catalog path` and names the side (`main` or `head`), the route (`target`, `extra`, or `files`), the mutant id, and the rule (`type`, `shape`, or `tree`). A path is shown only when it passes the shape rule. At most 20 lines are listed, followed by a count of the rest. The closing line is `mutants: catalog path check failed and no plan was written`. On success the line starts with `mutants: catalog paths ok` and is followed only by counts. The check covers the plan step only. It does not limit what the tested commit's own tests do when the shard jobs run them. To fix a refusal, correct the catalog entry or the file in the pull request. A pull request that renames a mutated file moves its catalog entries in the same pull request.
 - This repository’s own project checks belong in `project_checks()` inside `scripts/check.sh`. Until some are added, that function prints `no project checks yet` and passes. `bash scripts/check.sh` runs the same checks locally.
 - `scope` fails when one pull request mixes more than one kind (workflow, process, code), when a workflow pull request lacks the `workflow` label or another pull request carries it, and when the base is not the default branch. The job does not check out the pull request. Its token can only read.
 - On a pull request, keel-gate takes its verdict scripts (`scripts/check-gate.sh`, `scripts/gate-jobs.txt`, and `setup/tests/harness/`, including `mutant-result.py`) from the base commit, so a pull request cannot grade itself. The other jobs still test the pull request's own code.
-- Per-PR mutation stays a manual `mutate-pr` dispatch by a maintainer when the diff selects mutants. Each shard job has a 60-minute limit. Automatic per-PR runs are later work.
+- Per-PR mutation stays a manual `mutate-pr` dispatch by a maintainer when the diff selects mutants. Each shard job has a 90-minute limit. Automatic per-PR runs are later work.
 
 ### Isolation harness
 
@@ -44,7 +44,7 @@ Containers start with no network, all capabilities dropped, `no-new-privileges`,
 The host gate rejects a bundle that:
 
 - is missing, too big, or not based on the current default branch
-- contains anything other than the single task branch, a merge commit, or a root commit
+- has more than the single task branch, any other branch, any merge commit, or any root commit
 - touches a forbidden process path, a symlink, a submodule, or a nested `.git`
 - carries a commit identity other than the configured agent identity
 - fails the test entry taken from the default branch, not from the files in the bundle
@@ -53,7 +53,7 @@ The doctor’s levels are in [Security](security.md). ENV-05 is critical. How to
 
 The path checks in this gate are the behaviour the design wants L4, L6, L7, and L10 to share. They live inside `setup/keel.sh` today. They are not a library those links call, because those links do not exist.
 
-`role` and `role-env` mount per-role folder roots from `setup/allow/`, then apply `setup/deny/base` and `.keel/deny.local`. The developer’s `tests/` mount is read-only. The tester is mounted from the commit recorded at setup. Launch decisions are appended under `$KEEL_ROOT/.keel/logs/`. The matrix is in [Roles and visibility](roles.md).
+`role` and `role-env` mount per-role folder roots from `setup/allow/`, then apply `setup/deny/base` and `.keel/deny.local`. The developer’s `tests/` mount is read-only. The tester is mounted from the commit recorded at setup. Launch decisions are appended under `$KEEL_ROOT/.keel/logs/`. The matrix is in [Roles and visibility](roles.md). Content fencing stays on the backlog.
 
 ### Developer egress
 
@@ -99,6 +99,12 @@ A hosted CI runner is often rootful. On that machine ENV-05 fails and `role`, `p
 
 DISK-02 is the soft free-space check. Hard filesystem quotas are optional on the host. There is no separate OS account for secrets in this step. The Chromium helper refuses sandbox-off flags and does not start a browser.
 
+### What a role sees at launch
+
+Implemented in `setup/lib/pi_launch.py`, with the role prompts in `setup/pi/` and the suite `setup/tests/harness/test-step4.sh`.
+
+The Pi launch contract is one append file in the fixed order harness rules, role rules, memory index, passed with `--append-system-prompt`. The pinned package is `@mariozechner/pi-coding-agent@0.73.1` in `setup/docker/keel-pi.Dockerfile`. Doctor rows PI-01 to PI-09 check that launch ([PI-01](harness-checks-why.md#pi-01)). No agent task runs end to end yet.
+
 ## Specified and not built
 
 The v1 build is a sequence of steps. Each one is intended to land as its own pull request, opened by the bot, and merged by the owner. Process-file and skill changes land as separate pull requests labelled `process-files`, after the owner approves them. Step 1's folder mounts, Step 2's developer egress proxy, the runtime boundary, what a role sees at launch, the discoveries filter, and the standards generator are in the harness. The later steps in the table are not started. The Step 7 design is the host orchestrator guard, the `keel` tool, the dispatcher, the model gateway, push, and lifecycle, in [Harness design](harness/README.md).
@@ -107,7 +113,6 @@ The order is the dependency order from the v1 plan. Steps later in the list need
 
 | Step | What it adds | Depends on |
 |---|---|---|
-| 1 | Folder allowlists, unified deny, tester pinned to the setup commit, launch JSONL. Content fencing stays on the backlog | The harness that exists |
 | 3 remainder | A Chromium process running under rootless | The runtime boundary above; the QA step for the browser |
 | 7 | The host dispatcher, the host Pi orchestrator guard with one `keel` tool, and the model gateway (task state, transitions, keys). Process-files pull requests. Grilling behaviour is Step 8 | Step 1 and Step 2 |
 | 8 | L0 grilling, including size and estimated cost | Steps 4 and 7 |

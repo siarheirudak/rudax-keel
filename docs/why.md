@@ -38,7 +38,7 @@ Each log line from the setup scripts links to a section below.
 
 **Rule.** Protection holds only if the coding agent runs where the only GitHub token is the agent GitHub account's token. That means a cloud VM, a separate OS user, or a container. It must not run where the owner GitHub account is logged in, for example a laptop `gh` login as the owner.
 
-**Why.** Any program that can run `gh` and `git` acts as whichever account is already logged in. If that is the owner, the program can merge, push, and change rules as the owner. The v1 pipeline’s agent runtime is Pi Agent inside a container that has no owner token. That runtime is described in [Architecture](architecture.md) and is not built yet. This rule already applies to whatever holds the agent token today.
+**Why.** Any program that can run `gh` and `git` acts as whichever account is already logged in. If that is the owner, the program can merge, push, and change rules as the owner. The v1 pipeline’s agent runtime is Pi Agent inside a container that has no owner token. That runtime is described in [Architecture](architecture.md) and is not built yet. In the planned Step 7 design, role agents run in containers and the orchestrator is stock Pi on the host in the owner's clone, with only the one `keel` tool and no bash, write, or edit tool. The bot token is a private file used only by the planned `keel push`, and a token the owner exports in that terminal stays visible to the orchestrator, so the owner should not export one there. This rule already applies to whatever holds the agent token today.
 
 **If disabled.** The agent acts as the owner GitHub account. The write-only role never comes into play.
 

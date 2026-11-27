@@ -4,7 +4,7 @@ Two records follow a task. One is a short journal the host keeps so the task can
 
 ## The task journal
 
-The journal is a markdown file at `.keel/runs/<task-id>/journal.md`. The host script appends to it after each link. Agents do not append to it.
+The journal is a planned markdown file at `.keel/workspace/tasks/<task-id>/journal.md`. Current code does not write it. The host script appends to it after each link. Agents do not append to it.
 
 Each entry records:
 
@@ -19,7 +19,7 @@ Resume starts at the last entry that passed. When a link is redone, the journal 
 
 The script deletes the journal immediately after the owner merges. A merged task is remembered through the system log and through any discovery the filter accepted, not through the journal.
 
-The directory `.keel/runs/` is not committed. The harness uses it as temporary mount state and removes it when the command exits. The journal file is still not written.
+The directory `.keel/runs/` is not committed. The harness uses it as temporary mount state and removes it when the command exits. The planned journal is not in this directory.
 
 ## Launch decisions
 

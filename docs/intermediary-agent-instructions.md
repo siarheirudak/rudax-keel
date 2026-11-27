@@ -88,5 +88,5 @@ Rules for this checklist:
 ## Notes for harness maintainers
 
 - Safety still rests on: the **owner merges on GitHub**; verbatim D2 relay + verbatim answer logging in the task log and PR envelope; the intermediary cannot change GitHub rules; the per-relay checklist so critical items are not dropped.
-- The owner talks to the orchestrator in a Pi session on the host. An intermediary is optional and relays into that session. The orchestrator uses one `keel` tool. The dispatcher starts role containers.
+- The owner talks to the orchestrator in a Pi session on the host. An intermediary is optional and relays into that session. In the planned Step 7 design, the orchestrator uses one `keel` tool and the dispatcher starts role containers.
 - How the intermediary reaches the Pi session is still to verify.

@@ -12,7 +12,7 @@ Short definitions for this repository. The first time a longer page needs a word
 
 **Pi Agent.** The runtime the v1 design uses. It runs the orchestrator on the host and the other roles in containers. It is not part of this repository.
 
-**Role.** One agent job: orchestrator, researcher, critic, architect, tester, developer, auditor, design reviewer, verifier, or QA.
+**Role.** One agent job: orchestrator, researcher, critic, architect, tester, developer, auditor, skills auditor, design reviewer, verifier, or QA.
 
 **Host script.** An ordinary program on the machine that runs the pipeline. It checks files and commands. It does not accept an agent’s summary as proof.
 
@@ -97,7 +97,7 @@ Short definitions for this repository. The first time a longer page needs a word
 
 ## Memory and release
 
-**Task journal.** `.keel/runs/<task-id>/journal.md`, appended by the host after each link and deleted when the owner merges.
+**Task journal.** Planned, and not written by current code: `.keel/workspace/tasks/<task-id>/journal.md`, appended by the host after each link and deleted when the owner merges.
 
 **Discovery.** A filtered note about a pitfall, kept after the task. Agents propose. A script accepts or discards.
 
