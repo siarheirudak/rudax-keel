@@ -16,6 +16,8 @@ import subprocess
 import sys
 import unicodedata
 
+import secret_names
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 LAUNCHABLE = (
     "orchestrator",
@@ -46,31 +48,6 @@ MODES = {
     "researcher": {"research-stub": "ro", ".agents/skills": "ro"},
 }
 
-SECRET_ENV = (
-    "GH_TOKEN",
-    "GITHUB_TOKEN",
-    "BOT_GH_TOKEN",
-    "GITHUB_PAT",
-    "AWS_SECRET_ACCESS_KEY",
-    "AWS_ACCESS_KEY_ID",
-    "API_KEY",
-    "API_TOKEN",
-    "NPM_TOKEN",
-    "PYPI_TOKEN",
-    "PASSWORD",
-    "OPENAI_API_KEY",
-    "KEEL_SECRET",
-)
-# Exact launch-time names. Not a prefix match. Values are not read.
-MODEL_KEY_ENV = (
-    "ANTHROPIC_API_KEY",
-    "GEMINI_API_KEY",
-    "GOOGLE_API_KEY",
-    "OPENROUTER_API_KEY",
-)
-LAUNCH_DENY_ENV = SECRET_ENV + tuple(name for name in MODEL_KEY_ENV if name not in SECRET_ENV)
-
-
 def discovery_memory_mode():
     return "ro"  # discovery-memory-ro
 
@@ -97,6 +74,9 @@ ASSIGN_RE = re.compile(
     r"(?i)(?<![A-Za-z0-9_])(?:password|passwd|pwd|api_key|token)\s*[:=]\s*\S+"
 )
 UNKNOWN_RE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9+/_\-]{32,}={0,2}(?![A-Za-z0-9])")
+_NAME_ASSIGN_RE = re.compile(
+    r"(?:^|(?<=\s))([A-Za-z_][A-Za-z0-9_]*)[ \t]*[:=][ \t]*(\S+)"
+)
 GLOB_CHARS = set("*?[]")
 PLACEHOLDER = "[REDACTED:{0}]"
 TYPES = ("token", "key", "password", "env", "unknown")
@@ -384,6 +364,21 @@ def scan_patterns(text):
     return _scan_patterns(text)  # pattern-scan
 
 
+def _name_assign_spans(text):
+    found = []
+    if not isinstance(text, str) or text == "":
+        return found
+    for match in _NAME_ASSIGN_RE.finditer(text):
+        if not secret_names.is_secret_name(match.group(1)):
+            continue
+        found.append((match.start(1), match.end(2), "env"))
+    return found
+
+
+def name_assign_spans(text):
+    return _name_assign_spans(text)  # name-assign-redact
+
+
 def _replace_span(text, start, end, kind, count):
     return text[:start] + PLACEHOLDER.format(kind), text[end:], count + 1
 
@@ -407,6 +402,8 @@ def _redact_impl(text, env):
                 best = (start, end, kind)
 
         for start, end, kind in scan_patterns(pending):
+            consider(start, end, kind)
+        for start, end, kind in name_assign_spans(pending):
             consider(start, end, kind)
         if best is None:
             done += pending
@@ -1047,18 +1044,40 @@ def main(argv):
             return 1
         sys.stdout.write("REFUSE\t{0}\t{1}\t{2}\n".format(err.code, err.file, err.line))
         return 1
-    if cmd == "secret-env":
-        names = [name for name in LAUNCH_DENY_ENV if name in os.environ]
-        if not names:
-            return 0
-        err = PolicyError("secret_env", "environment", 0, ",".join(names))
+    if cmd == "quarantine-fail":
+        record = {
+            "ts": now_ts(),
+            "event": "quarantine_fail",
+            "role": args.role,
+            "reason_code": args.code or "quarantine",
+            "file": args.file,
+            "line": 0,
+            "detail": args.task,
+            "mounted_roots": [],
+            "denied_withheld": [],
+        }
         try:
-            log_refuse(args.keel, args.role, err, os.environ)
+            write_log(args.keel, record, {})
         except PolicyError:
-            sys.stdout.write("REFUSE\tsecret_env\tenvironment\t0\n")
             return 1
-        sys.stdout.write("REFUSE\tsecret_env\tenvironment\t0\n")
-        return 1
+        return 0
+    if cmd == "nested-git":
+        record = {
+            "ts": now_ts(),
+            "event": "nested_git",
+            "role": args.role,
+            "reason_code": "NESTED_GIT",
+            "file": args.file,
+            "line": 0,
+            "detail": args.task,
+            "mounted_roots": [],
+            "denied_withheld": [],
+        }
+        try:
+            write_log(args.keel, record, {})
+        except PolicyError:
+            return 1
+        return 0
     if cmd == "mounts":
         return emit_mounts(args, os.environ)
     sys.stderr.write("unknown command\n")

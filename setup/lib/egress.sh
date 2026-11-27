@@ -1,5 +1,8 @@
 # Egress network policy. Sourced by setup/keel.sh.
 # shellcheck shell=bash
+# keel.sh fills these before a tracked launch. Empty until then.
+keel_arm_name=${keel_arm_name:-}
+keel_arm_label=${keel_arm_label:-}
 net_internal=true  # egress-internal
 dns_forward=off  # dns-forward-off
 ipv6_off=1  # egress-ipv6-off
@@ -71,7 +74,8 @@ egress_proxy_up() {
   launch_guard
   if [ "$($DOCKER inspect -f '{{.State.Running}}' "$MOCK_NAME" 2>/dev/null || echo false)" != true ]; then
     $DOCKER rm -f "$MOCK_NAME" >/dev/null 2>&1 || true
-    $DOCKER run -d --name "$MOCK_NAME" --network "$EGRESS_NET" --network-alias keel-mock --network-alias keel-secret \
+    # shellcheck disable=SC2086  # a two-word container command is a supported form, so this stays split
+    docker_cli $DOCKER run -d --name "$MOCK_NAME" --network "$EGRESS_NET" --network-alias keel-mock --network-alias keel-secret \
       -v "$HERE/lib/mock_model.py:/keel/mock_model.py:ro" \
       keel-proxy python3 /keel/mock_model.py >/dev/null || { egress_refuse developer "" 0 egress_proxy; return 1; }
   fi
@@ -82,7 +86,8 @@ egress_proxy_up() {
   fi
   if [ "$proxy_state" != true ]; then
     $DOCKER rm -f "$PROXY_NAME" >/dev/null 2>&1 || true
-    $DOCKER run -d --name "$PROXY_NAME" --network "$EGRESS_NET" --network-alias keel-proxy \
+    # shellcheck disable=SC2086  # a two-word container command is a supported form, so this stays split
+    docker_cli $DOCKER run -d --name "$PROXY_NAME" --network "$EGRESS_NET" --network-alias keel-proxy \
       -e KEEL_ALLOW_FILE=/allow/developer.allow -e KEEL_LOG_ROOT=/keel-log -e KEEL_EGRESS_LOG=/keel-log/egress.jsonl -e KEEL_PROXY_ROLE=developer \
       -v "$HERE/egress/developer.allow:/allow/developer.allow:ro" \
       -v "$HERE/lib/egress.py:/keel/egress.py:ro" \
@@ -104,6 +109,7 @@ crun_for() {
   local mode
   mode=$(role_network "$role")
   if [ "$mode" = none ]; then
+    keel_track_begin || return $?
     crun "$@"
     return $?
   fi
@@ -128,8 +134,13 @@ crun_for() {
     fi
     args+=(-e HTTP_PROXY=http://keel-proxy:3128 -e HTTPS_PROXY=http://keel-proxy:3128)
     args+=(-e http_proxy=http://keel-proxy:3128 -e https_proxy=http://keel-proxy:3128)
+    keel_track_begin || return $?
+    if [ -n "$keel_arm_name" ]; then
+      args+=(--name "$keel_arm_name" --label "$keel_arm_label")
+    fi
     launch_guard
-    $DOCKER run "${args[@]}" "${GITENV[@]}" "$@"  # role-env-explicit
+    # shellcheck disable=SC2086  # a two-word container command is a supported form, so this stays split
+    docker_cli $DOCKER run "${args[@]}" "${GITENV[@]}" "$@"  # role-env-explicit
     return $?
   fi
   # open: default bridge, no explicit network (mutant)
@@ -137,8 +148,13 @@ crun_for() {
   for a in "${HARDEN[@]}"; do
     if [ "$skip" = 1 ]; then skip=0; continue; fi
     if [ "$a" = "--network" ]; then skip=1; continue; fi
-    args+=("$a")
+      args+=("$a")
   done
+  keel_track_begin || return $?
+  if [ -n "$keel_arm_name" ]; then
+    args+=(--name "$keel_arm_name" --label "$keel_arm_label")
+  fi
   launch_guard
-  $DOCKER run "${args[@]}" "${GITENV[@]}" "$@"
+  # shellcheck disable=SC2086  # a two-word container command is a supported form, so this stays split
+  docker_cli $DOCKER run "${args[@]}" "${GITENV[@]}" "$@"
 }
