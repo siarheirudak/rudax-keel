@@ -136,7 +136,7 @@ jobs:
     needs: resolve-plan
     if: needs.resolve-plan.result == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60 # shard-timeout
+    timeout-minutes: 90 # shard-timeout
     permissions: # shard-readonly
       contents: read
     strategy:
