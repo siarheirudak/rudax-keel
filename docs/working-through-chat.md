@@ -15,8 +15,8 @@ The **orchestrator** is that Pi session on the host. It uses one `keel` tool. It
 
 ```
 You → Pi session on the host (one `keel` tool; an intermediary is optional) → host dispatcher → role containers / gates
- ↑ |
- └──────── status, D2 questions, briefs ──┘
+↑                                                                                           |
+└────────────────────────────── status, D2 questions, briefs ───────────────────────────────┘
 ```
 
 The intermediary is **outside** the harness trust boundary. It is a convenience relay. It must not merge pull requests, approve them, or change GitHub rules. Only **you** (the owner) merge on GitHub.
@@ -41,7 +41,7 @@ Chat does not replace GitHub for the final act:
 
 - You read the **envelope** on the pull request.
 - You **merge** when you are satisfied.
-- You create **releases** (tags or the release workflow) when you choose.
+- You create **release tags** by hand when you choose.
 
 The bot account opens pull requests. The intermediary cannot merge for you.
 
@@ -55,9 +55,9 @@ Those instructions state the primary bridge role, require a per-relay checklist 
 
 ## What the orchestrator will and will not do
 
-- Will write the brief, split plans, messages to you, dispatcher request files, and the D1 confidence-notes log; may record decisions into ADR / [Human decisions](owner-decisions.md) and discoveries.
+- Will write the brief, split plans, messages to you, requests through the one `keel` tool, and the D1 confidence-notes log; may record decisions into ADR / [Human decisions](owner-decisions.md) and discoveries.
 - Will not write product code, tests, or process files.
-- Will not launch other containers by itself (it drops request files; the dispatcher launches roles).
+- Will not launch other containers by itself (it calls the `keel` tool; the dispatcher launches roles).
 - May read almost everything (including the D1 log). Will not see secrets or paths in `.keel/deny.local` (for example user/customer data).
 - Must not smuggle packaged text (including test fixtures) into developer requests as instructions. Tests are visible to the developer **read-only**. Honesty relies on L7T mutation and the L8 hardcode checklist item, plus full gate output on FAIL.
 - Will not talk directly to other agents (the dispatcher is the only hop).

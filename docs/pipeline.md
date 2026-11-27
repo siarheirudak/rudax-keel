@@ -12,7 +12,7 @@ Retry limits for the whole chain are collected again at the [end of this page](#
 
 A **return** sends the task back to an earlier link with the failure attached. A return counts. When the count for that loop is exhausted, the cycle stops in a dossier. A **pause** waits for the owner and does not count as a try. A **dossier** is written by a script, including the abort note stored with discoveries. The agent that was working does not write that note.
 
-The **task journal** is a host file, `.keel/runs/<task-id>/journal.md`. After every link the script appends a line: which link, which role, the result, the commit, the artifacts, the money and the minutes, and the dossier reason when there is one. That file is how a stopped task resumes at the last green link. It is specified in [Logging](logging.md) and it is not created by the current code.
+The **task journal** is a planned host file, `.keel/workspace/tasks/<task-id>/journal.md`. After every link the script appends a line: which link, which role, the result, the commit, the artifacts, the money and the minutes, and the dossier reason when there is one. That file is how a stopped task resumes at the last green link. It is specified in [Logging](logging.md) and it is not created by the current code.
 
 ## Skills intake
 

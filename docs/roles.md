@@ -1,6 +1,6 @@
 # Roles and visibility
 
-A **role** is one job in the pipeline: orchestrator, architect, critic, tester, developer, auditor, design reviewer, verifier, QA, or researcher. The owner and the bot are not agent roles. The owner decides. The bot account opens pull requests.
+A **role** is one job in the pipeline: orchestrator, architect, critic, tester, developer, auditor, skills auditor, design reviewer, verifier, QA, or researcher. The owner and the bot are not agent roles. The owner decides. The bot account opens pull requests.
 
 **Status.** Folder mounts are enforced by `setup/keel.sh role` and `role-env`. An unknown role name is refused. The gate suite’s work-tree container is `proto`, not a role. Content fencing is not in this step.
 
@@ -41,7 +41,7 @@ The orchestrator and the host dispatcher are planned for Step 7. They are not bu
 - **Read, in this step:** the folders in the table, except paths the unified deny withholds.
 - **Write zone only, in this step:** `briefs/` and `.keel/decisions/<task-id>/`.
 - **Read, in the Step 7 design:** everything except secrets and paths in `.keel/deny.local`. The D1 confidence-notes log is readable.
-- **Write zone only, in the Step 7 design:** the brief; the split plan; dispatcher **request files**; the D1 confidence-notes log; owner decisions into ADR / `docs/owner-decisions.md` and discoveries (via allowed paths); messages to the owner.
+- **Write zone only, in the Step 7 design:** the brief; the split plan; requests through the one `keel` tool; the D1 confidence-notes log; owner decisions into ADR / `docs/owner-decisions.md` and discoveries (via allowed paths); messages to the owner.
 - **Must not write:** product code, tests, process files, or gates.
 - **Must not** launch containers or talk to other agents directly. The host launches roles via `setup/keel.sh role`.
 

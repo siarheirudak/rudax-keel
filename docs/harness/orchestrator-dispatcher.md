@@ -111,24 +111,18 @@ The orchestrator does **not** choose “skip the gate”. On mechanical FAIL the
 
 | Who | Product tests |
 |---|---|
-| Every role with a work tree | Sees ordinary tests |
+| Every role with a work tree (Step 7 design) | Sees ordinary tests |
 | Tester | Product tree **RO** mounts; writes **only** test dirs (FS); host `git diff --name-only` defense in depth (D-T30) |
 | Developer | Tests **RO**; full gate output + stacks on FAIL |
 | Orchestrator | Reads tests (like everything else except secrets / `deny.local`) |
 
+Today only the developer, the tester, and the orchestrator mount `tests` (`setup/allow/*.paths`).
+
 Honesty substitute: **L7T mutation** + **L8** (English checklist item above; mutation does not catch hardcoding). The L8 item is **not** verified by a line-check of the instruction file — only behaviorally through a backlog known-bad eval set.
-
-### 4.2 Developer result signals (L5)
-
-Alongside `NEEDS_CONTEXT`, `NEEDS_DEPENDENCY`, `SIGNATURE_CHANGE_NEEDED`, `BRIEF_CONFLICT` — signal **`TEST_CONTRADICTS_BRIEF`**.
-
-Developer instruction (sense; English wording in the role skill/instruction file): *if a test contradicts the brief, do not fit the code to it; stop and return `TEST_CONTRADICTS_BRIEF`, naming the test and the brief clause.*
-
-The dispatcher accepts the signal as `result_name`. The orchestrator **checks the claim against the brief itself** and **decides** whether to call `return_to` L3 on YAML edge `L5_test_contradicts_brief_to_L3` (`budget_ref: L5_test_contradict_returns`, starting value, measure; deep_reset). Developer arguments are **never** forwarded to the tester; only the orchestrator’s own reformulated finding (test id + brief clause + verdict) goes to L3. Behavioral stubs: D-T25 (routing/budget), D-T31 (developer text absent from L3 input).
 
 ### 4.1 Failure schema for routing (closed enum)
 
-The dispatcher puts a structured object into the orchestrator inbox for **routing/audit**. Fields:
+The dispatcher returns a structured failure object to the orchestrator through `keel wait` and `keel status` for **routing/audit**. Fields:
 
 | Field | Type | Rule |
 |---|---|---|
@@ -138,6 +132,14 @@ The dispatcher puts a structured object into the orchestrator inbox for **routin
 | `gate` | gate id (`L4` / `L7` / …) | optional |
 
 In parallel, on gate FAIL the developer receives the **full** output and stacks.
+
+### 4.2 Developer result signals (L5)
+
+Alongside `NEEDS_CONTEXT`, `NEEDS_DEPENDENCY`, `SIGNATURE_CHANGE_NEEDED`, `BRIEF_CONFLICT` — signal **`TEST_CONTRADICTS_BRIEF`**.
+
+Developer instruction (sense; English wording in the role skill/instruction file): *if a test contradicts the brief, do not fit the code to it; stop and return `TEST_CONTRADICTS_BRIEF`, naming the test and the brief clause.*
+
+The dispatcher accepts the signal as `result_name`. The orchestrator **checks the claim against the brief itself** and **decides** whether to call `return_to` L3 on YAML edge `L5_test_contradicts_brief_to_L3` (`budget_ref: L5_test_contradict_returns`, starting value, measure; deep_reset). Developer arguments are **never** forwarded to the tester; only the orchestrator’s own reformulated finding (test id + brief clause + verdict) goes to L3. Behavioral stubs: D-T25 (routing/budget), D-T31 (developer text absent from L3 input).
 
 The orchestrator may read the repository except secrets, `.keel/deny.local`, and the runtime folder `.keel/workspace/`. It reaches task files, logs, and state only through `keel read`, `keel logs`, and `keel status`. `keel read` checks the task id, refuses symlinks, and returns regular files only, with size caps, control characters and ANSI and bidi characters stripped, a random fence, and an audit record. It never returns tokens or `state/`. `keel logs` is redacted and truncated. In v1, content fencing applies to `keel read` and `keel logs` output only. Fencing of `keel status`, role outputs, task summaries, and pull request comments is later work. The primary control stays the guard and the explicit-yes cards.
 
@@ -479,4 +481,4 @@ Helps: tests RO for the developer; L3 product RO + write-scope (D-T7 and D-T30).
 
 ## Test status
 
-Tests D-T1…D-T28 plus D-T30…D-T33 are planned (behavioral only; no instruction-file line-checks; D-T29 reserved unused). Today `run-tests.sh` runs only happy, attacks, and doctor; `mutate.py` runs only offline; `setup/dispatcher` does not exist yet. Wiring those tests into `run-tests.sh` / keel-gate is part of the Step 7 process-files pull requests. Until then, claiming they are a mandatory CI check would be wrong.
+Tests D-T1…D-T28 plus D-T30…D-T33 are planned (behavioral only; no instruction-file line-checks; D-T29 reserved unused). Today `run-tests.sh` runs the happy path, the attacks, and the doctor, and it also runs the Step 4, 5 and 6 suites, the mutation-plumbing self-tests, and the mutants selected from the diff. `setup/dispatcher` does not exist yet. Wiring those tests into `run-tests.sh` / keel-gate is part of the Step 7 process-files pull requests. Until then, claiming they are a mandatory CI check would be wrong.

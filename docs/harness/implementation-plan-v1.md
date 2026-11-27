@@ -16,7 +16,7 @@ This is the control-plane wiring for chat-driven work. It is built as **Step 7**
 
 Usage is entirely through chat in natural language.
 
-1. **Typical:** the user talks to an **external chat agent** (an intermediary). That agent relays into the owner's Pi session on the host. Recommended intermediary instructions live in [Intermediary agent instructions](../intermediary-agent-instructions.md) and [Working through a chat agent](../working-through-chat.md).
+1. **Optional:** the user talks to an **external chat agent** (an intermediary). That agent relays into the owner's Pi session on the host. Recommended intermediary instructions live in [Intermediary agent instructions](../intermediary-agent-instructions.md) and [Working through a chat agent](../working-through-chat.md).
 2. **Alternative:** the owner talks to stock Pi directly, in the root of their own clone.
 
 Both paths are that same host Pi session. An intermediary is optional. There is no second confirmation layer on top of D2. No `/approve` command.
@@ -65,30 +65,35 @@ The owner's answers (a D2 question, a skill, a split, an irreversible change, a 
 ## Build order
 
 ### Step 1 — Folder allowlist + unified deny
+- **Status.** Implemented.
 - **Does:** Mount only the folder roots in `setup/allow/<role>.paths`. `setup/deny/base` plus add-only `.keel/deny.local` withhold secrets, logs, runs, and `.keel/deny.local` itself. `.keel/decisions/<task-id>/` is for the orchestrator and the architect. The tester sees the commit recorded at setup. The developer’s `tests/` mount is read-only. Launch decisions are JSONL with typed redaction. Content fencing is not in this step. See [Roles and visibility](../roles.md).
 - **Depends on:** isolation (green), gate (green)
 - **Effort:** M
 - **Done when:** The developer can read `tests/` and cannot write it, and can write `src/` and `docs/`. The tester sees `src/`, `docs/`, and `tests/` from the commit recorded at setup, and can write only `tests/` in that snapshot. The orchestrator can write `briefs/` and `.keel/decisions/<task-id>/`. The architect can read those decisions and cannot write them. The auditor cannot see `.agents/` or `.keel/decisions/`. Secret basenames and `.keel/deny.local` are withheld. `.keel/deny.local` is add-only, and a project line cannot remove a base deny. Launch decisions are JSONL under `$KEEL_ROOT/.keel/logs/`. The matrix is in [Roles and visibility](../roles.md). Content fencing is not in this step.
 
 ### Step 2 — Egress allowlist proxy
+- **Status.** Implemented.
 - **Does:** One explicit forward proxy on the internal network `keel-egress`. The developer reaches only the hosts in `setup/egress/developer.allow` (the CI mock). Critic, QA, researcher, proto, setup, export, the test re-run, and every other role stay on `--network none`. The long-term design rows for researcher internet and QA’s local app stay later, with the research step and the QA step. Other roles join the same proxy only when they need a model API.
 - **Depends on:** Step 1
 - **Effort:** M
 - **Done when:** With the proxy variables unset, the developer still cannot reach a public host, a metadata address, or raw TCP off the internal network. A stopped proxy, a missing egress network, or a network that is not internal refuses the launch. A malformed allow file refuses the launch. Denials in `$KEEL_ROOT/.keel/logs/egress.jsonl` are a sanitized host:port and a reason, with no path, query, or userinfo. Critic, QA, researcher, and proto stay on `--network none`. Doctor checks EG-01, EG-02, and EG-03 are critical, and a critical failure or a missing attack result is not ready. The allowlist matches the normalized host exactly.
 
 ### Step 3 — Rootless hardening + startup verification (mandatory in v1)
+- **Status.** Implemented, except a Chromium run under rootless, which belongs to the QA step.
 - **Does:** Make rootless Docker or Podman mandatory. Containers: `--cap-drop=ALL`, `no-new-privileges`, read-only rootfs + tmpfs, memory/cpu/pids limits, workdir quota; the developer stays on the Step 2 proxy; secrets under a separate user. Startup verification script refuses to run if hardening is not in place. Chromium sandbox ON (no `--no-sandbox`); seccomp profile for Chrome; verify Playwright on the host first.
 - **Depends on:** Step 1, Step 2, isolation green
 - **Effort:** L
 - **Done when:** On Linux, a rootful daemon fails ENV-05 and the verdict is not ready. Docker passes only when `SecurityOptions` contains `rootless`. Podman passes only when it is rootless. Docker Desktop on Darwin is an isolation pass only and does not make egress supported. The hardening flags already in `setup/keel.sh` stay, including `--memory-swap` equal to `--memory`. Free space under `KEEL_ROOT` below the configured minimum fails DISK-02 and refuses `setup` / `role`. A separate OS account for secrets is not this step; broker-owned key files are the model sidecar and the push step. The host check refuses `--no-sandbox` and `--disable-setuid-sandbox` and does not start a browser. Chromium running under rootless is Step 20. A hosted CI runner is often rootful. ENV-05 fails there, and the commands that start a container refuse.
 
 ### Step 4 — What a role sees at launch
+- **Status.** Implemented.
 - **Does:** Write one append file, in order: harness rules, role rules, memory index. Pass that file to Pi 0.73.1 as `--append-system-prompt` on every launch. Send the task brief as the first RPC user message. Load `AGENTS.md` and `CLAUDE.md` only the way Pi does, from the working directory and its ancestors. Mount `.agents/skills` read-only from a snapshot of the main branch. Mount project memory read-only and rebuild its index at each launch. Pass `-ne` and `-np`. Do not pass `-nc` or `-ns`. Point `PI_CODING_AGENT_DIR` and `HOME` at empty read-only directories.
 - **Depends on:** Step 1
 - **Effort:** M
 - **Done when:** The append order, the Pi flags, the brief channel, the skills snapshot, the memory index, and doctor rows PI-01 through PI-09 hold. A failed or missing PI row is not ready. Import walking, token limits, and `NEEDS_SPLIT` are not this step.
 
 ### Step 5 — Discoveries store (script filter accept/discard)
+- **Status.** Implemented.
 - **Does:** Date-prefixed discovery files with front matter; agents may append candidates; host script filter auto-accepts only if schema, existing paths, size, no bypass imperatives, and significance check pass (concrete paths or a rule + non-obvious pitfall/decision). Failures **DISCARDED** (no proposed list). Dossier script writes abort-cause entries. Only harness edits/deletes accepted files. Answers that belong in product memory go into an ADR, `docs/owner-decisions.md`, or a discovery.
 - **Depends on:** Step 4
 - **Effort:** M
@@ -101,6 +106,7 @@ The owner's answers (a D2 question, a skill, a split, an irreversible change, a 
 - **Done when:** Generator produces views from one source; role mounts get only their subset; SEC-08 absent from emit-able ids; flag/do-not-flag examples present for judgment rules.
 
 ### Step 7 — Host dispatcher + host orchestrator guard (process-files pull requests)
+- **Status.** Planned (design only).
 - **Pre-impl smoke (required first):** on the target Pi version, check that the guard leaves only the `keel` tool, re-applies it on resume, and counts requests per turn. Fail closed if the check fails.
 - **Does:**
   - **Host Pi session:** stock Pi on the host, in the owner's clone, started by the user. No launcher, socket, bridge, or daemon. Ordinary interactive Pi. Waiting needs no stop. The guard `.pi/extensions/keel-guard` applies one `keel` tool on every session start, including a resumed session. The session file is private (`0600`) and is never exported to HTML. The orchestrator does not write product code, tests, process files, or gates. Secrets and `.keel/deny.local` stay unreadable. The D1 confidence-notes log stays hidden from the auditor until the verdict. Tests are visible.

@@ -1,6 +1,6 @@
 # Harness design (Step 7)
 
-Design documents for the host Pi orchestrator (a guard and one `keel` tool), the host dispatcher, and the FSM. These are **design** — planned; nothing in this layer is built. They ship as **process-files** pull requests (do not mix with product code).
+Design documents for the host Pi orchestrator (a guard and one `keel` tool), the host dispatcher, and the FSM. These are **design** — planned; nothing in this layer is built. The implementation will ship as **process-files** pull requests (do not mix with product code).
 
 | Document | What it is |
 |---|---|
