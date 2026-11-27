@@ -549,21 +549,23 @@ def case_s_a28():
         number = minutes(line[len(prefix):len(line) - len(suffix)])
         if number is None:
             return False
-        one_hour = 60
-        return number >= 1 and number <= one_hour
+        maximum = 90
+        return number >= 1 and number <= maximum
 
     def marked(value):
         return "    timeout-minutes: " + value + " # shard-timeout"
 
     try:
-        for value in ("1", "9", "45", "59", "60"):
+        for value in ("1", "9", "45", "59", "60", "61", "90"):
             if not allows(marked(value)):
                 return False
         for value in (
             "0",
-            "61",
+            "91",
+            "99",
             "450",
             "600",
+            "900",
             "1" * 20,
             "\u0661",
             "01",
