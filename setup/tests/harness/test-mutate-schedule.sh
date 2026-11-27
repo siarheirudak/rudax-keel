@@ -26,7 +26,7 @@ import sys
 prefix = "    timeout-minutes: "
 suffix = " # shard-timeout"
 missing = "shard timeout is missing"
-outside = "shard timeout is not between 1 and 60 minutes"
+outside = "shard timeout is not between 1 and 90 minutes"
 
 def classify(path):
     lines = open(path, encoding="utf-8").read().splitlines()
@@ -50,8 +50,8 @@ def classify(path):
         number = int(value)
     except Exception:
         return outside
-    one_hour = 60
-    if number >= 1 and number <= one_hour:
+    maximum = 90
+    if number >= 1 and number <= maximum:
         return ""
     return outside
 
